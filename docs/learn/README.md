@@ -14,9 +14,9 @@ security, three exercises, and what to read next in
 | [02](02-ownership-and-drop.md) | Secret types: ownership, `Drop`, and why a secret must not be `Clone`. |
 | [03](03-errors-and-results.md) | Errors and randomness: `Result`, the `?` operator and asking the OS for random bytes. |
 | [04](04-constants-overflow-and-features.md) | Argon2id: constants, integer overflow, Cargo features, and checking costs before doing work. |
-| 05 | XChaCha20-Poly1305: encrypting with authentication, slices and byte arrays. |
+| [05](05-slices-and-borrowing.md) | XChaCha20-Poly1305: slices, arrays and `Vec`, borrowing, lifetimes, and why decryption is all or nothing. |
 | 06 | The vault header: parsing bytes safely, with no panics on bad input. |
 | 07 | The envelope: create, open, save and re-key a vault, using everything so far. |
 | 08 | Property tests and fuzzing: letting the computer invent hostile inputs. |
 
-Lessons 05 to 08 are written as their tasks land.
+Lessons 06 to 08 are written as their tasks land.

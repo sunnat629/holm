@@ -26,6 +26,17 @@ pub fn argon2id13(pwd: &[u8], salt: &[u8; 16], opslimit: u64, memlimit_bytes: us
     ffi::argon2id13(pwd, salt, opslimit, memlimit_bytes)
 }
 
+/// XChaCha20-Poly1305 (IETF construction) through libsodium's
+/// `crypto_aead_xchacha20poly1305_ietf_encrypt`. Returns ciphertext followed by
+/// the 16-byte tag. Call [`sodium_init`] first.
+///
+/// # Panics
+/// Panics if libsodium reports an error.
+#[must_use]
+pub fn xchacha_encrypt(key: &[u8; 32], nonce: &[u8; 24], aad: &[u8], msg: &[u8]) -> Vec<u8> {
+    ffi::xchacha_encrypt(key, nonce, aad, msg)
+}
+
 // Security decision (spec §12): this test-only crate may call libsodium through
 // FFI. All `unsafe` is confined to this module and each block has a SAFETY note.
 #[allow(unsafe_code)]
@@ -79,6 +90,55 @@ mod ffi {
             )
         };
         assert_eq!(rc, 0, "libsodium crypto_pwhash failed");
+        out
+    }
+
+    // `xchacha_encrypt` takes fixed-size key and nonce arrays. That is only sound
+    // if libsodium reads exactly that many bytes, so pin both at compile time.
+    const _: () = assert!(sodium::crypto_aead_xchacha20poly1305_ietf_KEYBYTES == 32);
+    const _: () = assert!(sodium::crypto_aead_xchacha20poly1305_ietf_NPUBBYTES == 24);
+    const _: () = assert!(sodium::crypto_aead_xchacha20poly1305_ietf_ABYTES == 16);
+
+    pub(super) fn xchacha_encrypt(
+        key: &[u8; 32],
+        nonce: &[u8; 24],
+        aad: &[u8],
+        msg: &[u8],
+    ) -> Vec<u8> {
+        let mut out = vec![0u8; msg.len() + 16];
+        let mut out_len: u64 = 0;
+        let msg_len = u64::try_from(msg.len()).expect("message length fits in u64");
+        let aad_len = u64::try_from(aad.len()).expect("aad length fits in u64");
+        // SAFETY:
+        // - `out` is a live, writable buffer of `msg.len() + 16` bytes, which is
+        //   the maximum libsodium writes (message plus the 16-byte tag, pinned by
+        //   the const assert above).
+        // - `out_len` is a live `u64`; libsodium writes the produced length to it.
+        // - `msg` and `aad` are live slices read for `msg_len` and `aad_len`
+        //   bytes. Empty slices have non-null pointers and nothing is read.
+        // - `nonsec` (the unused secret nonce) is null, which the API allows.
+        // - `nonce` and `key` point to exactly 24 and 32 readable bytes (const
+        //   asserts above).
+        // - No buffer overlaps another, and libsodium keeps no pointer after return.
+        let rc = unsafe {
+            sodium::crypto_aead_xchacha20poly1305_ietf_encrypt(
+                out.as_mut_ptr(),
+                &raw mut out_len,
+                msg.as_ptr(),
+                msg_len,
+                aad.as_ptr(),
+                aad_len,
+                std::ptr::null(),
+                nonce.as_ptr(),
+                key.as_ptr(),
+            )
+        };
+        assert_eq!(rc, 0, "libsodium xchacha encrypt failed");
+        assert_eq!(
+            out_len,
+            u64::try_from(out.len()).expect("fits"),
+            "unexpected output length"
+        );
         out
     }
 }
