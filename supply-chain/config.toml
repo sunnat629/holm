@@ -4,346 +4,89 @@
 [cargo-vet]
 version = "0.10"
 
+[imports.actix]
+url = "https://raw.githubusercontent.com/actix/supply-chain/main/audits.toml"
+
+[imports.ariel-os]
+url = "https://raw.githubusercontent.com/ariel-os/ariel-os/main/supply-chain/audits.toml"
+
 [imports.bytecode-alliance]
 url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+[imports.embark-studios]
+url = "https://raw.githubusercontent.com/EmbarkStudios/rust-ecosystem/main/audits.toml"
+
+[imports.fermyon]
+url = "https://raw.githubusercontent.com/fermyon/spin/main/supply-chain/audits.toml"
 
 [imports.google]
 url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 
+[imports.isrg]
+url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/audits.toml"
+
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
-[[exemptions.aead]]
-version = "0.6.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.argon2]]
-version = "0.6.0"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.autocfg]]
-version = "1.5.1"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.base64ct]]
-version = "1.8.3"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.bitflags]]
-version = "2.13.2"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.blake2]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.block-buffer]]
-version = "0.12.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.borsh]]
-version = "1.8.1"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+[imports.zcash]
+url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
 [[exemptions.borsh-derive]]
 version = "1.8.1"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.bytes]]
-version = "1.12.1"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.cfg-if]]
-version = "1.0.5"
-criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.chacha20]]
-version = "0.10.2"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.chacha20poly1305]]
-version = "0.11.0"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.cipher]]
-version = "0.5.2"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.cmov]]
-version = "0.5.4"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.cpufeatures]]
-version = "0.3.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.crypto-common]]
-version = "0.2.2"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.ctutils]]
-version = "0.4.3"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.digest]]
-version = "0.11.3"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.equivalent]]
-version = "1.0.3"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.errno]]
-version = "0.3.14"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.fastrand]]
-version = "2.5.0"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.getrandom]]
-version = "0.4.3"
-criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.hashbrown]]
-version = "0.14.5"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.hybrid-array]]
-version = "0.4.15"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.indexmap]]
-version = "2.14.2"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.inout]]
-version = "0.2.4"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.itoa]]
-version = "1.0.18"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). In Cargo.lock only as an optional dependency of bit-vec (proptest dev tree); `cargo tree -e all --target all` shows it is not built for Holm. It is a 5.6k-line proc-macro with no runtime presence. Risk accepted: none at runtime, theoretical build-time code execution if a future feature change ever activates it. Revisit if it starts being built (cargo tree shows it) or at the Phase 2 supply-chain review."
 
 [[exemptions.libc]]
 version = "0.2.191"
 criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
+notes = "Kept exempt (safe-to-deploy). Runtime FFI bindings (136k lines) used by getrandom (getentropy, getrandom, open, read, poll, futex) and cpufeatures (sysctlbyname, getauxval); too big for a line audit by this team. Published by the rust-lang-owner team; isrg, mozilla, ariel-os and others trust that publisher for libc. The call sites Holm actually reaches were reviewed in the getrandom 0.4.3 and cpufeatures 0.3.1 audits. Risk accepted: a wrong extern signature or constant in the generated bindings, or a compromised release. Revisit at the Phase 2 supply-chain review: either `cargo vet trust libc rust-lang-owner` (COS policy call) or import an audit of this exact version."
 
 [[exemptions.linux-raw-sys]]
 version = "0.12.1"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.memchr]]
-version = "2.8.3"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.once_cell]]
-version = "1.21.4"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.password-hash]]
-version = "0.6.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5. In Cargo.lock only as an optional dependency of argon2; not built, because holm-crypto turns off argon2 default features (no password-hash). Audit or drop it in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.phc]]
-version = "0.6.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5. In Cargo.lock only as an optional dependency of argon2; not built, because holm-crypto turns off argon2 default features (no password-hash). Audit or drop it in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.poly1305]]
-version = "0.9.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.proc-macro-crate]]
-version = "3.5.0"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.proc-macro2]]
-version = "1.0.107"
-criteria = "safe-to-deploy"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: rustix -> tempfile -> proptest (holm-core dev-dependency). It is a 202k-line generated syscall-constant crate; the only available delta is 0.6.5 -> 0.12.1, which is not tractable. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 0.12.x, or adopt `cargo vet trust linux-raw-sys sunfishcode` (COS policy call)."
 
 [[exemptions.proptest]]
 version = "1.12.0"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-dependency of holm-core for property tests; it is 27k lines with no imported audit of 1.12. Never part of a shipped binary. It uses fork/timeout (rusty-fork, already delta-audited), tempfile and regex-syntax at test time. Risk accepted: malicious code running on developer and CI machines during cargo test. Revisit when an imported audit covers proptest 1.12, or at the Phase 2 supply-chain review."
 
 [[exemptions.r-efi]]
 version = "6.0.0"
 criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.rand]]
-version = "0.10.3"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.rand_core]]
-version = "0.10.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.rand_xorshift]]
-version = "0.5.0"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.regex-syntax]]
-version = "0.8.11"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = """Kept exempt (safe-to-deploy). A dependency of getrandom only on target_os = "uefi" (the efi_rng backend), which Holm never builds; it is in Cargo.lock only because the lockfile spans every target. It is 10k lines of UEFI type and protocol definitions. Risk accepted: none for Holm's macOS/Linux/Windows targets. Revisit only if a UEFI target is ever added."""
 
 [[exemptions.rustix]]
 version = "1.1.5"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.rusty-fork]]
-version = "0.3.1"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.serde]]
-version = "1.0.229"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.serde_core]]
-version = "1.0.229"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.serde_derive]]
-version = "1.0.229"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.serde_json]]
-version = "1.0.154"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.subtle]]
-version = "2.6.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 8 (constant-time DEK comparison in verify_password). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: tempfile -> proptest (holm-core dev-dependency). The only delta is 0.38.32 -> 1.1.5 (35k changed lines), and it is heavy in unsafe syscall code; not tractable for this team now. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 1.1.x, or adopt `cargo vet trust rustix sunfishcode` (COS policy call)."
 
 [[exemptions.syn]]
 version = "2.0.119"
 criteria = "safe-to-deploy"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-deploy). Build-time only: the parser behind zeroize_derive, which generates the Zeroize/ZeroizeOnDrop impls compiled into Holm. It is 67k lines with no runtime presence of its own. Published by dtolnay, whom isrg, mozilla, ariel-os and others trust. Risk accepted: a compromised syn could inject code into derived impls or run code at build time. Revisit at the Phase 2 supply-chain review: `cargo vet trust syn dtolnay` (COS policy call), or an imported audit of this exact version."
 
 [[exemptions.syn]]
 version = "3.0.9"
 criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.thiserror]]
-version = "2.0.21"
-criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.thiserror-impl]]
-version = "2.0.21"
-criteria = "safe-to-deploy"
-notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
-
-[[exemptions.tinyvec]]
-version = "1.13.3"
-criteria = "safe-to-deploy"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.toml_datetime]]
-version = "1.1.2+spec-1.1.0"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-deploy). Build-time only: the parser behind thiserror-impl (Holm's error derives) and serde_derive (dev tree). It is 69k lines with no runtime presence of its own. Published by dtolnay, whom isrg, mozilla, ariel-os and others trust. Risk accepted: a compromised syn could inject code into derived impls or run code at build time. Revisit at the Phase 2 supply-chain review: `cargo vet trust syn dtolnay` (COS policy call), or an imported audit of this exact version."
 
 [[exemptions.toml_edit]]
 version = "0.25.17+spec-1.1.0"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: proc-macro-crate (proptest dev tree). The only delta is 0.22.20 -> 0.25.17 (440 files, 14k changed lines). Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 0.25.x, or adopt `cargo vet trust toml_edit epage` (COS policy call)."
 
 [[exemptions.toml_parser]]
 version = "1.1.5+spec-1.1.0"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.typenum]]
-version = "1.20.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.unicode-ident]]
-version = "1.0.27"
-criteria = "safe-to-deploy"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.universal-hash]]
-version = "0.6.1"
-criteria = "safe-to-deploy"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.windows-link]]
-version = "0.2.1"
-criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: toml_edit (proptest dev tree). It is 8k lines with no imported audit of 1.1.5. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers it, or adopt `cargo vet trust toml_parser epage` (COS policy call)."
 
 [[exemptions.windows-sys]]
 version = "0.61.2"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: errno/rustix/tempfile (proptest dev tree); Holm's own Windows RNG path (getrandom ProcessPrng) does not use it. It is 335k lines of generated Win32 bindings. Never part of a shipped binary. Risk accepted: a malicious test-time dependency on Windows developer and CI machines. Revisit if it enters the runtime tree, or adopt `cargo vet trust windows-sys kennykerr` (COS policy call)."
 
 [[exemptions.winnow]]
 version = "1.0.4"
 criteria = "safe-to-run"
-notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
-
-[[exemptions.zeroize]]
-version = "1.9.1"
-criteria = "safe-to-deploy"
-notes = "Replace with delta audit 1.8.2 -> 1.9.1 (cargo vet diff) before Phase 1 closes."
-
-[[exemptions.zeroize_derive]]
-version = "1.5.0"
-criteria = "safe-to-deploy"
-notes = "Replace with delta audit 1.4.2 -> 1.5.0 (cargo vet diff) before Phase 1 closes."
-
-[[exemptions.zmij]]
-version = "1.0.23"
-criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Kept exempt (safe-to-run). Dev-only: toml_edit and toml_parser (proptest dev tree). The only delta is 0.6.18 -> 1.0.4 (39k changed lines). Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 1.0.x, or adopt `cargo vet trust winnow epage` (COS policy call)."

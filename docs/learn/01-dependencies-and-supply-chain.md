@@ -28,7 +28,9 @@ human must run it and look at the result before pushing.
 2. Look at the lock file: `grep -c '^name' Cargo.lock` counts the crates in the build.
    Today it is only our three, since no third-party crate is used yet. Say why that is a good place to start.
 3. Install it with `cargo install --locked cargo-vet`, then run `cargo vet --locked` and read the one-line answer. Then open
-   `supply-chain/config.toml` and find the three audit sources we import.
+   `supply-chain/config.toml` and find the audit sources we import (three at first, nine since the
+   Phase 1 supply-chain audit). Each crate that is still exempted has a `notes` line saying why,
+   what risk we accept and when to revisit it. Our own audits live in `supply-chain/audits.toml`.
 
 ## Read next
 
