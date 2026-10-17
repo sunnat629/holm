@@ -1,9 +1,9 @@
+# Manual-only: GitHub Actions minutes are limited, so the gates run locally with
+# scripts/ci-local.sh. Restore the push and pull_request triggers when the repo goes public.
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

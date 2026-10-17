@@ -4,12 +4,14 @@ Thanks for helping. Holm is a security tool, so a few rules are strict.
 
 ## Before you send a change
 
-Run all three and make sure they pass:
+Run `scripts/ci-local.sh` before every push. It runs the same gates as the CI
+workflow (fmt, clippy, tests, cargo-deny, cargo-audit, cargo-vet) and tells you how
+to install any missing tool. GitHub Actions is manual-only for now. The gates are:
 
 ```sh
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --check
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 ## Rules

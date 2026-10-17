@@ -7,9 +7,12 @@ tests on Linux, macOS and Windows, then runs three checks on our dependencies:
 `cargo deny`, `cargo audit` and `cargo vet`. `deny.toml` bans a long list of well-known
 networking crates, and a clippy rule rejects the `std::net` socket types, which makes
 accidental network code in Holm loud. It is a tripwire, not a proof (see below). The
-workflow's actions are pinned to exact commits. CI reports results on the pull request;
+workflow's actions are pinned to exact commits. CI (run locally for now) reports results;
 it does not block merges yet, because a private repo on the free plan has no branch
 protection. There is still no cryptography; this lesson is about trusting code you did not write.
+
+Note: GitHub Actions minutes are limited, so for now the workflow is manual-only and you
+run the same gates with `scripts/ci-local.sh` before every push.
 
 ## Rust ideas in this task
 
