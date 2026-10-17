@@ -35,7 +35,7 @@ pub enum VaultError {
     Format(FormatError),
     /// The key-derivation costs are outside Holm's policy. Never a password
     /// problem: this is decided before any key is derived.
-    #[error("this vault needs more resources than allowed: {0}")]
+    #[error("this vault's key-derivation settings are outside Holm's policy: {0}")]
     KdfPolicy(KdfParamsError),
     /// The password is wrong, or the file was changed or damaged. The two
     /// cannot and must not be told apart.
