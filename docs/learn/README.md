@@ -16,7 +16,7 @@ security, three exercises, and what to read next in
 | [04](04-constants-overflow-and-features.md) | Argon2id: constants, integer overflow, Cargo features, and checking costs before doing work. |
 | [05](05-slices-and-borrowing.md) | XChaCha20-Poly1305: slices, arrays and `Vec`, borrowing, lifetimes, and why decryption is all or nothing. |
 | 06 | [Parsing bytes safely](06-parsing-bytes-safely.md): the vault header, with no panics on bad input. |
-| 07 | The envelope: create, open, save and re-key a vault, using everything so far. |
+| 07 | [Modules and encapsulation](07-modules-and-encapsulation.md): the envelope that creates, opens, saves and re-keys a vault, and how privacy keeps the data key in one module. |
 | 08 | Property tests and fuzzing: letting the computer invent hostile inputs. |
 
-Lessons 07 and 08 are written as their tasks land.
+Lesson 08 is written when its task lands.

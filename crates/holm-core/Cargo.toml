@@ -13,3 +13,8 @@ workspace = true
 [dependencies]
 holm-crypto.workspace = true
 thiserror.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+static_assertions.workspace = true

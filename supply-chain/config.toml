@@ -162,6 +162,11 @@ version = "1.0.154"
 criteria = "safe-to-run"
 notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
+[[exemptions.subtle]]
+version = "2.6.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 8 (constant-time DEK comparison in verify_password). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.syn]]
 version = "2.0.119"
 criteria = "safe-to-deploy"
