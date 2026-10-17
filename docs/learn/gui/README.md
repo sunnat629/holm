@@ -4,7 +4,7 @@ This guide is for you: a Kotlin and Compose developer who has not written Rust y
 
 Version pinned: **egui 0.37.0 and eframe 0.37.0** (latest on crates.io on 2026-10-17). Everything below was checked against that source. It needs **Rust 1.95 or newer**. egui changes names often. If you read an older tutorial, see "Names that moved" in section 2.
 
-The screens we are building are in [`docs/design/ui-mock.html`](../../design/ui-mock.html). Open it in a browser. The mapping from old Compose screens to new ones is in [`docs/design/ui-screen-map.md`](../../design/ui-screen-map.md).
+The screens we are building are in [`docs/design/ui-mock.html`](../../design/ui-mock.html). Open it in a browser. The final design is [`docs/design/ui-final.html`](../../design/ui-final.html), with notes in [`docs/design/ui-final-notes.md`](../../design/ui-final-notes.md). The mapping from old Compose screens to new ones is in [`docs/design/ui-screen-map.md`](../../design/ui-screen-map.md).
 
 Contents:
 

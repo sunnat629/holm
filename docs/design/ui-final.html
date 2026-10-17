@@ -1,0 +1,1522 @@
+<title>Holm Desktop Design</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Atkinson+Hyperlegible+Next:wght@400;600;700&display=swap">
+<style>
+/* Layout: a plain doc header with four views. "Screens" = switcher rail + one desktop window (tuned egui 3-pane shell) + build notes under it.
+   Type: Atkinson Hyperlegible Next for UI, Atkinson Hyperlegible Mono for secrets (0/O, 1/l/I stay distinct). One calm steel-blue accent; semantic colours are separate. */
+:root{
+  --bg:#f4f6f8; --surface:#ffffff; --side:#e9edf1; --field:#ffffff; --btn:#e2e7ed; --btn-hover:#d5dce4;
+  --fg:#18212c; --muted:#4b5767; --faint:#6a7586; --line:#d3d9e0; --line-strong:#7f8a99;
+  --accent:#1d5aa6; --on-accent:#ffffff; --accent-weak:#dbe7f6; --accent-text:#174b8c;
+  --danger:#b3261e; --on-danger:#ffffff; --danger-bg:#fcebea; --danger-text:#9c1f18;
+  --warn:#8a5100; --warn-bg:#fff3d9; --warn-line:#b97a12;
+  --ok:#1c6b3a; --ok-bg:#e5f3ea;
+  --scrim:rgba(24,33,44,.40); --shadow:rgba(24,33,44,.30);
+  --font-ui:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"Atkinson Hyperlegible Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#14171b; --surface:#1b1f24; --side:#202429; --field:#111418; --btn:#2a3038; --btn-hover:#343b45;
+  --fg:#e7eaee; --muted:#a9b2be; --faint:#8b95a2; --line:#2f353d; --line-strong:#6f7a88;
+  --accent:#86b4f0; --on-accent:#0c1828; --accent-weak:#22344b; --accent-text:#9cc3f5;
+  --danger:#f0857b; --on-danger:#2a0907; --danger-bg:#3a1c1a; --danger-text:#ffaaa2;
+  --warn:#f0b44c; --warn-bg:#32260e; --warn-line:#b58222;
+  --ok:#72d29b; --ok-bg:#15301f;
+  --scrim:rgba(0,0,0,.58); --shadow:rgba(0,0,0,.65); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171b; --surface:#1b1f24; --side:#202429; --field:#111418; --btn:#2a3038; --btn-hover:#343b45;
+  --fg:#e7eaee; --muted:#a9b2be; --faint:#8b95a2; --line:#2f353d; --line-strong:#6f7a88;
+  --accent:#86b4f0; --on-accent:#0c1828; --accent-weak:#22344b; --accent-text:#9cc3f5;
+  --danger:#f0857b; --on-danger:#2a0907; --danger-bg:#3a1c1a; --danger-text:#ffaaa2;
+  --warn:#f0b44c; --warn-bg:#32260e; --warn-line:#b58222;
+  --ok:#72d29b; --ok-bg:#15301f;
+  --scrim:rgba(0,0,0,.58); --shadow:rgba(0,0,0,.65); color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font-ui);padding-block:16px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+svg.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.page{max-width:1340px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+header.top{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center}
+.brand{display:flex;gap:10px;align-items:center;min-width:0}
+.brand svg.i{width:28px;height:28px;color:var(--accent);stroke-width:1.6}
+.brand h1{font-size:22px;line-height:28px;margin:0;font-weight:700;text-wrap:balance}
+.brand p{margin:0;color:var(--muted);font-size:12px}
+.sp{flex:1}
+.seg{display:flex;gap:2px;flex-wrap:wrap;background:var(--side);padding:3px;border-radius:8px;border:1px solid var(--line)}
+.seg button{font:inherit;font-size:13px;border:0;background:transparent;color:var(--muted);padding:5px 12px;border-radius:6px;cursor:pointer}
+.seg button[aria-selected="true"],.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);font-weight:600;box-shadow:0 0 0 1px var(--line)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Screens view */
+.scr{display:grid;grid-template-columns:200px minmax(0,1fr);gap:20px;align-items:start}
+.rail{display:flex;flex-direction:column;gap:1px}
+.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 10px 4px;font-weight:600}
+.rail h2:first-child{margin-top:0}
+.rail button{text-align:left;font:inherit;font-size:13px;border:0;background:transparent;color:var(--fg);padding:5px 10px;border-radius:6px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.rail button:hover{background:var(--side)}
+.rail button[aria-current="true"]{background:var(--accent-weak);color:var(--accent-text);font-weight:600}
+.rail button small{color:var(--muted);font-variant-numeric:tabular-nums}
+.railsel{display:none}
+.stage{min-width:0;display:flex;flex-direction:column;gap:12px}
+.stage-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline}
+.stage-h h2{font-size:18px;line-height:24px;margin:0}
+.stage-h p{margin:0;color:var(--muted);font-size:13px;flex:1 1 280px}
+.states{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.states>span{font-size:12px;color:var(--muted);margin-right:2px}
+.states button{font:inherit;font-size:12px;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--line-strong);background:transparent;color:var(--fg);cursor:pointer}
+.states button[aria-pressed="true"]{background:var(--fg);border-color:var(--fg);color:var(--bg);font-weight:600}
+.bn{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.bn section{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0}
+.bn h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;font-weight:600}
+.bn ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px;font-size:13px}
+.cw{display:inline-block;font-size:11px;font-weight:600;padding:0 6px;border-radius:9px;background:var(--warn-bg);color:var(--fg);border:1px solid var(--warn-line);white-space:nowrap}
+code{font-family:var(--font-mono);font-size:.92em;background:var(--side);padding:0 4px;border-radius:3px;overflow-wrap:anywhere}
+
+/* ---------- The app window (tuned egui) ---------- */
+.win{background:var(--surface);border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;box-shadow:0 22px 44px -28px var(--shadow);container-type:inline-size;position:relative}
+.tbar{height:30px;display:flex;align-items:center;justify-content:center;background:var(--side);border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;position:relative}
+.tbar .dots{position:absolute;left:12px;display:flex;gap:6px}
+.tbar .dots i{width:10px;height:10px;border-radius:50%;background:var(--line-strong);opacity:.55}
+.app{display:grid;grid-template-columns:184px 296px minmax(0,1fr);height:600px;position:relative}
+.app.tool{grid-template-columns:184px minmax(0,1fr)}
+.app.center{display:block;height:auto;min-height:600px;background:var(--bg)}
+.side{background:var(--side);border-right:1px solid var(--line);padding:12px 8px;display:flex;flex-direction:column;gap:1px;overflow:auto;min-height:0}
+.side .logo{padding:2px 8px 10px}
+.side .grp{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:10px 8px 3px;font-weight:600}
+.side .fill{flex:1}
+.nv{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:inherit;font-size:14px;border:0;background:transparent;color:var(--fg);padding:5px 8px;border-radius:4px;cursor:pointer}
+.nv:hover{background:var(--btn)}
+.nv[aria-current="true"]{background:var(--accent-weak);color:var(--accent-text);font-weight:600}
+.nv .n{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.nv:focus-visible,.ri:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.side .vf{font-size:12px;color:var(--muted);padding:8px 8px 6px;display:flex;gap:6px;align-items:center;min-width:0}
+.side .vf span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;min-height:0}
+.ltools{padding:10px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--line)}
+.lrow{display:flex;gap:8px;align-items:center}
+.lrow>.grow{flex:1;min-width:0}
+.rows{overflow:auto;flex:1;min-height:0}
+.lempty{padding:24px 16px;color:var(--muted);font-size:13px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.detail{overflow:auto;min-width:0;min-height:0;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.body{overflow:auto;min-width:0;min-height:0;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.sbar{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;min-height:28px;padding:3px 10px;border-top:1px solid var(--line);background:var(--side);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.sbar .seg2{display:inline-flex;gap:5px;align-items:center}
+.sbar .seg2 svg.i{width:14px;height:14px}
+.sbar .warnt{color:var(--warn);font-weight:600}
+.sbar .dngt{color:var(--danger-text);font-weight:600}
+.sbar .okt{color:var(--ok)}
+.sbar .b{height:20px;font-size:12px;padding:0 6px}
+.logo{display:flex;gap:8px;align-items:center;font-weight:700;font-size:16px}
+.logo svg.i{width:20px;height:20px;color:var(--accent)}
+
+/* rows */
+.ri{display:flex;gap:10px;align-items:center;padding:8px 12px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);font:inherit;color:inherit;cursor:pointer;min-height:52px}
+.ri:hover{background:var(--side)}
+.ri[aria-selected="true"]{background:var(--accent-weak)}
+.ri>div{min-width:0;flex:1}
+.ri .t{font-weight:600;display:flex;gap:6px;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri .s{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ri .t svg.i{width:13px;height:13px;color:var(--warn);fill:currentColor}
+.tyi{width:30px;height:30px;border-radius:6px;background:var(--surface);border:1px solid var(--line-strong);display:grid;place-items:center;flex:none;color:var(--muted)}
+.ri[aria-selected="true"] .tyi{color:var(--accent-text);border-color:var(--accent)}
+.tyi.lg{width:40px;height:40px}.tyi.lg svg.i{width:20px;height:20px}
+
+/* detail */
+.dh{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.dh>div{min-width:0;flex:1 1 200px}
+.dh h3{margin:0;font-size:18px;line-height:24px;overflow-wrap:anywhere}
+.meta{font-size:12px;color:var(--muted)}
+.flds{display:flex;flex-direction:column}
+.fld{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.fld:first-child{border-top:1px solid var(--line)}
+.fld .lb{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.fld .v{min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.fld .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.mask{font-family:var(--font-mono);letter-spacing:.14em;color:var(--fg)}
+.mono{font-family:var(--font-mono)}
+.vis{font-family:var(--font-mono);background:var(--warn-bg);box-shadow:inset 0 0 0 1px var(--warn-line);border-radius:4px;padding:2px 6px;user-select:none;-webkit-user-select:none;display:inline-block;max-width:100%;overflow-wrap:anywhere}
+.visn{grid-column:1/-1;font-size:12px;color:var(--fg);display:flex;gap:6px;align-items:center}
+.visn svg.i{color:var(--warn);width:14px;height:14px}
+.addr{font-family:var(--font-mono);word-spacing:.2em}
+.foot{font-size:12px;color:var(--muted)}
+
+/* controls */
+.b{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:4px;border:1px solid var(--line);background:var(--btn);color:var(--fg);font:inherit;font-size:14px;cursor:pointer;white-space:nowrap}
+.b:hover{background:var(--btn-hover)}
+.b.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.b.pri:hover{filter:brightness(1.08)}
+.b.dng{background:var(--danger);border-color:var(--danger);color:var(--on-danger);font-weight:600}
+.b.dngo{background:transparent;border-color:var(--danger);color:var(--danger-text)}
+.b.dngo:hover{background:var(--danger-bg)}
+.b.gh{background:transparent;border-color:transparent;color:var(--accent-text);padding:0 4px}
+.b.gh:hover{text-decoration:underline}
+.b.ic{width:28px;padding:0;justify-content:center}
+.b.wide{width:100%;justify-content:center;height:34px}
+.b:disabled{opacity:.5;cursor:not-allowed;filter:none}
+.b svg.i{width:15px;height:15px}
+kbd{font:11px/14px var(--font-mono);opacity:.8;border:1px solid currentColor;border-radius:3px;padding:0 3px}
+.in{height:30px;width:100%;border:1px solid var(--line-strong);border-radius:4px;background:var(--field);color:var(--fg);padding:0 8px;font:inherit}
+textarea.in{height:auto;padding:6px 8px;resize:vertical;min-height:64px}
+.in:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.srch{position:relative}
+.srch svg.i{position:absolute;left:8px;top:7px;color:var(--muted)}
+.srch .in{padding-left:30px;padding-right:44px}
+.srch kbd{position:absolute;right:8px;top:7px;color:var(--muted)}
+.sf{display:flex;align-items:stretch;border:1px solid var(--line-strong);border-radius:4px;background:var(--field);min-width:0}
+.sf input{flex:1;min-width:0;border:0;background:transparent;color:var(--fg);padding:0 8px;height:30px;font:inherit;font-family:var(--font-mono);letter-spacing:.06em}
+.sf input:focus{outline:none}
+.sf:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.sf .eye{border:0;border-left:1px solid var(--line);background:transparent;width:34px;display:grid;place-items:center;color:var(--muted);cursor:pointer;padding:0}
+.sf .eye:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.sf.vis-on{box-shadow:inset 0 0 0 1px var(--warn-line);background:var(--warn-bg)}
+.sf.bad{border-color:var(--danger)}
+.sf input:disabled{opacity:.6}
+.lab{display:flex;flex-direction:column;gap:4px;min-width:0}
+.lab>span{font-size:12px;color:var(--muted)}
+.hint{font-size:12px;color:var(--muted)}
+.ferr{font-size:12px;color:var(--danger-text);display:flex;gap:5px;align-items:center}
+.ferr svg.i{width:14px;height:14px}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:14px;cursor:pointer}
+.chk input{margin-top:3px;accent-color:var(--accent);width:15px;height:15px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{height:24px;padding:0 10px;border-radius:12px;border:1px solid var(--line-strong);background:transparent;color:var(--fg);font:inherit;font-size:12px;display:inline-flex;gap:4px;align-items:center;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent-weak);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+.chip svg.i{width:12px;height:12px}
+.meter{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.meter i{height:6px;border-radius:2px;background:var(--line)}
+.meter.s1 i:nth-child(-n+1),.meter.s2 i:nth-child(-n+2){background:var(--danger)}
+.meter.s3 i:nth-child(-n+3),.meter.s4 i{background:var(--ok)}
+.mtx{font-size:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.mtx b{font-weight:600}
+.ban{display:grid;grid-template-columns:18px minmax(0,1fr);gap:2px 10px;padding:10px 12px;border-radius:6px;border:1px solid var(--line);font-size:14px;color:var(--fg)}
+.ban>svg.i{width:18px;height:18px;margin-top:1px}
+.ban b{font-weight:600}
+.ban p{margin:2px 0 0}
+.ban .acts{grid-column:2;display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ban.info{background:var(--accent-weak);border-color:var(--accent)}.ban.info>svg.i{color:var(--accent-text)}
+.ban.warn{background:var(--warn-bg);border-color:var(--warn-line)}.ban.warn>svg.i{color:var(--warn)}
+.ban.dng{background:var(--danger-bg);border-color:var(--danger)}.ban.dng>svg.i{color:var(--danger-text)}
+.ban.ok{background:var(--ok-bg);border-color:var(--ok)}.ban.ok>svg.i{color:var(--ok)}
+.scrim{position:absolute;inset:30px 0 0 0;background:var(--scrim);display:grid;place-items:center;padding:16px;z-index:5;overflow:auto}
+.modal{width:min(460px,100%);background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;box-shadow:0 24px 48px -16px var(--shadow);padding:18px;display:flex;flex-direction:column;gap:12px}
+.modal h3{margin:0;font-size:18px;line-height:24px;text-wrap:balance}
+.modal p{margin:0}
+.macts{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding-top:4px}
+.macts .l{margin-right:auto}
+.ctr{max-width:420px;margin:0 auto;padding:44px 20px 32px;display:flex;flex-direction:column;gap:14px}
+.ctr h2{font-size:22px;line-height:28px;margin:0;text-wrap:balance}
+.ctr .sub{color:var(--muted);margin:0}
+.path{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.path code{font-size:12px}
+.links{display:flex;flex-direction:column;gap:2px;align-items:flex-start}
+.pg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.pg div{font-family:var(--font-mono);background:var(--warn-bg);box-shadow:inset 0 0 0 1px var(--warn-line);border-radius:4px;padding:5px 8px;display:flex;gap:8px;user-select:none;-webkit-user-select:none}
+.pg small{color:var(--muted);min-width:1.4em;text-align:right;font-variant-numeric:tabular-nums}
+.gout{font-family:var(--font-mono);font-size:18px;line-height:26px;padding:12px 14px;border:1px solid var(--line-strong);border-radius:6px;background:var(--field);overflow-wrap:anywhere;min-height:52px}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 18px}
+.rng{display:flex;gap:10px;align-items:center}
+.rng input{flex:1;accent-color:var(--accent)}
+.rng output{font-variant-numeric:tabular-nums;min-width:2.5em;text-align:right;font-weight:600}
+.set{display:flex;flex-direction:column;gap:22px;max-width:640px}
+.set h3{margin:0 0 8px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.srow{display:grid;grid-template-columns:minmax(0,200px) minmax(0,1fr);gap:8px 16px;align-items:center;padding:6px 0}
+.srow>span{font-size:14px}
+.bwrap{display:flex;gap:8px;flex-wrap:wrap}
+.toast{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 12px;background:var(--fg);color:var(--bg);font-size:13px}
+.toast .b{background:transparent;border-color:var(--bg);color:var(--bg);height:24px}
+.unsaved{font-size:12px;font-weight:600;color:var(--warn);display:inline-flex;gap:4px;align-items:center}
+.unsaved svg.i{width:13px;height:13px}
+.issues{border:1px solid var(--line);border-radius:6px;font-size:13px}
+.issues div{display:grid;grid-template-columns:70px minmax(0,1fr);gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.issues div:last-child{border-bottom:0}
+.spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .8s linear infinite;display:inline-block;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none;border-right-color:currentColor;opacity:.5}}
+.typeseg{display:flex;gap:4px;flex-wrap:wrap}
+.cats{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px}
+.cats div{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.cats div:last-child{border-bottom:0}
+.cats span{flex:1;min-width:120px}
+@container (max-width:780px){
+  .app,.app.tool{grid-template-columns:minmax(0,1fr);height:auto}
+  .side{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);gap:4px;padding:8px}
+  .side .grp,.side .fill,.side .vf{display:none}
+  .side .logo{width:100%;padding-bottom:4px}
+  .nv{width:auto}
+  .list{border-right:0;border-bottom:1px solid var(--line)}
+  .rows{max-height:250px}
+  .detail,.body{padding:16px}
+  .srow{grid-template-columns:minmax(0,1fr)}
+}
+@container (max-width:480px){.pg{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Docs views */
+.doc{display:flex;flex-direction:column;gap:22px;max-width:1040px}
+.doc h2{font-size:22px;line-height:28px;margin:0;text-wrap:balance}
+.doc h3{font-size:16px;line-height:22px;margin:0;text-wrap:balance}
+.doc p{margin:0;max-width:72ch}
+.doc .lead{color:var(--muted)}
+.blk{display:flex;flex-direction:column;gap:10px}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font-size:12px;color:var(--muted);font-weight:600;background:var(--side);white-space:nowrap}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.sw{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line-strong);vertical-align:-2px;margin-right:6px}
+.aud{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.aud li{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:grid;grid-template-columns:44px minmax(0,1fr);gap:2px 12px}
+.aud .p{grid-row:span 3;font:600 12px/20px var(--font-mono);text-align:center;border-radius:4px;height:22px;border:1px solid}
+.aud .p0{background:var(--danger-bg);border-color:var(--danger);color:var(--danger-text)}
+.aud .p1{background:var(--warn-bg);border-color:var(--warn-line);color:var(--fg)}
+.aud .p2{background:var(--accent-weak);border-color:var(--accent);color:var(--accent-text)}
+.aud b{font-weight:600}
+.aud .fx{color:var(--muted);font-size:13px}
+.aud .ar{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.spec{background:var(--surface);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-width:0}
+.spec .live{padding:14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px;container-type:inline-size;position:relative}
+.spec .txt{padding:12px 14px;font-size:13px;display:flex;flex-direction:column;gap:6px}
+.spec h3{font-size:14px}
+.spec ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+.icg{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}
+.icg div{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:11px;color:var(--muted)}
+.icg svg.i{width:20px;height:20px;color:var(--fg)}
+.scale{display:flex;flex-direction:column;gap:6px}
+.scale div{display:flex;gap:10px;align-items:center;font-size:12px;font-variant-numeric:tabular-nums}
+.scale i{height:10px;background:var(--accent);border-radius:2px;display:block}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.card ul,.card ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.dec li b{font-weight:600}
+@media (max-width:860px){
+  .scr{grid-template-columns:minmax(0,1fr)}
+  .rail{display:none}
+  .railsel{display:block}
+}
+</style>
+
+<div class="page">
+<header class="top">
+  <div class="brand">
+    <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10.5 11V9.5a1.5 1.5 0 0 1 3 0V11"/></svg>
+    <div><h1>Holm Desktop Design</h1><p>v1 · egui/eframe · macOS, Windows, Linux · fake data only</p></div>
+  </div>
+  <span class="sp"></span>
+  <div class="seg" role="tablist" aria-label="Sections" id="views">
+    <button role="tab" data-view="screens" aria-selected="true">Screens</button>
+    <button role="tab" data-view="audit" aria-selected="false">Audit</button>
+    <button role="tab" data-view="system" aria-selected="false">Design system</button>
+    <button role="tab" data-view="notes" aria-selected="false">Build notes</button>
+  </div>
+  <div class="seg" role="group" aria-label="Theme" id="themes">
+    <button data-theme-set="auto" aria-pressed="true">Auto</button>
+    <button data-theme-set="light" aria-pressed="false">Light</button>
+    <button data-theme-set="dark" aria-pressed="false">Dark</button>
+  </div>
+</header>
+
+<!-- ===================== SCREENS ===================== -->
+<section id="v-screens" class="scr" aria-label="Screens">
+  <nav class="rail" id="rail" aria-label="Screen switcher"></nav>
+  <div class="stage">
+    <div class="railsel"><label class="lab"><span>Screen</span><select class="in" id="railsel"></select></label></div>
+    <div class="stage-h"><h2 id="sname">Screen</h2><p id="sdesc"></p></div>
+    <div class="states" id="states" role="group" aria-label="State"></div>
+    <div class="win" id="win"></div>
+    <div class="bn" id="bn"></div>
+  </div>
+</section>
+
+<!-- ===================== AUDIT ===================== -->
+<section id="v-audit" class="doc" hidden aria-label="Audit">
+  <div class="blk">
+    <h2>UX audit of the first mock</h2>
+    <p class="lead">The baseline mock gets the structure right: three panes, honest first-run copy, a working throttle state and a separate cost error. These are the problems found, ordered by risk. P0 items affect trust or security honesty, P1 items affect flow, P2 items affect access and polish. Each one is fixed in the Screens tab.</p>
+  </div>
+  <ol class="aud">
+    <li><span class="p p0">P0</span><span class="ar">Lock states</span><b>Locked and Unlock are two screens, so getting back in takes an extra click and the "locked" view hints that something is still loaded.</b><span class="fx">Fix: one unlock screen with a reason line (idle, sleep, manual). Spec §10: locked state shows only the unlock screen.</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Honest copy</span><b>The status bar says "Clipboard: empty" and the lock view says "Clipboard was cleared". Holm cannot know either one.</b><span class="fx">Fix: show a clipboard segment only while Holm's copy is pending. After lock, say "Holm's copy was removed" only if it was still there.</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Honest copy</span><b>"Wrong master password." hides the other cause. A tampered file gives the same error (spec §6).</b><span class="fx">Fix: "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged."</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Dangerous actions</span><b>Delete forever and Empty trash act on one click. The copy never says that old copies and backups keep the data.</b><span class="fx">Fix: confirm modal, Cancel focused, Enter never confirms, honest scope text (spec §7).</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Shoulder-surfing</span><b>Reveal is a sticky toggle with no visible timer, and the note says "hold to reveal" while the mock does something else.</b><span class="fx">Fix: one rule. Show toggles on, the value gets an amber frame and "Visible · hides in 30 s", and it hides on timeout, item change, lock or window blur. Mask is always 12 dots, so length doesn't leak.</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Data loss</span><b>Nothing says what happens to an unsaved edit when auto-lock fires.</b><span class="fx">Fix: edits are discarded on lock (security first). The status bar turns amber 30 s before lock, and the unlock screen says what was discarded.</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Errors</span><b>Save failure is a full-page "Something went wrong" that throws you out of the editor.</b><span class="fx">Fix: inline banner in the editor with your input kept, the cause, "the file on disk is unchanged", Try again, and Save a copy elsewhere. The status bar shows "Not saved".</span></li>
+    <li><span class="p p0">P0</span><span class="ar">Spec drift</span><b>The default path is <code>~/Documents/Holm</code>. Spec §8.0 uses the per-OS app data folder.</b><span class="fx">Fix: <code>~/Library/Application Support/Holm/holm.vault</code> on macOS, with the Windows and Linux paths in notes.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Information architecture</span><b>"+ New item" sits in the menu pane. Filters are two dropdowns, there is no sort, and the spec's category chips are missing.</b><span class="fx">Fix: the sidebar holds types, Favourites and Trash. The list holds search, category chips, sort and New (spec §10).</span></li>
+    <li><span class="p p1">P1</span><span class="ar">First run</span><b>There is no welcome choice, no success state, no next steps and no empty-vault state.</b><span class="fx">Fix: Welcome (create or open), Vault created (add item, import, back up), and an empty vault with two clear actions.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Create form</span><b>"Passwords do not match" shows while you are still typing the first field, and the meter uses colour alone.</b><span class="fx">Fix: check the match on blur of Confirm or on submit. A four-segment meter plus a word label plus zxcvbn feedback, and one acknowledgement that Holm can't recover the password.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Keyboard</span><b>No shortcuts and no Enter or Esc rules, and focus order is unspecified.</b><span class="fx">Fix: a shortcut map (Build notes), autofocus on secret fields, Enter submits safe forms only, Esc cancels or hides.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Recovery phrase</span><b>The phrase shows as one long line inside the password modal. It is hard to copy by hand and has no visible timer.</b><span class="fx">Fix: the modal asks only for the password. The phrase then shows as a numbered 3×4 grid in the detail pane with a 60 s countdown and Hide now.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Settings</span><b>The copy says weakening needs the password, but no flow is drawn.</b><span class="fx">Fix: a confirm modal names the old and new value and asks for the master password. Options have a ceiling and no "Never".</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Import</span><b>Only row-level issues are shown. File-level errors (too large, wrong columns, not UTF-8) and the done state are missing.</b><span class="fx">Fix: four error states, a preview that never shows values, and a done state that tells you to delete the source file.</span></li>
+    <li><span class="p p1">P1</span><span class="ar">Change password</span><b>After the change there is no nudge to replace backups, which still open with the old password.</b><span class="fx">Fix: the done state offers "Save a new backup copy" first.</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Accessibility</span><b>Type icons are two-letter codes ("Lg", "Cr") and favourite is "*". Danger relies on a red outline.</b><span class="fx">Fix: a distinct icon shape per type plus a text type in the row, a star with an AccessKit name, and danger buttons with icon, verb and placement.</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Accessibility</span><b>Modal focus can leave the modal, and focus on rows is not separate from selection.</b><span class="fx">Fix: <code>egui::Modal</code> plus a Tab-wrap check, and a 2 px inset focus ring separate from the selection fill.</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Privacy</span><b>Window titles like "Holm - Edit item" leak activity to screen-share pickers and window lists.</b><span class="fx">Fix: the window title is always "Holm".</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Crypto UX</span><b>Addresses show as one block, with no help against clipboard-swapping malware.</b><span class="fx">Fix: group the address in 4s, and after copying, prompt to check the first and last characters.</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Copy tone</span><b>Messages like "Something went wrong" appear, separators are mixed, and "Show..." vs "Show" is inconsistent.</b><span class="fx">Fix: say what happened and what to do next. Use "·" as the separator. An ellipsis means the action asks for more input.</span></li>
+    <li><span class="p p2">P2</span><span class="ar">Status bar</span><b>The status bar shows an item count and the full path. Neither is state you act on.</b><span class="fx">Fix: lock state, auto-lock countdown, clipboard countdown, save state and file name.</span></li>
+  </ol>
+</section>
+
+<!-- ===================== DESIGN SYSTEM ===================== -->
+<section id="v-system" class="doc" hidden aria-label="Design system">
+  <div class="blk">
+    <h2>Design system</h2>
+    <p class="lead">Small on purpose. Every value maps to one field of egui's <code>Style</code>, <code>Spacing</code> or <code>Visuals</code>, so the builder sets it once in a <code>holm_gui::theme</code> module and uses stock widgets for the rest. This is egui's default look with higher contrast, one accent and calmer greys.</p>
+  </div>
+
+  <div class="blk">
+    <h3>Type</h3>
+    <p>Bundle two OFL fonts, Atkinson Hyperlegible Next for UI and Atkinson Hyperlegible Mono for secrets, with egui's default fonts as fallback. The Braille Institute drew them so that 0/O and 1/l/I are distinct, which matters when someone types a password from the screen. Each is about 60 to 90 KB after subsetting to Latin. egui has no line-height setting, so the row height comes from <code>interact_size.y</code>.</p>
+    <div class="tw"><table>
+      <thead><tr><th>egui TextStyle</th><th>Size</th><th>Weight</th><th>Use</th><th>Sample</th></tr></thead>
+      <tbody>
+        <tr><td><code>Name("Title")</code></td><td class="num">22 px</td><td>Bold</td><td>Unlock, create, welcome headings only</td><td style="font-size:22px;font-weight:700">Unlock holm.vault</td></tr>
+        <tr><td><code>Heading</code></td><td class="num">18 px</td><td>SemiBold</td><td>Item title, modal title, settings page</td><td style="font-size:18px;font-weight:600">Example Mail</td></tr>
+        <tr><td><code>Body</code></td><td class="num">14 px</td><td>Regular</td><td>Everything else. Row titles in SemiBold</td><td>ada@example.com</td></tr>
+        <tr><td><code>Button</code></td><td class="num">14 px</td><td>Regular</td><td>Buttons, nav. Primary in SemiBold</td><td>Copy</td></tr>
+        <tr><td><code>Small</code></td><td class="num">12 px</td><td>Regular</td><td>Field labels, row second line, status bar, hints</td><td style="font-size:12px;color:var(--muted)">Login · Personal</td></tr>
+        <tr><td><code>Monospace</code></td><td class="num">14 px</td><td>Regular</td><td>Secrets (masked and shown), addresses, phrase words</td><td class="mono">EXAMPLE-0Ol1I-fake</td></tr>
+        <tr><td><code>Name("Gen")</code></td><td class="num">18 px</td><td>Regular</td><td>Generator output only</td><td class="mono" style="font-size:18px">otter-lantern-quartz</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h3>Spacing scale</h3>
+      <div class="scale">
+        <div><i style="width:4px"></i>4 · icon gap, chip inner gap</div>
+        <div><i style="width:8px"></i>8 · <code>item_spacing</code>, button gap</div>
+        <div><i style="width:12px"></i>12 · list row padding, banner padding</div>
+        <div><i style="width:16px"></i>16 · <code>window_margin</code>, modal padding</div>
+        <div><i style="width:24px"></i>24 · settings section gap</div>
+        <div><i style="width:32px"></i>32 · center column top margin</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>egui Spacing and shape</h3>
+      <ul>
+        <li><code>item_spacing</code> = (8, 8)</li>
+        <li><code>button_padding</code> = (10, 5)</li>
+        <li><code>interact_size</code> = (40, 28). Mobile later: 44</li>
+        <li><code>window_margin</code> = 16, <code>menu_margin</code> = 8</li>
+        <li><code>scroll.bar_width</code> = 8, always visible in lists</li>
+        <li>Corner radius: widgets 4, banners 6, windows/modals 8, chips 12</li>
+        <li>Shadows: modal only (<code>window_shadow</code> 0,12 blur 32). Panels flat</li>
+        <li>Animation time 0.08 s; respect OS reduce-motion (no spinner rotation)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="blk">
+    <h3>Colour tokens</h3>
+    <p>Neutrals carry a slight blue bias towards the accent. Every text pair meets WCAG AA (4.5:1), and input borders and focus rings meet 3:1 against their surface. Semantic colours never stand alone: each banner tone has its own icon shape and a bold title.</p>
+    <div class="tw"><table>
+      <thead><tr><th>Token</th><th>egui field</th><th>Light</th><th>Dark</th><th>Use</th><th>Contrast L / D</th></tr></thead>
+      <tbody>
+        <tr><td><code>bg</code></td><td><code>panel_fill</code> (unlock, center)</td><td><span class="sw" style="background:#f4f6f8"></span>#F4F6F8</td><td><span class="sw" style="background:#14171b"></span>#14171B</td><td>Behind centred screens</td><td class="num">fg 15.0 / 14.9</td></tr>
+        <tr><td><code>surface</code></td><td><code>window_fill</code>, central panel</td><td><span class="sw" style="background:#ffffff"></span>#FFFFFF</td><td><span class="sw" style="background:#1b1f24"></span>#1B1F24</td><td>List, detail, modals</td><td class="num">fg 16.2 / 13.7</td></tr>
+        <tr><td><code>side</code></td><td>side panel <code>Frame</code> fill, <code>faint_bg_color</code></td><td><span class="sw" style="background:#e9edf1"></span>#E9EDF1</td><td><span class="sw" style="background:#202429"></span>#202429</td><td>Sidebar, status bar, table heads</td><td class="num">fg 13.8 / 12.9</td></tr>
+        <tr><td><code>field</code></td><td><code>extreme_bg_color</code></td><td><span class="sw" style="background:#ffffff"></span>#FFFFFF</td><td><span class="sw" style="background:#111418"></span>#111418</td><td>Text and secret inputs</td><td class="num">n/a</td></tr>
+        <tr><td><code>btn</code></td><td><code>widgets.inactive.weak_bg_fill</code></td><td><span class="sw" style="background:#e2e7ed"></span>#E2E7ED</td><td><span class="sw" style="background:#2a3038"></span>#2A3038</td><td>Normal buttons (hover: #D5DCE4 / #343B45)</td><td class="num">fg 13.0 / 11.0</td></tr>
+        <tr><td><code>fg</code></td><td><code>widgets.*.fg_stroke</code>, <code>override_text_color</code></td><td><span class="sw" style="background:#18212c"></span>#18212C</td><td><span class="sw" style="background:#e7eaee"></span>#E7EAEE</td><td>Body text</td><td class="num">see above</td></tr>
+        <tr><td><code>muted</code></td><td><code>widgets.noninteractive.fg_stroke</code> (weak text)</td><td><span class="sw" style="background:#4b5767"></span>#4B5767</td><td><span class="sw" style="background:#a9b2be"></span>#A9B2BE</td><td>Labels, second lines, hints</td><td class="num">7.4 / 7.7</td></tr>
+        <tr><td><code>line</code></td><td><code>widgets.noninteractive.bg_stroke</code></td><td><span class="sw" style="background:#d3d9e0"></span>#D3D9E0</td><td><span class="sw" style="background:#2f353d"></span>#2F353D</td><td>Dividers only (decorative)</td><td class="num">n/a</td></tr>
+        <tr><td><code>line-strong</code></td><td><code>widgets.inactive.bg_stroke</code></td><td><span class="sw" style="background:#7f8a99"></span>#7F8A99</td><td><span class="sw" style="background:#6f7a88"></span>#6F7A88</td><td>Input borders, chips, checkboxes</td><td class="num">3.5 / 3.8</td></tr>
+        <tr><td><code>accent</code></td><td><code>selection.stroke</code>, primary button fill, focus</td><td><span class="sw" style="background:#1d5aa6"></span>#1D5AA6</td><td><span class="sw" style="background:#86b4f0"></span>#86B4F0</td><td>Primary action, focus ring</td><td class="num">6.9 / 7.7</td></tr>
+        <tr><td><code>on-accent</code></td><td>primary button text</td><td><span class="sw" style="background:#ffffff"></span>#FFFFFF</td><td><span class="sw" style="background:#0c1828"></span>#0C1828</td><td>Text on accent</td><td class="num">6.9 / 8.3</td></tr>
+        <tr><td><code>accent-weak</code></td><td><code>selection.bg_fill</code></td><td><span class="sw" style="background:#dbe7f6"></span>#DBE7F6</td><td><span class="sw" style="background:#22344b"></span>#22344B</td><td>Selected row, current nav, info banner</td><td class="num">fg 13.0 / 10.5</td></tr>
+        <tr><td><code>accent-text</code></td><td><code>hyperlink_color</code></td><td><span class="sw" style="background:#174b8c"></span>#174B8C</td><td><span class="sw" style="background:#9cc3f5"></span>#9CC3F5</td><td>Links, selected nav text</td><td class="num">6.9 / 7.0 on weak</td></tr>
+        <tr><td><code>danger</code></td><td>danger button fill</td><td><span class="sw" style="background:#b3261e"></span>#B3261E</td><td><span class="sw" style="background:#f0857b"></span>#F0857B</td><td>Destructive actions</td><td class="num">6.5 / 7.3 with on-danger</td></tr>
+        <tr><td><code>danger-bg</code> / <code>danger-text</code></td><td><code>error_fg_color</code> = danger-text</td><td><span class="sw" style="background:#fcebea"></span>#FCEBEA / #9C1F18</td><td><span class="sw" style="background:#3a1c1a"></span>#3A1C1A / #FFAAA2</td><td>Error banner, field errors</td><td class="num">6.9 / 8.5</td></tr>
+        <tr><td><code>warn-bg</code> / <code>warn</code> / <code>warn-line</code></td><td><code>warn_fg_color</code> = warn</td><td><span class="sw" style="background:#fff3d9"></span>#FFF3D9 / #8A5100 / #B97A12</td><td><span class="sw" style="background:#32260e"></span>#32260E / #F0B44C / #B58222</td><td>Visible-secret frame, wait states, lock soon</td><td class="num">5.9 / 8.0</td></tr>
+        <tr><td><code>ok-bg</code> / <code>ok</code></td><td>custom</td><td><span class="sw" style="background:#e5f3ea"></span>#E5F3EA / #1C6B3A</td><td><span class="sw" style="background:#15301f"></span>#15301F / #72D29B</td><td>Success banner, strong meter</td><td class="num">5.7 / 7.7</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="blk">
+    <h3>Icons</h3>
+    <p>egui ships no icon font we'd want to rely on. Holm vendors a 26-glyph subset of <b>Phosphor Regular</b> (MIT) as one small TTF (about 8 KB), loaded as <code>FontFamily::Name("icons")</code> and drawn with <code>RichText</code>. There is no extra crate (no <code>egui-phosphor</code>), so the dependency tree doesn't grow. The subset is built once with <code>pyftsubset</code> and committed with its licence and a script to regenerate it. Rules: an icon never stands alone without a hover text and an AccessKit label, each item type has a different <em>shape</em>, and banner tones have different shapes (circle-i, triangle, octagon, check). The page below draws stand-ins in the same style.</p>
+    <div class="icg" id="icg"></div>
+  </div>
+
+  <div class="blk">
+    <h3>Components</h3>
+    <p>Live specimens use the same tokens as the screens. "Stock" means a stock egui widget with theme values. <span class="cw">Custom</span> means Holm draws it.</p>
+    <div class="specs">
+      <div class="spec">
+        <div class="live">
+          <button class="ri" aria-selected="true" style="border:1px solid var(--line);border-radius:6px"><span class="tyi"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg></span><div><div class="t">Example Mail <svg class="i" viewBox="0 0 24 24" aria-label="Favourite" role="img"><path d="M12 3l2.8 5.8 6.2.8-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.8z"/></svg></div><div class="s">ada@example.com · Personal</div></div></button>
+          <button class="ri" aria-selected="false" style="border:1px solid var(--line);border-radius:6px"><span class="tyi"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h10M10 12h10M10 18h10M4 6h2M4 12h2M4 18h2"/></svg></span><div><div class="t">Hardware wallet seed</div><div class="s">Recovery phrase · 12 words · Personal</div></div></button>
+        </div>
+        <div class="txt"><h3>List row <span class="cw">Custom</span> <code>ItemRow</code></h3>
+          <ul><li>52 px tall, 12 px side padding, 30 px type tile, title SemiBold, second line Small muted (username, chain, word count or type).</li>
+          <li>States: rest, hover (<code>side</code>), selected (<code>accent-weak</code> fill plus accent tile border), focus (2 px inset ring, separate from selection).</li>
+          <li>No copy button and no secret ever (fixed decision). Right-click menu: Edit, Favourite, Move to trash.</li>
+          <li>AccessKit: role ListItem, name "Example Mail, Login, favourite, ada@example.com".</li>
+          <li>Keys: ↑/↓ move, Home/End, Enter or → moves focus to detail, Delete opens Move to trash.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="flds">
+            <div class="fld"><span class="lb">Password</span><span class="v mask">••••••••••••</span><span class="acts"><button class="b">Show</button><button class="b">Copy</button></span></div>
+            <div class="fld"><span class="lb">Password</span><span class="v"><span class="vis">EXAMPLE-not-real-7Hq2</span></span><span class="acts"><button class="b">Hide</button><button class="b">Copy</button></span><span class="visn"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Visible · hides in 24 s</span></div>
+          </div>
+        </div>
+        <div class="txt"><h3>Detail field with reveal and copy <span class="cw">Custom</span> <code>SecretDisplay</code></h3>
+          <ul><li>Label Small muted above. Value Body, Monospace for secrets. Actions right-aligned: Show/Hide, then Copy.</li>
+          <li>Masked: always 12 dots, so the length never leaks. Shown: amber frame plus "Visible · hides in N s" (text plus eye icon, not colour alone).</li>
+          <li>Shown text is not selectable. Copy goes only through the button, so auto-clear always applies.</li>
+          <li>Hides on timeout (passwords 30 s, phrases 60 s), item change, lock and window blur.</li>
+          <li>Copy: the button reads "Copied" with a check for 2 s, and the status bar starts the countdown.</li>
+          <li>AccessKit: name "Password, hidden" or "Password, shown"; never the value.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <label class="lab"><span>Master password</span>
+            <span class="sf"><input type="password" value="example-only" aria-label="Master password" id="spec-pw"><button class="eye" type="button" aria-label="Show password" title="Show password"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+          <div class="meter s2" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="mtx"><b>Weak · refused</b><span class="hint">Long enough, but easy to guess. Add another word or two.</span></div>
+        </div>
+        <div class="txt"><h3>Password field <span class="cw">Custom</span> <code>SecretField</code></h3>
+          <ul><li>Looks like a <code>TextEdit</code>: 30 px, <code>line-strong</code> border, <code>field</code> fill, Monospace mask.</li>
+          <li>No undo history, lays out mask glyphs only, pre-allocated buffer wiped on drop and on lock, no IME preedit cache (spec §10).</li>
+          <li>Eye button: toggles, gets the amber frame when shown, auto-hides after 30 s. AccessKit role PasswordInput, no value.</li>
+          <li>Enter submits the form it's in, unless the form is destructive. Esc clears an unsaved entry on the unlock screen.</li>
+          <li>The strength meter under it is a 4-segment <code>Painter</code> bar plus a word label. <span class="cw">Custom</span> <code>StrengthMeter</code></li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="bwrap"><button class="b">Cancel</button><button class="b dng"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Delete forever</button></div>
+          <div class="bwrap"><button class="b dngo"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>Move to Trash</button><button class="b pri">Save</button></div>
+        </div>
+        <div class="txt"><h3>Danger button (stock <code>Button</code> with fill)</h3>
+          <ul><li>Filled danger: only for actions that can't be undone in Holm (Delete forever, Empty trash, Export CSV). Always inside a confirm modal, always on the right, never focused by default.</li>
+          <li>Outline danger: reversible actions (Move to Trash), with Undo for 10 s.</li>
+          <li>Label = icon + exact verb + object. Never "OK" or "Yes".</li>
+          <li>Enter never activates a filled danger button. Space or a click only.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="ban info"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg><div><b>Locked after 5 minutes without activity.</b></div></div>
+          <div class="ban warn"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.01"/></svg><div><b>Too many wrong tries.</b><p>Try again in 8 s.</p></div></div>
+          <div class="ban dng"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16v.01"/></svg><div><b>Not saved.</b><p>The disk is full. The vault file on disk is unchanged.</p></div></div>
+          <div class="ban ok"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><div><b>Vault created.</b></div></div>
+        </div>
+        <div class="txt"><h3>Banner (stock <code>Frame</code>)</h3>
+          <ul><li>Tones: info, warn, danger, ok. Each has its own icon shape and a bold first sentence.</li>
+          <li>Text is always <code>fg</code> on the tinted fill (AA in both themes). Actions sit inside the banner.</li>
+          <li>Placed where the problem is: above the form, never as a floating toast. AccessKit live region "polite"; danger is "assertive".</li>
+          <li>Messages say what happened, then what to do. They never contain secrets, item values or file contents.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="modal" style="width:100%;box-shadow:none">
+            <h3>Delete "Old forum login" forever?</h3>
+            <p>It's removed from the vault file the next time Holm saves. Older copies and backups of the file still contain it.</p>
+            <div class="macts"><button class="b">Cancel</button><button class="b dng">Delete forever</button></div>
+          </div>
+        </div>
+        <div class="txt"><h3>Modal (stock <code>egui::Modal</code>, egui 0.30+)</h3>
+          <ul><li>Dimmed backdrop (<code>scrim</code>), 460 px max, 16 px padding, Heading title, body, actions right-aligned: secondary then primary.</li>
+          <li>Focus starts on the first field, or on Cancel for confirms. Tab wraps inside; check egui's behaviour and add a wrap if needed.</li>
+          <li>Esc = Cancel (except while working). Clicking the backdrop does nothing, so a stray click can't lose input.</li>
+          <li>While working (Argon2), the buttons are disabled with a spinner and Esc is ignored.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="sbar" style="border:1px solid var(--line);border-radius:6px">
+            <span class="seg2"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>Unlocked · auto-lock 4:12</span>
+            <span class="seg2"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/></svg>Password copied · clears in 23 s <button class="b">Clear now</button></span>
+            <span class="sp"></span>
+            <span class="seg2 okt"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>Saved</span>
+            <span class="seg2">holm.vault</span>
+          </div>
+          <div class="sbar" style="border:1px solid var(--line);border-radius:6px">
+            <span class="seg2 warnt"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Locking in 0:24. Unsaved changes will be discarded.</span>
+            <span class="sp"></span>
+            <span class="seg2 dngt"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16v.01"/></svg>Not saved</span>
+          </div>
+        </div>
+        <div class="txt"><h3>Status bar (stock <code>TopBottomPanel::bottom</code>)</h3>
+          <ul><li>28 px, Small text, tabular digits, <code>side</code> fill. Left: lock state and auto-lock. Middle: clipboard (only while Holm's copy is pending). Right: save state and file name (full path on hover).</li>
+          <li>Repaint once a second with <code>request_repaint_after</code>, and only while a countdown is visible.</li>
+          <li>Last 30 s before lock: amber text plus clock icon, plus "Unsaved changes will be discarded" when editing.</li>
+          <li>Clipboard: "Clear now" clears only if Holm's value is still there. AccessKit announces only the start and end, not every tick.</li></ul></div>
+      </div>
+      <div class="spec">
+        <div class="live">
+          <div class="chips"><button class="chip" aria-pressed="true"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>All</button><button class="chip" aria-pressed="false">Personal</button><button class="chip" aria-pressed="false">Work</button><button class="chip" aria-pressed="false">Community</button></div>
+        </div>
+        <div class="txt"><h3>Category chip (stock <code>SelectableLabel</code>, styled)</h3>
+          <ul><li>24 px pill. When selected: <code>accent-weak</code> fill, accent border, check icon and SemiBold (three cues, not colour alone).</li>
+          <li>Single select. Arrow keys move between chips; Space selects.</li></ul></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== NOTES ===================== -->
+<section id="v-notes" class="doc" hidden aria-label="Build notes">
+  <div class="blk"><h2>Build notes</h2><p class="lead">What changed from the mock and why, the custom widgets, the keyboard map, the security calls settled here, and how it carries over to mobile.</p></div>
+
+  <div class="blk"><h3>Changes from the mock</h3>
+  <div class="tw"><table><thead><tr><th>Area</th><th>Mock</th><th>Final</th><th>Why</th></tr></thead><tbody>
+    <tr><td>Lock</td><td>Separate Locked view, then Unlock</td><td>One unlock screen with a reason line</td><td>One step back in; spec §10</td></tr>
+    <tr><td>First run</td><td>Straight into Create</td><td>Welcome → Create → Vault created → empty vault</td><td>Clear choice of create or open; next steps include a backup</td></tr>
+    <tr><td>Create</td><td>Mismatch error while typing; colour-only meter</td><td>Match checked on blur or submit; meter with word label and zxcvbn tip; one "can't recover" checkbox</td><td>Timing of errors; not colour alone; deliberate, explained friction</td></tr>
+    <tr><td>Navigation</td><td>New in menu; type and category dropdowns; no sort</td><td>Sidebar: types, Favourites, Trash, Generator, Settings, Lock. List: search, chips, sort, New</td><td>Spec §10; fewer controls per pane</td></tr>
+    <tr><td>Reveal</td><td>Sticky toggle, no timer</td><td>Toggle + amber frame + countdown; hides on blur, item change, lock</td><td>Shoulder-surfing; visible state</td></tr>
+    <tr><td>Recovery phrase</td><td>Phrase inside the password modal</td><td>Modal asks only for the password; numbered grid in detail; 60 s; Hide now</td><td>Easier to write down; visible timer</td></tr>
+    <tr><td>Edit</td><td>Replaced list and detail</td><td>Edits in the detail pane; type fixed after create; unsaved marker; discard guard</td><td>Context stays; no lost fields on a type change</td></tr>
+    <tr><td>Save failure</td><td>Full-page error</td><td>Inline banner in the editor, input kept, file unchanged, Save copy elsewhere</td><td>No data loss; honest cause</td></tr>
+    <tr><td>Trash</td><td>One-click delete</td><td>Trash as a sidebar view; confirm with honest scope; Undo for Move to Trash</td><td>Irreversible actions need deliberate friction</td></tr>
+    <tr><td>Unlock errors</td><td>Wrong, throttle, cost</td><td>Adds cost-too-low, out of memory, in use by another window, not a vault, newer format, file missing, edits discarded</td><td>Every state the core can return</td></tr>
+    <tr><td>Status bar</td><td>Count and path</td><td>Lock, countdowns, clipboard, save state, file name</td><td>State you act on</td></tr>
+    <tr><td>Settings</td><td>Claimed a password check</td><td>Weaken-confirm modal; ceilings, no "Never"; honest About section</td><td>Spec §8.9</td></tr>
+    <tr><td>Import</td><td>Preview only</td><td>Too large, wrong columns, not UTF-8, done + delete reminder</td><td>File-level failures happen first</td></tr>
+    <tr><td>Crypto</td><td>Single address line</td><td>Grouped in 4s plus a check-after-paste hint</td><td>Clipboard-swapping malware</td></tr>
+    <tr><td>Window title</td><td>"Holm - Edit item"</td><td>"Holm"</td><td>Screen-share pickers and window lists</td></tr>
+  </tbody></table></div></div>
+
+  <div class="two">
+    <div class="card"><h3>Custom egui widgets needed</h3>
+      <ol>
+        <li><b>SecretField</b>: single-line secret input (spec §10). Wiping buffer, mask layout, no undo, no AccessKit value, eye toggle with timeout.</li>
+        <li><b>SecretTextArea</b>: multi-line variant for note bodies and phrase entry. Same rules, plus line wrap of mask glyphs.</li>
+        <li><b>SecretDisplay</b>: read-only shown value from the wiping buffer, not selectable, amber frame, countdown. Its <b>PhraseGrid</b> mode draws numbered words.</li>
+        <li><b>ItemRow</b>: two-line selectable row with type tile and star, own AccessKit node.</li>
+        <li><b>StrengthMeter</b>: 4-segment painter bar plus label (small).</li>
+      </ol>
+      <p class="hint">Everything else is stock: SidePanel, CentralPanel, TopBottomPanel, ScrollArea, Button, SelectableLabel, ComboBox, Checkbox, RadioButton, Slider, DragValue, TextEdit (non-secret fields only), Frame, Modal, Spinner. Native file dialogs through <code>rfd</code>.</p>
+    </div>
+    <div class="card"><h3>Keyboard map</h3>
+      <div class="tw" style="border:0"><table><tbody>
+        <tr><td><kbd>⌘/Ctrl L</kbd></td><td>Lock now (everywhere)</td></tr>
+        <tr><td><kbd>⌘/Ctrl F</kbd></td><td>Focus search</td></tr>
+        <tr><td><kbd>⌘/Ctrl N</kbd></td><td>New item</td></tr>
+        <tr><td><kbd>⌘/Ctrl E</kbd></td><td>Edit selected item</td></tr>
+        <tr><td><kbd>⌘/Ctrl S</kbd></td><td>Save edit</td></tr>
+        <tr><td><kbd>⌘/Ctrl G</kbd></td><td>Generator</td></tr>
+        <tr><td><kbd>⌘/Ctrl ,</kbd></td><td>Settings</td></tr>
+        <tr><td><kbd>⌘/Ctrl C</kbd></td><td>Copy the focused detail field only</td></tr>
+        <tr><td><kbd>↑ ↓ Home End</kbd></td><td>Move in list; <kbd>Enter</kbd>/<kbd>→</kbd> to detail, <kbd>←</kbd> back</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close modal · cancel edit · hide shown secret · clear search</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Submit unlock, create, gate, save. Never a destructive confirm</td></tr>
+      </tbody></table></div>
+      <p class="hint">Focus order follows reading order: sidebar → search → chips → sort → New → list → detail actions. Unlock and gate modals autofocus the secret field. <code>Modifiers::COMMAND</code> maps to ⌘ on macOS and Ctrl elsewhere. Try them in the Screens tab: click inside the window first.</p>
+    </div>
+  </div>
+
+  <div class="card dec"><h3>Security calls settled here (per spec)</h3>
+    <ul>
+      <li><b>Reveal timeouts:</b> passwords 30 s, recovery phrases 60 s. Secure-note bodies stay shown until you leave the item, the window loses focus, or Holm locks. All of them hide on window blur.</li>
+      <li><b>Shown secrets are not selectable</b>; copying goes only through Copy, so auto-clear and the clipboard-history hints always apply.</li>
+      <li><b>Screen readers</b> get the field name and state, never the value (spec §10). Copy is the accessible route, and the docs say so.</li>
+      <li><b>Recovery phrase copy</b> exists only inside a shown session that you opened with the password. It uses the same 30 s clear and is never the default.</li>
+      <li><b>Ceilings, no "Never":</b> auto-lock at most 60 min, clipboard clear at most 90 s. Lock on sleep can be turned off only with the password.</li>
+      <li><b>Enter never confirms</b> a destructive action, and Cancel holds focus in every confirm.</li>
+      <li><b>Unsaved edits are discarded on auto-lock</b>, with a 30 s amber warning and a note on the unlock screen.</li>
+      <li><b>Window title is always "Holm".</b> No item names in titles, notifications or recent-items lists.</li>
+      <li><b>Masks are a fixed 12 dots</b>, whatever the real length.</li>
+      <li><b>Crypto addresses show in clear</b> (you need to check them). Note bodies start hidden.</li>
+      <li><b>The throttle notice</b> appears after the first wrong try; the countdown appears on the third. The UI never says the wait resets on restart (the docs do).</li>
+      <li><b>Item type is fixed after creation</b>, so fields can't be silently dropped.</li>
+      <li><b>CSV export leaves out Trash</b>, and the dialog says so.</li>
+      <li><b>Opening another vault locks the current one first.</b></li>
+      <li><b>Cost errors hide the password field</b>: Holm didn't try the password, so asking for another is pointless.</li>
+    </ul>
+  </div>
+
+  <div class="two">
+    <div class="card"><h3>Carrying it to mobile</h3>
+      <ul>
+        <li>Three panes → list, then pushed detail (resize this page to phone width to see the stack).</li>
+        <li>Sidebar → a filter sheet and a bottom bar with Vault, Generator, Settings.</li>
+        <li>Status bar → a slim strip above the bottom bar for the clipboard countdown; auto-lock reads "Locks when you leave Holm".</li>
+        <li>Modals → full-height sheets; the same copy and button order.</li>
+        <li>Shown secret, amber frame and countdown map one to one. Copy stays a button; no long-press copy.</li>
+        <li>Targets grow from 28 px to 44 px; type sizes stay the same.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Default vault paths (spec §8.0)</h3>
+      <ul>
+        <li>macOS: <code>~/Library/Application Support/Holm/holm.vault</code></li>
+        <li>Windows: <code>%APPDATA%\Holm\holm.vault</code></li>
+        <li>Linux: <code>~/.local/share/Holm/holm.vault</code></li>
+      </ul>
+      <p class="hint">The status bar shows the file name and gives the full path on hover. The UI config holds only the theme, window size and last path.</p>
+    </div>
+  </div>
+</section>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+/* ---------- icons (stand-ins for the Phosphor subset) ---------- */
+const ICON={
+ lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+ unlock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>',
+ search:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>',
+ copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h9"/>',
+ eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+ eyeoff:'<path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.8M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+ star:'<path d="M12 3l2.8 5.8 6.2.8-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.8z"/>',
+ trash:'<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+ sliders:'<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+ dice:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 8.5h.01M15.5 15.5h.01M15.5 8.5h.01M8.5 15.5h.01M12 12h.01" stroke-width="3"/>',
+ key:'<circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/>',
+ coins:'<ellipse cx="9" cy="7" rx="6" ry="3"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7"/><path d="M9 15v2c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.6-2.4-2.9-5.5-3"/>',
+ listnum:'<path d="M10 6h10M10 12h10M10 18h10M4 6h2M4 12h2M4 18h2"/>',
+ note:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+ folder:'<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+ warn:'<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.01"/>',
+ info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/>',
+ stop:'<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16v.01"/>',
+ check:'<path d="M5 12l5 5 9-10"/>',
+ okc:'<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',
+ x:'<path d="M6 6l12 12M18 6L6 18"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ clip:'<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/>',
+ download:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+ upload:'<path d="M12 16V5M7 10l5-5 5 5M5 20h14"/>',
+ undo:'<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+ user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+ globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+ refresh:'<path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/>',
+ edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+ shield:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><rect x="9" y="11" width="6" height="5" rx="1"/><path d="M10.5 11V9.5a1.5 1.5 0 0 1 3 0V11"/>',
+ back:'<path d="M15 5l-7 7 7 7"/>',
+ tag:'<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><path d="M7.5 7.5h.01" stroke-width="3"/>',
+ sort:'<path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/>',
+ grid:'<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
+ save:'<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>'
+};
+const ic=n=>`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]||""}</svg>`;
+const ICON_LIST=[["lock","Lock","Lock"],["unlock","Unlocked","LockOpen"],["shield","Brand","ShieldCheck"],["search","Search","MagnifyingGlass"],["plus","New","Plus"],["copy","Copy","Copy"],["eye","Show","Eye"],["eyeoff","Hide","EyeSlash"],["star","Favourite","Star"],["trash","Trash","Trash"],["undo","Restore, Undo","ArrowCounterClockwise"],["edit","Edit","PencilSimple"],["grid","All items","SquaresFour"],["key","Login","Key"],["coins","Crypto address","Coins"],["listnum","Recovery phrase","ListNumbers"],["note","Secure note","Note"],["dice","Generator","DiceFive"],["refresh","Regenerate","ArrowsClockwise"],["sliders","Settings","Sliders"],["tag","Category","Tag"],["sort","Sort","ArrowsDownUp"],["folder","Vault file","Folder"],["download","Export, backup","DownloadSimple"],["upload","Import","UploadSimple"],["clip","Clipboard","Clipboard"],["clock","Auto-lock","Clock"],["user","Username","User"],["globe","Website","Globe"],["save","Save","FloppyDisk"],["back","Back (mobile)","CaretLeft"],["info","Info banner","Info"],["warn","Warning banner","Warning"],["stop","Error banner","WarningOctagon"],["okc","Success banner","CheckCircle"],["check","Done, selected","Check"],["x","Close","X"]];
+
+const isMac=/Mac|iPhone|iPad/.test((navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||navigator.userAgent);
+const MOD=isMac?"⌘":"Ctrl+";
+const K=k=>`<kbd>${MOD}${k}</kbd>`;
+const PATH="~/Library/Application Support/Holm/holm.vault";
+
+/* ---------- fake data ---------- */
+const TYPE={login:"Login",crypto:"Crypto address",phrase:"Recovery phrase",note:"Secure note"};
+const TICON={login:"key",crypto:"coins",phrase:"listnum",note:"note"};
+const WORDS12=["sample","ribbon","canyon","walnut","pepper","meadow","example","lantern","orbit","velvet","thimble","quiet"];
+const ITEMS=[
+ {id:"mail",type:"login",title:"Example Mail",user:"ada@example.com",url:"https://mail.example.com",cat:"Personal",fav:true,pw:"EXAMPLE-not-real-7Hq2",notes:"Demo entry. Not a real account.",mod:"12 Oct 2026",made:"4 Jan 2026"},
+ {id:"bank",type:"login",title:"Example Bank",user:"ada.lovelace",url:"https://bank.example.com",cat:"Personal",pw:"EXAMPLE-not-real-p4ss",notes:"",mod:"2 Oct 2026",made:"9 Feb 2026"},
+ {id:"wiki",type:"login",title:"Team Wiki",user:"ada@work.example.com",url:"https://wiki.example.com",cat:"Work",pw:"EXAMPLE-fake-wiki-0Ol1",notes:"",mod:"28 Sep 2026",made:"28 Sep 2026"},
+ {id:"forum",type:"login",title:"Forum account",user:"ada_example",url:"https://forum.example.org",cat:"Community",pw:"EXAMPLE-fake-forum-9",notes:"",mod:"3 Sep 2026",made:"1 Mar 2026"},
+ {id:"eth",type:"crypto",title:"Main wallet",chain:"Ethereum",addr:"0x0000000000000000000000000000000000dEaD01",memo:"",cat:"Personal",fav:true,notes:"Receiving address only. Fake.",mod:"9 Oct 2026",made:"9 Oct 2026"},
+ {id:"btc",type:"crypto",title:"Savings address",chain:"Bitcoin",addr:"bc1qexample0fake0address0not0real0000000",memo:"",cat:"Personal",notes:"",mod:"1 Oct 2026",made:"1 Oct 2026"},
+ {id:"seed",type:"phrase",title:"Hardware wallet seed",words:WORDS12,cat:"Personal",notes:"Fake demo phrase. Never use it.",mod:"20 Sep 2026",made:"20 Sep 2026"},
+ {id:"router",type:"note",title:"Router notes",body:"Admin page: router.example.com\nUser: admin-example\nWi-Fi name: EXAMPLE-NET\nWi-Fi password: EXAMPLE-not-real-wifi",cat:"Uncategorised",mod:"15 Aug 2026",made:"15 Aug 2026"}
+];
+const TRASH0=[{id:"oldforum",type:"login",title:"Old forum login",cat:"Community",when:"16 Oct 2026"},{id:"testnote",type:"note",title:"Test note",cat:"Uncategorised",when:"14 Oct 2026"}];
+const CATS=["Personal","Work","Community","Uncategorised"];
+const byId=id=>ITEMS.find(i=>i.id===id);
+
+/* ---------- screens ---------- */
+const SCR=[
+ {g:"First run",id:"welcome",name:"Welcome",desc:"First launch, or the last vault can't be found. One clear choice: create or open.",st:[["first","No vault yet"],["missing","Last vault missing"]]},
+ {g:"First run",id:"create",name:"Create vault",desc:"Master password with a strength check. Weak passwords are refused; the only friction is one acknowledgement.",st:[["empty","Empty"],["weak","Weak, refused"],["mismatch","Mismatch"],["ready","Ready"],["working","Creating"]]},
+ {g:"First run",id:"created",name:"Vault created",desc:"New success state: where the file is and three next steps, backup included.",st:[["done","Done"]]},
+ {g:"Unlock",id:"unlock",name:"Unlock",desc:"The only screen while locked. A reason line explains why you're here; every error the core can return has its own copy.",st:[["ready","Ready"],["autolocked","Auto-locked"],["manual","Locked by you"],["discarded","Edits discarded"],["wrong","Wrong password"],["throttled","Throttled"],["working","Unlocking"],["costhigh","Cost too high"],["costlow","Cost too low"],["nomem","Not enough memory"],["inuse","Open in another window"],["notvault","Not a vault"],["newer","Newer format"],["missing","File missing"]]},
+ {g:"Unlock",id:"openfile",name:"Open another vault",desc:"One vault at a time. The open vault locks before the file dialog appears.",st:[["confirm","Confirm from vault"],["pick","Locked, choose file"]]},
+ {g:"Vault",id:"items",name:"Items",desc:"Three panes: menu, list (search, chips, sort, New), detail. No copy on rows; copying happens in the detail pane.",st:[["normal","Normal"],["revealed","Password shown"],["copied","Copied"],["crypto","Crypto address"],["note","Secure note"],["locksoon","Locking soon"],["empty","Empty vault"],["noresults","No results"],["trashed","Moved to Trash"]]},
+ {g:"Vault",id:"phrase",name:"Recovery phrase",desc:"Showing needs the master password every time. Numbered grid, 60 s countdown, Hide now.",st:[["hidden","Hidden"],["gate","Password asked"],["gatewrong","Wrong password"],["shown","Shown"],["rehidden","Hidden again"]]},
+ {g:"Vault",id:"edit",name:"Add or edit item",desc:"Edits happen in the detail pane. The type is fixed after creation. Save failure keeps your input.",st:[["edit","Edit"],["new","New, pick type"],["invalid","Missing title"],["saving","Saving"],["failed","Save failed"],["discard","Discard changes?"]]},
+ {g:"Vault",id:"trash",name:"Trash",desc:"Restore, Delete forever, Empty trash. Confirms say honestly what remains in old copies and backups.",st:[["list","List"],["confirm1","Delete one"],["confirmall","Empty trash"],["empty","Empty"]]},
+ {g:"Vault",id:"gen",name:"Generator",desc:"Passwords, passphrases and usernames. Strength shown in bits and words.",st:[["password","Password"],["passphrase","Passphrase"],["username","Username"],["fromedit","From an edit"]]},
+ {g:"Settings",id:"settings",name:"Settings",desc:"Security settings live inside the encrypted file. Making one weaker asks for the master password.",st:[["normal","Normal"],["weaken","Weaken, confirm"],["backup","Backup saved"]]},
+ {g:"Settings",id:"chpw",name:"Change master password",desc:"Rotates the data key. Ends with a prompt to replace old backups.",st:[["form","Form"],["weak","New is weak"],["wrongcur","Wrong current"],["working","Working"],["done","Done"]]},
+ {g:"Settings",id:"export",name:"Export plaintext CSV",desc:"Deliberate friction: a clear warning, an acknowledgement and the master password.",st:[["form","Form"],["ready","Ready"],["done","Done"]]},
+ {g:"Settings",id:"import",name:"Import",desc:"Generic CSV/JSON and browser CSV. File-level errors first, then a preview that never shows values.",st:[["choose","Choose"],["preview","Preview"],["toolarge","Too large"],["columns","Unknown columns"],["encoding","Not UTF-8"],["done","Done"]]},
+ {g:"Settings",id:"cats",name:"Categories",desc:"Rename and delete. Deleting moves items to Uncategorised; nothing is deleted.",st:[["list","List"],["confirm","Delete, confirm"]]},
+ {g:"Reference",id:"errors",name:"Error messages",desc:"Every user-facing error in one table: what happened, the copy, and the actions offered.",st:[]}
+];
+const SMAP=Object.fromEntries(SCR.map(s=>[s.id,s]));
+const UNLOCKED=new Set(["items","phrase","edit","trash","gen","settings","chpw","export","import","cats"]);
+
+/* ---------- state ---------- */
+let A={};
+function base(){return {scr:"items",st:"normal",sel:"mail",q:"",cat:"All",nav:"all",sort:"title",rev:null,revLeft:0,copied:null,copiedT:0,clip:0,clipWhat:"",al:300,alMax:300,modal:null,toast:0,toastMsg:"",phr:false,phrLeft:0,phrCopied:false,thr:0,fails:0,working:false,dirty:false,save:"saved",empty:false,gone:[],trash:TRASH0.slice(),newType:"login",addrHint:false,g:{type:"password",len:20,up:true,lo:true,dg:true,sy:true,alike:true,words:6,sep:"-",caps:true,num:false,ustyle:"words"},gout:"",fromEdit:false,set:{al:5,clip:30,sleep:true},banner:null};}
+function preset(scr,st){
+ const p={scr,st};
+ switch(scr){
+  case "items":
+   if(st==="revealed")Object.assign(p,{rev:"pw",revLeft:24});
+   if(st==="copied")Object.assign(p,{copied:"pw",copiedT:4,clip:23,clipWhat:"Password"});
+   if(st==="crypto")Object.assign(p,{sel:"eth",nav:"all",addrHint:true,copied:"addr",copiedT:4,clip:27,clipWhat:"Address"});
+   if(st==="note")Object.assign(p,{sel:"router",rev:"body",revLeft:0});
+   if(st==="locksoon")Object.assign(p,{al:25});
+   if(st==="empty")Object.assign(p,{empty:true,sel:null});
+   if(st==="noresults")Object.assign(p,{q:"paypal",sel:null});
+   if(st==="trashed")Object.assign(p,{gone:["forum"],toast:10,toastMsg:"“Forum account” moved to Trash.",sel:"wiki"});
+   break;
+  case "phrase":
+   Object.assign(p,{sel:"seed",nav:"all"});
+   if(st==="gate")p.modal={k:"gate"};
+   if(st==="gatewrong"){p.modal={k:"gate",bad:true};p.fails=1;}
+   if(st==="shown")Object.assign(p,{phr:true,phrLeft:60});
+   break;
+  case "edit":
+   if(st==="new"||st==="invalid")Object.assign(p,{isNew:true,sel:null});
+   if(st==="invalid")p.bad=true;
+   if(st==="saving")Object.assign(p,{dirty:true,save:"saving",working:true});
+   if(st==="failed")Object.assign(p,{dirty:true,save:"failed"});
+   if(st==="discard")Object.assign(p,{dirty:true,modal:{k:"discard"}});
+   break;
+  case "trash":
+   if(st==="confirm1")p.modal={k:"del1",id:"oldforum"};
+   if(st==="confirmall")p.modal={k:"delall"};
+   if(st==="empty")p.trash=[];
+   break;
+  case "gen":
+   p.g=Object.assign(base().g,{type:st==="fromedit"?"password":st});
+   if(st==="fromedit")p.fromEdit=true;
+   break;
+  case "settings":
+   if(st==="weaken")p.modal={k:"weaken",what:"al",from:5,to:30};
+   if(st==="backup")p.banner="backup";
+   break;
+  case "openfile":
+   if(st==="confirm")p.modal={k:"openfile"};
+   break;
+  case "unlock":
+   if(st==="wrong")p.fails=1;
+   if(st==="throttled")Object.assign(p,{fails:5,thr:8});
+   if(st==="working")p.working=true;
+   break;
+ }
+ return p;
+}
+function enter(scr,st,patch){
+ const s=SMAP[scr]; if(!s)return;
+ if(st==null)st=s.st.length?s.st[0][0]:"";
+ const keepSet=A.set;
+ A=Object.assign(base(),preset(scr,st),patch||{});
+ if(keepSet&&!(patch&&patch.set))A.set=keepSet;
+ A.alMax=A.set.al*60; if(A.al===300&&A.alMax!==300)A.al=A.alMax;
+ if(scr==="gen")regen();
+ renderShell(); renderApp(false);
+ try{history.replaceState(null,"","#"+scr)}catch(e){}
+}
+function mark(st){A.st=st;$$("#states button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.st===st)));}
+
+/* ---------- shell ---------- */
+function renderRail(){
+ let h="",g="";
+ SCR.forEach((s,i)=>{ if(s.g!==g){g=s.g;h+=`<h2>${esc(g)}</h2>`;} h+=`<button type="button" data-scr="${s.id}" aria-current="false"><span>${esc(s.name)}</span><small>${s.st.length||""}</small></button>`; });
+ $("#rail").innerHTML=h;
+ $("#railsel").innerHTML=SCR.map((s,i)=>`<option value="${s.id}">${i+1}. ${esc(s.g)} · ${esc(s.name)}</option>`).join("");
+}
+function renderShell(){
+ const s=SMAP[A.scr];
+ $$("#rail button").forEach(b=>b.setAttribute("aria-current",String(b.dataset.scr===s.id)));
+ $("#railsel").value=s.id;
+ $("#sname").textContent=s.name; $("#sdesc").textContent=s.desc;
+ $("#states").innerHTML=s.st.length?`<span>State</span>`+s.st.map(([k,l])=>`<button type="button" data-st="${k}" aria-pressed="${k===A.st}">${esc(l)}</button>`).join(""):"";
+ $("#bn").innerHTML=(BN[s.id]||[]).map(([h,items])=>`<section><h3>${esc(h)}</h3><ul>${items.map(t=>`<li>${fmtNote(t)}</li>`).join("")}</ul></section>`).join("");
+}
+const fmtNote=t=>esc(t).replace(/\{(\w+)\}/g,'<span class="cw">$1</span>').replace(/`([^`]+)`/g,"<code>$1</code>");
+
+/* ---------- small builders ---------- */
+const btn=(label,a,cls="",x="")=>`<button type="button" class="b ${cls}" data-a="${a}" ${x}>${label}</button>`;
+function ban(tone,title,body,acts){const icn={info:"info",warn:"warn",dng:"stop",ok:"okc"}[tone];return `<div class="ban ${tone}" role="${tone==="dng"?"alert":"status"}">${ic(icn)}<div><b>${title}</b>${body?`<p>${body}</p>`:""}</div>${acts?`<div class="acts">${acts}</div>`:""}</div>`;}
+function sf(id,label,o={}){return `<label class="lab"><span>${label}</span><span class="sf${o.bad?" bad":""}"><input type="password" id="${id}" value="${esc(o.val||"")}" autocomplete="off" spellcheck="false" ${o.auto?"data-autofocus":""} ${o.dis?"disabled":""} ${o.ph?`placeholder="${esc(o.ph)}"`:""}><button class="eye" type="button" data-a="eye" aria-label="Show ${esc(label.toLowerCase())}" title="Show">${ic("eye")}</button></span></label>`;}
+const ferr=t=>`<span class="ferr" role="alert">${ic("stop")}${t}</span>`;
+const fmt=s=>`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+const spin='<span class="spin" aria-hidden="true"></span>';
+const chrome=inner=>`<div class="tbar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Holm</div>${inner}`;
+const opt=(v,cur,l)=>`<option value="${esc(v)}"${String(v)===String(cur)?" selected":""}>${esc(l==null?v:l)}</option>`;
+
+/* ---------- strength (stand-in for zxcvbn) ---------- */
+function score(pw){
+ if(!pw)return -1;
+ const n=pw.length, cls=[/[a-z]/,/[A-Z]/,/\d/,/[^A-Za-z0-9]/].filter(r=>r.test(pw)).length;
+ let s=0; if(n>=8)s++; if(n>=12)s++; if(n>=12&&(cls>=3||n>=16))s++; if(n>=18&&cls>=2)s++;
+ if(/(123|abc|password|qwerty|holm)/i.test(pw))s=Math.min(s,1);
+ return Math.min(s,4);
+}
+function meterHtml(pw,id){
+ const s=score(pw); const cls=s<0?"":` s${Math.max(1,s)}`;
+ const ok=s>=3&&pw.length>=12;
+ const word=s<0?"":ok?(s===4?"Very strong":"Strong"):(s<=1?"Too weak · refused":"Weak · refused");
+ let tip="";
+ if(s<0)tip="At least 12 characters. A phrase of 4 or more random words works well.";
+ else if(!ok)tip=pw.length<12?`Needs at least 12 characters (${pw.length} now).`:"Add another word or two. Avoid names, dates and sequences like 123.";
+ else tip="Good. Write it down and keep it somewhere safe and offline.";
+ return `<div class="meter${cls}" aria-hidden="true" id="${id}-m"><i></i><i></i><i></i><i></i></div><div class="mtx" id="${id}-t" aria-live="polite">${word?`<b>${word}</b>`:""}<span class="hint">${tip}</span></div>`;
+}
+
+/* ---------- generator ---------- */
+const GW=["otter","lantern","quartz","meadow","pepper","velvet","orbit","canyon","ribbon","walnut","thimble","quiet","maple","cobalt","fable","gravel","harvest","island","juniper","kettle","lilac","marble","nectar","oyster","pebble","quill","raven","saddle","tundra","umber","violet","willow","yonder","zephyr","anchor","bramble","cactus","dune","ember","fjord"];
+function rnd(n){const lim=Math.floor(4294967296/n)*n,a=new Uint32Array(1);do{crypto.getRandomValues(a)}while(a[0]>=lim);return a[0]%n;}
+function regen(){
+ const g=A.g;
+ if(g.type==="password"){
+  let U="ABCDEFGHJKLMNPQRSTUVWXYZ",L="abcdefghijkmnopqrstuvwxyz",D="23456789",S="!#$%&*+-=?@^_";
+  if(!g.alike){U+="IO";L+="l";D+="01";}
+  const sets=[g.up&&U,g.lo&&L,g.dg&&D,g.sy&&S].filter(Boolean); if(!sets.length){A.gout="";A.gbits=0;return;}
+  const pool=sets.join(""); const out=sets.map(s=>s[rnd(s.length)]);
+  while(out.length<g.len)out.push(pool[rnd(pool.length)]);
+  for(let i=out.length-1;i>0;i--){const j=rnd(i+1);[out[i],out[j]]=[out[j],out[i]];}
+  A.gout=out.join(""); A.gbits=Math.round(g.len*Math.log2(pool.length));
+ }else if(g.type==="passphrase"){
+  const w=[];for(let i=0;i<g.words;i++){let x=GW[rnd(GW.length)];if(g.caps)x=x[0].toUpperCase()+x.slice(1);w.push(x);}
+  if(g.num)w[rnd(w.length)]+=rnd(10);
+  A.gout=w.join(g.sep===" "?" ":g.sep); A.gbits=Math.round(g.words*12.925+(g.num?3.3:0));
+ }else{
+  A.gout=g.ustyle==="words"?GW[rnd(GW.length)]+"_"+GW[rnd(GW.length)]+(10+rnd(90)):Array.from({length:10},()=>"abcdefghjkmnpqrstuvwxyz23456789"[rnd(31)]).join(""); A.gbits=0;
+ }
+}
+const bitsWord=b=>b<50?"Weak":b<70?"Fair":b<90?"Strong":"Very strong";
+
+/* ---------- list ---------- */
+function visible(){
+ let xs=A.empty?[]:ITEMS.filter(i=>!A.gone.includes(i.id));
+ if(A.nav==="fav")xs=xs.filter(i=>i.fav); else if(TYPE[A.nav])xs=xs.filter(i=>i.type===A.nav);
+ if(A.cat!=="All")xs=xs.filter(i=>i.cat===A.cat);
+ const q=A.q.trim().toLowerCase();
+ if(q)xs=xs.filter(i=>[i.title,i.user,i.url,i.chain,i.cat].some(v=>v&&v.toLowerCase().includes(q)));
+ const cmp={title:(a,b)=>a.title.localeCompare(b.title),mod:(a,b)=>ITEMS.indexOf(a)-ITEMS.indexOf(b),type:(a,b)=>a.type.localeCompare(b.type)||a.title.localeCompare(b.title)}[A.sort];
+ if(A.sort==="mod"){const d=s=>Date.parse(s.mod)||0;xs.sort((a,b)=>d(b)-d(a));}else xs.sort(cmp);
+ return xs;
+}
+function second(i){return i.type==="login"?i.user:i.type==="crypto"?i.chain:i.type==="phrase"?`${TYPE.phrase} · ${i.words.length} words`:TYPE.note;}
+function rowsHtml(){
+ const xs=visible();
+ if(!xs.length){
+  if(A.empty)return `<div class="lempty"><b style="color:var(--fg)">Your vault is empty.</b><span>Add your first item, or import from a browser or a CSV file.</span><span class="bwrap">${btn(ic("plus")+"New item","new","pri")}${btn(ic("upload")+"Import…","go-import")}</span></div>`;
+  if(A.q.trim())return `<div class="lempty"><b style="color:var(--fg)">No items match “${esc(A.q.trim())}”.</b><span>Search looks at titles, usernames, websites, chains and categories. It never looks inside passwords, phrases or notes.</span>${btn("Clear search","clearq")}</div>`;
+  return `<div class="lempty"><b style="color:var(--fg)">Nothing here.</b><span>No items match this filter.</span>${btn("Show all items","showall")}</div>`;
+ }
+ return xs.map(i=>`<button type="button" class="ri" role="option" id="r-${i.id}" data-a="sel" data-v="${i.id}" aria-selected="${A.sel===i.id}" tabindex="${A.sel===i.id||(!A.sel&&i===xs[0])?0:-1}" aria-label="${esc(i.title)}, ${TYPE[i.type]}${i.fav?", favourite":""}, ${esc(second(i))}"><span class="tyi">${ic(TICON[i.type])}</span><div><div class="t">${esc(i.title)}${i.fav?`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICON.star}</svg>`:""}</div><div class="s">${esc(second(i))} · ${esc(i.cat)}</div></div></button>`).join("");
+}
+function listPane(){
+ const chips=["All","Personal","Work","Community","Uncategorised"].map(c=>`<button type="button" class="chip" data-a="cat" data-v="${c}" aria-pressed="${A.cat===c}">${A.cat===c?ic("check"):""}${c}</button>`).join("");
+ return `<section class="list" aria-label="Item list"><div class="ltools">
+  <div class="srch">${ic("search")}<input class="in" id="q" type="search" placeholder="Search" aria-label="Search items" value="${esc(A.q)}" autocomplete="off">${K("F")}</div>
+  <div class="chips" role="group" aria-label="Category">${chips}</div>
+  <div class="lrow"><select class="in grow" id="sort" aria-label="Sort">${opt("title",A.sort,"Title A–Z")}${opt("mod",A.sort,"Recently changed")}${opt("type",A.sort,"Type")}</select>${btn(ic("plus")+"New "+K("N"),"new","pri")}</div>
+ </div><div class="rows" role="listbox" aria-label="Items">${rowsHtml()}</div>${A.toast>0?`<div class="toast" role="status"><span>${esc(A.toastMsg)}</span>${btn(ic("undo")+`Undo (<span data-t="toast">${A.toast}</span> s)`,"undo")}</div>`:""}</section>`;
+}
+
+/* ---------- sidebar & status bar ---------- */
+function counts(){const xs=A.empty?[]:ITEMS.filter(i=>!A.gone.includes(i.id));const c={all:xs.length,fav:xs.filter(i=>i.fav).length,trash:A.trash.length+A.gone.length};Object.keys(TYPE).forEach(t=>c[t]=xs.filter(i=>i.type===t).length);return c;}
+function side(cur){
+ const c=counts();
+ const nv=(id,icn,label,n)=>`<button type="button" class="nv" data-a="nav" data-v="${id}" aria-current="${cur===id}">${ic(icn)}<span>${label}</span>${n!=null?`<span class="n">${n}</span>`:""}</button>`;
+ return `<nav class="side" aria-label="Holm menu"><div class="logo">${ic("shield")}Holm</div><div class="grp">Vault</div>${nv("all","grid","All items",c.all)}${nv("fav","star","Favourites",c.fav)}${nv("login","key","Logins",c.login)}${nv("crypto","coins","Crypto addresses",c.crypto)}${nv("phrase","listnum","Recovery phrases",c.phrase)}${nv("note","note","Secure notes",c.note)}${nv("trash","trash","Trash",c.trash)}<div class="grp">Tools</div>${nv("gen","dice","Generator",null)}${nv("settings","sliders","Settings",null)}<div class="fill"></div><button type="button" class="nv" data-a="nav" data-v="lock">${ic("lock")}<span>Lock</span><span class="n"><kbd>${MOD}L</kbd></span></button><div class="vf" title="${esc(PATH)}">${ic("folder")}<span>holm.vault</span></div></nav>`;
+}
+function sbarHtml(){
+ const s=A.scr;
+ if(s==="errors")return "";
+ if(["welcome","create","created"].includes(s)&&!(s==="created"))return `<div class="sbar" id="sbar"><span class="seg2">No vault open</span></div>`;
+ if(!UNLOCKED.has(s)&&!(s==="openfile"&&A.st==="confirm"))return `<div class="sbar" id="sbar"><span class="seg2">${ic("lock")}Locked</span><span class="sp"></span><span class="seg2" title="${esc(PATH)}">holm.vault</span></div>`;
+ let h="";
+ if(A.al<=30)h+=`<span class="seg2 warnt" role="status">${ic("clock")}Locking in <span data-t="al">${fmt(A.al)}</span>${s==="edit"&&A.dirty?". Unsaved changes will be discarded.":""}</span>`;
+ else h+=`<span class="seg2">${ic("unlock")}Unlocked · auto-lock <span data-t="al">${fmt(A.al)}</span></span>`;
+ if(A.clip>0)h+=`<span class="seg2">${ic("clip")}${esc(A.clipWhat)} copied · clears in <span data-t="clip">${A.clip}</span> s ${btn("Clear now","clearclip")}</span>`;
+ h+=`<span class="sp"></span>`;
+ if(A.save==="failed")h+=`<span class="seg2 dngt">${ic("stop")}Not saved</span>`;
+ else if(A.save==="saving")h+=`<span class="seg2">${spin}Saving…</span>`;
+ else if(A.dirty)h+=`<span class="seg2 warnt">${ic("edit")}Unsaved changes</span>`;
+ else h+=`<span class="seg2 okt">${ic("check")}Saved</span>`;
+ h+=`<span class="seg2" title="${esc(PATH)}">holm.vault</span>`;
+ return `<div class="sbar" id="sbar">${h}</div>`;
+}
+function renderSbar(){const el=$("#sbar");if(el)el.outerHTML=sbarHtml();}
+
+/* ---------- detail ---------- */
+function fld(key,label,val,acts,extra){return `<div class="fld"><span class="lb">${label}</span><span class="v">${val}</span><span class="acts">${acts||""}</span>${extra||""}</div>`;}
+function copyBtn(key,label){const d=A.copied===key&&A.copiedT>0;return `<button type="button" class="b" data-a="copy" data-v="${key}" aria-label="Copy ${esc(label)}">${d?ic("check")+"Copied":ic("copy")+"Copy"}</button>`;}
+function revBtn(key,label){const on=A.rev===key;return `<button type="button" class="b" data-a="rev" data-v="${key}" aria-pressed="${on}" aria-label="${on?"Hide":"Show"} ${esc(label)}">${on?ic("eyeoff")+"Hide":ic("eye")+"Show"}</button>`;}
+const MASK='<span class="mask" aria-label="hidden">••••••••••••</span>';
+const group4=a=>a.replace(/(.{4})/g,"$1 ").trim();
+function dhead(it){
+ return `<div class="dh"><span class="tyi lg">${ic(TICON[it.type])}</span><div><h3>${esc(it.title)}</h3><div class="meta">${TYPE[it.type]} · ${esc(it.cat)}</div></div><span class="bwrap"><button type="button" class="b ic" data-a="fav" aria-pressed="${!!it.fav}" aria-label="Favourite" title="Favourite">${it.fav?`<svg class="i" viewBox="0 0 24 24" aria-hidden="true" style="fill:var(--warn);color:var(--warn)">${ICON.star}</svg>`:ic("star")}</button>${btn(ic("edit")+"Edit "+K("E"),"edit")}${btn(ic("trash")+"Move to Trash","totrash","dngo")}</span></div>`;
+}
+function detailPane(){
+ if(A.scr==="edit")return `<section class="detail" aria-label="Edit item">${editForm()}</section>`;
+ const it=A.sel&&byId(A.sel);
+ const shown=visible().some(i=>i.id===A.sel);
+ if(!it||!shown||A.empty)return `<section class="detail" aria-label="Item"><div class="lempty">${A.empty?"Nothing to show yet.":"Select an item to see it here."}</div></section>`;
+ let f="";
+ if(it.type==="login"){
+  const on=A.rev==="pw";
+  f+=fld("user","Username",esc(it.user),copyBtn("user","username"));
+  f+=fld("pw","Password",on?`<span class="vis">${esc(it.pw)}</span>`:MASK,revBtn("pw","password")+copyBtn("pw","password"),on?`<span class="visn">${ic("eye")}Visible · hides in <span data-t="rev">${A.revLeft}</span> s</span>`:"");
+  f+=fld("url","Website",esc(it.url),copyBtn("url","website"));
+  if(it.notes)f+=fld("notes","Notes",esc(it.notes),"");
+ }else if(it.type==="crypto"){
+  f+=fld("chain","Chain",esc(it.chain),"");
+  f+=fld("addr","Address",`<span class="addr">${esc(group4(it.addr))}</span>`,copyBtn("addr","address"),A.addrHint?`<span class="visn">${ic("info")}After pasting, check the first and last characters match: <b class="mono">${esc(it.addr.slice(0,6))}</b> … <b class="mono">${esc(it.addr.slice(-6))}</b>. Some malware swaps copied addresses.</span>`:"");
+  if(it.memo)f+=fld("memo","Memo",esc(it.memo),copyBtn("memo","memo"));
+  if(it.notes)f+=fld("notes","Notes",esc(it.notes),"");
+ }else if(it.type==="phrase"){
+  if(A.phr){
+   f+=`<div class="fld"><span class="lb">Recovery phrase · ${it.words.length} words</span><div style="grid-column:1/-1" class="pg" aria-label="Recovery phrase, shown">${it.words.map((w,i)=>`<div><small>${i+1}</small>${esc(w)}</div>`).join("")}</div><span class="visn">${ic("eye")}Visible · hides in <span data-t="phr">${A.phrLeft}</span> s. Anyone who can see your screen can read it.</span><span class="acts" style="grid-column:1/-1;justify-content:flex-start">${btn(ic("eyeoff")+"Hide now","phide","pri")}${btn(ic("copy")+"Copy phrase","pcopy")}</span></div>`;
+   if(A.phrCopied)f+=ban("warn","Recovery phrase copied. It clears in 30 s.","Paste it only into the wallet you are restoring. Clipboard managers that ignore Holm's hint may keep a copy.");
+  }else{
+   f+=fld("phrase",`Recovery phrase · ${it.words.length} words`,MASK,btn(ic("eye")+"Show…","pshow"),`<span class="visn" style="color:var(--muted)">${ic("lock")}Showing or copying the phrase asks for your master password every time.</span>`);
+  }
+  if(A.st==="rehidden"&&!A.phr)f=ban("info","Phrase hidden again after 60 s.","")+f;
+  if(it.notes)f+=fld("notes","Notes",esc(it.notes),"");
+ }else{
+  const on=A.rev==="body";
+  f+=fld("body","Note",on?`<span class="vis" style="white-space:pre-wrap;display:block">${esc(it.body)}</span>`:MASK,revBtn("body","note")+copyBtn("body","note"),on?`<span class="visn">${ic("eye")}Visible until you leave this item, switch windows or lock.</span>`:"");
+ }
+ return `<section class="detail" aria-label="Item">${dhead(it)}<div class="flds">${f}</div><div class="foot">Created ${esc(it.made)} · Changed ${esc(it.mod)}</div></section>`;
+}
+function editForm(){
+ const isNew=!!A.isNew, it=isNew?null:byId(A.sel||"mail"), t=isNew?A.newType:it.type;
+ const v=k=>it&&it[k]?esc(it[k]):"";
+ let h=`<div class="dh"><div><h3>${isNew?"New item":"Edit item"}</h3><div class="meta">${isNew?"Pick a type first. It can't change after you save.":`${TYPE[t]} · the type can't change after creation`}</div></div>${A.dirty?`<span class="unsaved" id="unsaved">${ic("edit")}Unsaved changes</span>`:`<span class="unsaved" id="unsaved" hidden>${ic("edit")}Unsaved changes</span>`}</div>`;
+ if(A.save==="failed")h+=ban("dng","Not saved. The disk is full.","Holm couldn't write to the vault folder. Your changes are still here, and the vault file on disk is unchanged. Free some space and try again, or save a copy of the vault somewhere else.",btn("Try again","retry","pri")+btn(ic("download")+"Save a copy elsewhere…","savecopy"));
+ if(isNew)h+=`<div class="typeseg" role="radiogroup" aria-label="Item type">${Object.keys(TYPE).map(k=>`<button type="button" class="chip" role="radio" data-a="ntype" data-v="${k}" aria-pressed="${A.newType===k}" aria-checked="${A.newType===k}">${ic(TICON[k])}${TYPE[k]}</button>`).join("")}</div>`;
+ const dis=A.working?"disabled":"";
+ h+=`<form data-f="edit" style="display:flex;flex-direction:column;gap:12px" novalidate>`;
+ h+=`<label class="lab"><span>Title (required)</span><input class="in" id="e-title" value="${v("title")}" ${dis} ${isNew?"data-autofocus":""} autocomplete="off"></label>`;
+ if(A.bad)h+=ferr("Add a title. It's the only required field.");
+ if(t==="login"){
+  h+=`<label class="lab"><span>Username</span><input class="in" id="e-user" value="${v("user")}" ${dis} autocomplete="off"></label>`;
+  h+=`<div class="lrow" style="align-items:flex-end"><div class="grow">${sf("e-pw","Password",{val:it?it.pw:"",dis:A.working})}</div>${btn(ic("dice")+"Generate…","gen-from-edit","",dis)}</div>`;
+  h+=`<label class="lab"><span>Website</span><input class="in" id="e-url" value="${v("url")}" ${dis} placeholder="https://" autocomplete="off"></label>`;
+ }else if(t==="crypto"){
+  h+=`<label class="lab"><span>Chain</span><select class="in" ${dis}>${["Bitcoin","Ethereum","Solana","Other"].map(c=>opt(c,it?it.chain:"Ethereum")).join("")}</select></label>`;
+  h+=`<label class="lab"><span>Address (shown, so you can check it)</span><input class="in mono" value="${v("addr")}" ${dis} autocomplete="off" spellcheck="false"></label>`;
+  h+=`<label class="lab"><span>Memo or tag (optional)</span><input class="in" ${dis} autocomplete="off"></label>`;
+ }else if(t==="phrase"){
+  h+=sf("e-phrase","Recovery phrase",{ph:"12 or 24 words, separated by spaces",dis:A.working});
+  h+=`<span class="hint">Holm checks the word count, not the words. After saving, showing it again needs your master password.</span>`;
+ }else{
+  h+=`<label class="lab"><span>Note (hidden while you type)</span><span class="sf"><textarea class="in" style="border:0;-webkit-text-security:disc;font-family:var(--font-mono)" rows="4" ${dis}>${it?"":""}</textarea><button class="eye" type="button" data-a="eye" aria-label="Show note" title="Show">${ic("eye")}</button></span></label>`;
+ }
+ if(t!=="note")h+=`<label class="lab"><span>Notes</span><textarea class="in" rows="2" ${dis}>${v("notes")}</textarea></label>`;
+ h+=`<div class="lrow"><label class="lab grow"><span>Category</span><select class="in" ${dis}>${CATS.map(c=>opt(c,it?it.cat:"Personal")).join("")}</select></label><label class="chk" style="margin-top:18px"><input type="checkbox" ${it&&it.fav?"checked":""} ${dis}>Favourite</label></div>`;
+ h+=`<div class="macts" style="justify-content:flex-start">${A.working?`<button type="button" class="b pri" disabled>${spin}Saving…</button>`:`<button type="submit" class="b pri">${ic("save")}Save ${K("S")}</button>`}${btn("Cancel","cancel-edit","",dis)}</div></form>`;
+ if(!isNew)h+=`<p class="foot">Saving rewrites the whole vault file safely: Holm writes a new file next to it, then swaps it in. If that fails, the old file stays as it was.</p>`;
+ return h;
+}
+
+/* ---------- tool screens ---------- */
+const head=(t,m)=>`<div class="dh"><div><h3>${t}</h3>${m?`<div class="meta">${m}</div>`:""}</div></div>`;
+function trashBody(){
+ const all=A.trash.concat(A.gone.map(id=>{const i=byId(id);return {id,type:i.type,title:i.title,cat:i.cat,when:"Today"};}));
+ let h=head("Trash","Items here are still in the vault file. Restore them, or delete them forever.");
+ if(!all.length)return h+`<div class="lempty">${ic("trash")}<b style="color:var(--fg)">Trash is empty.</b><span>Items you move to Trash stay here until you delete them forever.</span></div>`;
+ h+=`<div class="bwrap">${btn(ic("trash")+"Empty trash…","delall","dngo")}</div><div class="cats" role="list">`;
+ h+=all.map(i=>`<div role="listitem"><span class="tyi">${ic(TICON[i.type])}</span><span><b>${esc(i.title)}</b><br><small class="meta">${TYPE[i.type]} · moved ${esc(i.when)}</small></span>${btn(ic("undo")+"Restore","restore","",`data-v="${i.id}"`)}${btn("Delete forever…","del1","dngo",`data-v="${i.id}"`)}</div>`).join("");
+ return h+`</div><p class="foot">Delete forever removes the item from the vault file the next time Holm saves. Older copies and backups of the file still contain it.</p>`;
+}
+function genBody(){
+ const g=A.g;
+ let h=head("Generator","Uses your operating system's random source. Nothing is saved until you use it in an item.");
+ if(A.fromEdit)h+=ban("info","Generating for “Example Mail”.","“Use this password” puts it in the edit form. It's saved only when you save the item.");
+ h+=`<div class="typeseg" role="radiogroup" aria-label="Generate">${[["password","Password"],["passphrase","Passphrase"],["username","Username"]].map(([k,l])=>`<button type="button" class="chip" role="radio" data-a="gtype" data-v="${k}" aria-pressed="${g.type===k}" aria-checked="${g.type===k}">${g.type===k?ic("check"):""}${l}</button>`).join("")}</div>`;
+ h+=`<div class="gout mono" id="gout" aria-live="polite">${esc(A.gout)}</div>`;
+ h+=`<div class="mtx" id="gbits">${g.type==="username"?`<span class="hint">Usernames aren't secret. They help keep accounts apart.</span>`:`<b>${bitsWord(A.gbits)}</b><span class="hint">≈ ${A.gbits} bits of randomness</span>`}</div>`;
+ h+=`<div class="bwrap">${A.fromEdit?btn(ic("check")+"Use this password","usegen","pri"):""}${btn(ic("copy")+(A.copied==="gen"&&A.copiedT>0?"Copied":"Copy"),"copy","",'data-v="gen"')}${btn(ic("refresh")+"New one","regen")}${A.fromEdit?btn("Cancel","cancel-gen"):""}</div>`;
+ h+=`<div class="opts">`;
+ if(g.type==="password"){
+  h+=`<label class="lab"><span>Length</span><span class="rng"><input type="range" min="8" max="64" value="${g.len}" data-g="len" aria-label="Length"><output data-o="len">${g.len}</output></span></label>`;
+  h+=`<div class="lab"><span>Characters</span>${[["up","Uppercase A–Z"],["lo","Lowercase a–z"],["dg","Digits 0–9"],["sy","Symbols !#$%"],["alike","Avoid look-alikes (0 O 1 l I)"]].map(([k,l])=>`<label class="chk"><input type="checkbox" data-g="${k}" ${g[k]?"checked":""}>${l}</label>`).join("")}</div>`;
+ }else if(g.type==="passphrase"){
+  h+=`<label class="lab"><span>Words</span><span class="rng"><input type="range" min="4" max="10" value="${g.words}" data-g="words" aria-label="Words"><output data-o="words">${g.words}</output></span><span class="hint">EFF large word list, 12.9 bits per word.</span></label>`;
+  h+=`<label class="lab"><span>Separator</span><select class="in" data-g="sep">${opt("-",g.sep,"Hyphen  -")}${opt(".",g.sep,"Dot  .")}${opt("_",g.sep,"Underscore  _")}${opt(" ",g.sep,"Space")}</select></label>`;
+  h+=`<div class="lab"><span>Options</span><label class="chk"><input type="checkbox" data-g="caps" ${g.caps?"checked":""}>Capitalise words</label><label class="chk"><input type="checkbox" data-g="num" ${g.num?"checked":""}>Add a number</label></div>`;
+ }else{
+  h+=`<label class="lab"><span>Style</span><select class="in" data-g="ustyle">${opt("words",g.ustyle,"Two words and a number")}${opt("random",g.ustyle,"Random letters and digits")}</select></label>`;
+ }
+ return h+`</div><p class="foot">Demo output from your browser's random source. Not stored anywhere.</p>`;
+}
+function settingsBody(){
+ const s=A.set;
+ let h=head("Settings","Security settings are stored inside the encrypted vault file, so nobody can weaken them by editing a file.");
+ if(A.banner==="backup")h+=ban("ok","Backup saved: holm-backup-2026-10-17.vault","It opens with your current master password. Keep it on a different drive from this computer.");
+ h+=`<div class="set"><div><h3>Security</h3>
+  <div class="srow"><span>Lock after no activity</span><select class="in" id="s-al" style="max-width:200px">${[1,2,5,10,15,30,60].map(m=>opt(m,s.al,m+" min")).join("")}</select></div>
+  <div class="srow"><span>Clear copied items after</span><select class="in" id="s-clip" style="max-width:200px">${[10,20,30,45,60,90].map(m=>opt(m,s.clip,m+" s")).join("")}</select></div>
+  <div class="srow"><span>Lock on sleep or screen lock</span><label class="chk"><input type="checkbox" id="s-sleep" ${s.sleep?"checked":""}>On</label></div>
+  <span class="hint">There's no "Never". Making any of these weaker asks for your master password.</span></div>
+  <div><h3>Generator defaults</h3><div class="srow"><span>Default type</span><select class="in" style="max-width:200px">${opt("password","password","Password")}${opt("passphrase","","Passphrase")}</select></div><div class="srow"><span>Password length</span><select class="in" style="max-width:200px">${[16,20,24,32].map(n=>opt(n,20,n+" characters")).join("")}</select></div></div>
+  <div><h3>Appearance</h3><div class="srow"><span>Theme</span><span class="typeseg">${["System","Light","Dark"].map((t,i)=>`<button type="button" class="chip" aria-pressed="${i===0}">${t}</button>`).join("")}</span></div><span class="hint">Stored in the plain UI config, with window size and the last vault path. Nothing else.</span></div>
+  <div><h3>Vault file</h3><div class="path">${ic("folder")}<code>${esc(PATH)}</code></div>
+   <div class="bwrap" style="margin-top:8px">${btn(ic("download")+"Save a backup copy…","backup")}${btn(ic("key")+"Change master password…","go-chpw")}${btn(ic("upload")+"Import…","go-import")}${btn(ic("download")+"Export plaintext CSV…","go-export")}${btn(ic("tag")+"Categories…","go-cats")}${btn(ic("folder")+"Open another vault file…","go-openfile")}</div></div>
+  <div><h3>What Holm can and can't protect on this computer</h3><ul class="hint" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+   <li>Screen capture: Windows blocks it. macOS asks capture tools to skip this window, but newer tools may ignore that. Linux has no way to block it.</li>
+   <li>Memory: only the keys are kept out of swap. Shown or copied secrets can reach swap or hibernation files. Use FileVault, BitLocker or LUKS.</li>
+   <li>Clipboard: copies are marked so clipboard history tools skip them, if those tools respect the mark.</li>
+   <li>Holm never connects to the internet.</li></ul></div></div>`;
+ return h;
+}
+function chpwBody(){
+ const st=A.st, w=st==="working";
+ let h=head("Change master password","Holm re-encrypts the vault with a new key. Backups made before this still open with the old password.");
+ if(st==="done")return h+ban("ok","Master password changed.","Backups made before now still open with the old password. Save a new backup, then delete the old ones.",btn(ic("download")+"Save a new backup copy…","backup2","pri")+btn("Done","go-settings"));
+ h+=`<form data-f="chpw" style="display:flex;flex-direction:column;gap:12px;max-width:420px">`;
+ h+=sf("c-cur","Current master password",{val:st==="form"?"":"example-current",bad:st==="wrongcur",auto:true,dis:w});
+ if(st==="wrongcur")h+=ferr("That isn't the current master password.")+`<span class="hint">After 3 wrong tries Holm makes you wait before the next one.</span>`;
+ const nv=st==="weak"?"example123":st==="form"?"":"EXAMPLE-otter-lantern-quartz";
+ h+=sf("c-new","New master password",{val:nv,dis:w})+meterHtml(nv,"cn");
+ h+=sf("c-conf","Type the new password again",{val:st==="weak"||st==="form"?"":nv,dis:w});
+ h+=`<div class="macts" style="justify-content:flex-start">${w?`<button type="button" class="b pri" disabled>${spin}Re-encrypting…</button>`:`<button type="submit" class="b pri" ${st==="weak"?"disabled":""}>Change password</button>`}${btn("Cancel","go-settings","",w?"disabled":"")}</div>`;
+ if(w)h+=`<span class="hint" role="status">This takes a few seconds. Holm stays responsive; the vault isn't touched until the new file is fully written.</span>`;
+ return h+`</form>`;
+}
+function exportBody(){
+ const st=A.st;
+ let h=head("Export plaintext CSV","For moving to another password manager. Holm never locks you in.");
+ if(st==="done")return h+ban("warn","Exported 8 items to holm-export.csv.","This file is not encrypted. Import it where you need it, then delete it. On SSDs a deleted file can sometimes still be recovered.",btn(ic("folder")+"Show in folder","noop")+btn("Done","go-settings","pri"));
+ const r=st==="ready";
+ h+=ban("dng","The CSV file is not encrypted.","Anyone or any program that can read it sees every password, phrase and note in it. Cloud sync and backups may copy it before you delete it.");
+ h+=`<form data-f="export" style="display:flex;flex-direction:column;gap:12px;max-width:460px">`;
+ h+=`<div class="path">Save to <code>~/Desktop/holm-export.csv</code>${btn("Change…","noop","gh")}</div>`;
+ h+=`<span class="hint">Items in Trash are not exported.</span>`;
+ h+=`<label class="chk"><input type="checkbox" id="x-ack" ${r?"checked":""}>I understand the file is not encrypted and I'll delete it when I'm done.</label>`;
+ h+=sf("x-pw","Master password",{val:r?"example-only":"",auto:!r});
+ h+=`<div class="macts" style="justify-content:flex-start">${btn("Cancel","go-settings")}<button type="submit" class="b dng" id="x-go" ${r?"":"disabled"}>${ic("download")}Export CSV</button></div>`;
+ return h+`<span class="hint">Export stays off until you tick the box and enter your password. Enter doesn't trigger it.</span></form>`;
+}
+function importBody(){
+ const st=A.st;
+ let h=head("Import","Holm reads the file on this computer and never changes it. Up to 10 MB.");
+ const src=`<div class="srow"><span>Source</span><select class="in" style="max-width:260px">${["Holm CSV or JSON","Chrome CSV","Firefox CSV","Safari CSV"].map(o=>opt(o,"Holm CSV or JSON")).join("")}</select></div>`;
+ const choose=btn(ic("upload")+"Choose file…","imp-pick","pri");
+ if(st==="choose")return h+src+`<div class="bwrap">${choose}</div><span class="hint">Columns: title, username, password, url, notes, category, type, chain, address, memo, recovery. The header row decides the order.</span>`;
+ if(st==="toolarge")return h+ban("dng","This file is too large to import (24 MB).","Holm imports files up to 10 MB. Split it into smaller files and import each one.",btn(ic("upload")+"Choose another file…","imp-pick"));
+ if(st==="columns")return h+ban("dng","Holm doesn't recognise the columns in this file.","Found: name, login_uri, secret. Holm needs a title column, plus any of username, password, url, notes. Pick the matching source above, or rename the header row.",btn(ic("upload")+"Choose another file…","imp-pick"))+src;
+ if(st==="encoding")return h+ban("dng","This file isn't UTF-8 text.","Export it again as UTF-8 CSV from the app that made it, then try again.",btn(ic("upload")+"Choose another file…","imp-pick"));
+ if(st==="done")return h+ban("ok","Imported 12 items.","1 went to Uncategorised because its category doesn't exist.")+ban("warn","Delete the source file now.","holm-import-example.csv holds your passwords in plain text.",btn(ic("folder")+"Show in folder","noop")+btn("Done","go-items","pri"));
+ h+=`<div class="path">${ic("note")}<b style="color:var(--fg)">holm-import-example.csv</b> · Holm CSV · 14 rows</div>`;
+ h+=ban("info","12 rows are ready. 2 will be skipped.","Values are never shown here. Only titles, types and categories.");
+ h+=`<div class="issues" role="list"><div role="listitem"><b>Row 5</b><span>No title. Skipped.</span></div><div role="listitem"><b>Row 9</b><span>Crypto address is empty. Skipped.</span></div><div role="listitem"><b>Row 11</b><span>Category “Travel” doesn't exist. Goes to Uncategorised.</span></div></div>`;
+ h+=`<div class="tw"><table><thead><tr><th>Title</th><th>Type</th><th>Category</th></tr></thead><tbody>${[["Example Shop","Login","Personal"],["Example Cloud","Login","Work"],["Test wallet","Crypto address","Personal"],["Old seed backup","Recovery phrase","Personal"],["Travel notes","Secure note","Uncategorised"]].map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}<tr><td colspan="3" class="meta">and 7 more</td></tr></tbody></table></div>`;
+ return h+`<div class="bwrap">${btn("Cancel","imp-cancel")}${btn("Import 12 items","imp-go","pri")}</div>`;
+}
+function catsBody(){
+ const c=counts();
+ const n={Personal:5,Work:1,Community:1,Uncategorised:1};
+ let h=head("Categories","Personal, Work and Community come built in. Deleting a category moves its items to Uncategorised.");
+ h+=`<div class="cats" role="list">${CATS.map(k=>`<div role="listitem">${ic("tag")}<span><b>${k}</b> <small class="meta">· ${n[k]} item${n[k]>1?"s":""}</small></span>${k==="Uncategorised"?`<small class="meta">Always there</small>`:btn("Rename…","noop")+btn("Delete…","catdel","dngo",`data-v="${k}"`)}</div>`).join("")}</div>`;
+ h+=`<div class="lrow" style="max-width:420px"><input class="in grow" placeholder="New category name" aria-label="New category name">${btn(ic("plus")+"Add","noop")}</div>`;
+ return h;
+}
+
+/* ---------- centred screens ---------- */
+const brandBig=`<div class="logo" style="font-size:20px">${ic("shield")}Holm</div>`;
+function welcomeBody(){
+ let h=`<div class="ctr">${brandBig}<h2>Welcome to Holm</h2><p class="sub">Holm keeps your passwords in one encrypted file on this computer. It never connects to the internet.</p>`;
+ if(A.st==="missing")h+=ban("warn","Holm can't find your last vault.","/Volumes/EXAMPLE-USB/holm.vault isn't there. If it's on a USB drive, plug it in and try again.",btn("Try again","noop"));
+ h+=`${btn(ic("plus")+"Create a new vault","go-create","pri wide")}${btn(ic("folder")+"Open a vault file…","go-openpick","wide")}`;
+ h+=`<span class="hint">New vaults are saved to <code>${esc(PATH)}</code>. You can pick another place, such as a USB drive.</span></div>`;
+ return h;
+}
+function createBody(){
+ const st=A.st, w=st==="working";
+ const pw=st==="weak"?"example123":["mismatch","ready","working"].includes(st)?"EXAMPLE-otter-lantern-quartz":"";
+ const c2=st==="mismatch"?"EXAMPLE-otter-lantern-quarts":["ready","working"].includes(st)?pw:"";
+ let h=`<div class="ctr"><h2>Create your vault</h2><p class="sub">Choose a master password. It's the only key to your vault. Holm can't reset it or recover it.</p><form data-f="create" style="display:flex;flex-direction:column;gap:12px" novalidate>`;
+ h+=sf("c-pw","Master password",{val:pw,auto:st==="empty",bad:st==="weak",dis:w})+meterHtml(pw,"cp");
+ h+=sf("c-pw2","Type it again",{val:c2,bad:st==="mismatch",dis:w});
+ if(st==="mismatch")h+=ferr("These don't match. Type the password again.");
+ h+=`<label class="chk"><input type="checkbox" id="c-ack" ${["ready","working"].includes(st)?"checked":""} ${w?"disabled":""}>I understand Holm can't recover my vault if I forget this password.</label>`;
+ h+=`<div class="path">${ic("folder")}<code>${esc(PATH)}</code>${btn("Change…","noop","gh")}</div>`;
+ h+=w?`<button type="button" class="b pri wide" disabled>${spin}Creating vault…</button><span class="hint" role="status">Turning your password into a key takes a few seconds.</span>`:`<button type="submit" class="b pri wide">Create vault</button>`;
+ if(st==="weak")h+=`<span class="hint">Weak passwords are refused. There's no override, because the password is the only thing protecting a stolen file.</span>`;
+ return h+`</form>${btn(ic("back")+"Back","go-welcome","gh")}</div>`;
+}
+function createdBody(){
+ return `<div class="ctr">${ban("ok","Your vault is ready.","holm.vault is saved in ~/Library/Application Support/Holm/.")}<h2>What next?</h2>
+  <div style="display:flex;flex-direction:column;gap:8px">${btn(ic("plus")+"Add your first item","first-add","pri wide")}${btn(ic("upload")+"Import from a browser or CSV…","go-import","wide")}${btn(ic("download")+"Save a backup copy to another drive…","backup","wide")}</div>
+  <span class="hint">Write your master password down and keep it somewhere safe and offline. Holm can't recover it, and nobody else can either.</span>
+  ${btn("Go to my vault","first-open","gh")}</div>`;
+}
+function unlockBody(){
+ const st=A.st;
+ const noPw=["costhigh","costlow","inuse","notvault","newer","missing"].includes(st);
+ let h=`<div class="ctr">${brandBig}<h2>Unlock your vault</h2><div class="path">${ic("folder")}<code title="${esc(PATH)}">${esc(PATH)}</code></div>`;
+ const B={
+  autolocked:ban("info","Locked after 5 minutes without activity.","Holm's copy on the clipboard was removed."),
+  manual:ban("info","Locked.",""),
+  discarded:ban("warn","Locked after 5 minutes without activity.","Your unsaved edits to “Example Mail” were discarded. The saved version is safe."),
+  throttled:ban("warn","Too many wrong tries.",`Try again in <span data-t="thr">${A.thr}</span> s. The wait doubles after each wrong try, up to 60 s.`),
+  costhigh:ban("warn","This vault file asks for more memory or time than Holm allows.","Holm didn't try your password. The file asks for 4 GiB of memory and 24 passes; Holm allows up to 1 GiB and 16 passes. If a newer Holm on a bigger computer made this file, open it there. If not, the file may have been changed.",btn(ic("folder")+"Open another vault file…","go-openpick")),
+  costlow:ban("dng","This vault file's protection is below Holm's minimum.","Holm didn't try your password. The file asks for 8 MiB of memory; Holm needs at least 64 MiB. Holm never writes a file like this, so it may have been changed. Use a backup copy.",btn(ic("folder")+"Open a backup…","go-openpick")),
+  nomem:ban("warn","Not enough free memory to unlock.","This vault needs 256 MiB for a moment. Close some apps and try again. Your password wasn't checked.",btn("Try again","noop")),
+  inuse:ban("warn","This vault is open in another Holm window.","Only one Holm can use a vault file at a time, so saves can't overwrite each other. Switch to the other window, or quit it and try again.",btn("Try again","noop")+btn(ic("folder")+"Open another vault file…","go-openpick")),
+  notvault:ban("dng","This file isn't a Holm vault.","notes.txt doesn't start with a Holm header. Choose a .vault file.",btn(ic("folder")+"Choose another file…","go-openpick")),
+  newer:ban("warn","A newer version of Holm made this vault.","It uses file format 2; this Holm reads format 1. Update Holm to open it. The file wasn't changed.",btn(ic("folder")+"Open another vault file…","go-openpick")),
+  missing:ban("warn","Holm can't find the vault file.","It was moved or deleted, or the drive isn't connected.",btn(ic("folder")+"Open a vault file…","go-openpick")+btn(ic("plus")+"Create a new vault…","go-create"))
+ };
+ if(B[st])h+=B[st];
+ if(!noPw){
+  const w=A.working, th=A.thr>0;
+  h+=`<form data-f="unlock" style="display:flex;flex-direction:column;gap:10px" novalidate>${sf("u-pw","Master password",{auto:!w,bad:st==="wrong",dis:w})}`;
+  if(st==="wrong")h+=ferr("That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.")+`<span class="hint">After 3 wrong tries, Holm makes you wait a little longer between tries.</span>`;
+  h+=w?`<button type="button" class="b pri wide" disabled>${spin}Unlocking…</button><span class="hint" role="status">Turning your password into a key takes a second or two.</span>`:`<button type="submit" class="b pri wide" ${th?"disabled":""}>${th?`Unlock (<span data-t="thr">${A.thr}</span> s)`:"Unlock"}</button>`;
+  h+=`</form>`;
+ }
+ h+=`<div class="links">${btn("Open another vault file…","go-openpick","gh")}${btn("Create a new vault…","go-create","gh")}</div></div>`;
+ return h;
+}
+function openpickBody(){
+ return `<div class="ctr">${brandBig}<h2>Open a vault file</h2>${ban("info","holm.vault is locked.","Only one vault is open at a time.")}${btn(ic("folder")+"Choose file…","noop","pri wide")}<span class="hint">Opens your system's file dialog. Holm remembers the last vault you opened, and nothing else.</span>${btn(ic("back")+"Back to unlock","go-unlock","gh")}</div>`;
+}
+function errorsTable(){
+ const R=[
+  ["Unlock","Wrong password or tampered file","That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.","Retry; throttle notice after 1st failure"],
+  ["Unlock","3+ failures","Too many wrong tries. Try again in 8 s. The wait doubles after each wrong try, up to 60 s.","Countdown on button; field stays editable"],
+  ["Unlock","KDF cost above ceiling","This vault file asks for more memory or time than Holm allows. Holm didn't try your password.","Open another file. No password field"],
+  ["Unlock","KDF cost below floor","This vault file's protection is below Holm's minimum. Holm didn't try your password.","Open a backup"],
+  ["Unlock","Allocation failed","Not enough free memory to unlock. Your password wasn't checked.","Try again"],
+  ["Unlock","Lock file held","This vault is open in another Holm window.","Try again; open another"],
+  ["Unlock","Bad magic","This file isn't a Holm vault.","Choose another file"],
+  ["Unlock","Newer format","A newer version of Holm made this vault. The file wasn't changed.","Open another"],
+  ["Unlock / Welcome","Path missing","Holm can't find the vault file.","Open; create; try again"],
+  ["Create / Change","Weak password","Too weak · refused, plus the zxcvbn tip","Submit disabled; no override"],
+  ["Create / Change","Mismatch","These don't match. Type the password again.","Checked on blur or submit"],
+  ["Edit","Save failed","Not saved. The disk is full. Your changes are still here, and the vault file on disk is unchanged.","Try again; Save a copy elsewhere"],
+  ["Edit","No title","Add a title. It's the only required field.","Focus moves to Title"],
+  ["Phrase / Settings","Gate password wrong","That password didn't open this vault.","Same throttle as unlock"],
+  ["Import","Over 10 MB","This file is too large to import (24 MB).","Choose another file"],
+  ["Import","Unknown header","Holm doesn't recognise the columns in this file. Found: …","Pick source; rename header"],
+  ["Import","Not UTF-8","This file isn't UTF-8 text.","Export again as UTF-8"],
+  ["Import","Row issues","Row 5: No title. Skipped.","Shown in preview; never values"],
+  ["Backup / Export","Write failed","Couldn't save the file there. The folder is read-only or full. Nothing was written.","Choose another place"]
+ ];
+ return `<div class="body" style="padding:16px"><p class="hint" style="margin:0">Rules: say what happened, then what to do. Never "Something went wrong", "Error:" or codes. Never include secrets, item values or file contents. A wrong password and a damaged file read the same.</p><div class="tw"><table><thead><tr><th>Where</th><th>Cause</th><th>Message</th><th>Actions</th></tr></thead><tbody>${R.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td></tr>`).join("")}</tbody></table></div></div>`;
+}
+
+/* ---------- modals ---------- */
+function modalHtml(){
+ const m=A.modal; if(!m)return "";
+ let h="";
+ const dlg=(inner,form)=>form?`<form class="modal" data-f="${form}" role="dialog" aria-modal="true" aria-labelledby="mt" novalidate>${inner}</form>`:`<div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="mt">${inner}</div>`;
+ if(m.k==="gate")h=dlg(`<h3 id="mt">Show recovery phrase</h3><p>Enter your master password. The phrase shows for 60 s, then hides again.</p>${sf("g-pw","Master password",{auto:true,bad:m.bad})}${m.bad?ferr("That password didn't open this vault.")+`<span class="hint">After 3 wrong tries Holm makes you wait before the next one, as on the unlock screen.</span>`:""}<div class="macts">${btn("Cancel","mclose")}<button type="submit" class="b pri">Show phrase</button></div>`,"gate");
+ else if(m.k==="discard")h=dlg(`<h3 id="mt">Discard unsaved changes?</h3><p>Your edits to “Example Mail” haven't been saved.</p><div class="macts">${btn("Discard changes","mdiscard","dngo")}${btn("Keep editing","mclose","pri","data-autofocus")}</div>`);
+ else if(m.k==="del1"){const t=(A.trash.find(i=>i.id===m.id)||{title:(byId(m.id)||{}).title||"this item"}).title;h=dlg(`<h3 id="mt">Delete “${esc(t)}” forever?</h3><p>It's removed from the vault file the next time Holm saves. Older copies and backups of the file still contain it.</p><div class="macts">${btn("Cancel","mclose","","data-autofocus")}${btn(ic("trash")+"Delete forever","mdel1","dng")}</div>`);}
+ else if(m.k==="delall"){const n=A.trash.length+A.gone.length;h=dlg(`<h3 id="mt">Empty trash?</h3><p>${n} item${n===1?"":"s"} will be deleted forever. They're removed from the vault file the next time Holm saves. Older copies and backups of the file still contain them.</p><div class="macts">${btn("Cancel","mclose","","data-autofocus")}${btn(ic("trash")+"Empty trash","mdelall","dng")}</div>`);}
+ else if(m.k==="weaken"){const W={al:["Lock after no activity",v=>v+" min"],clip:["Clear copied items after",v=>v+" s"],sleep:["Lock on sleep or screen lock",v=>v?"On":"Off"]}[m.what];h=dlg(`<h3 id="mt">Make this setting weaker?</h3><p>${W[0]}: <b>${W[1](m.from)}</b> → <b>${W[1](m.to)}</b>. Weaker settings need your master password.</p>${sf("w-pw","Master password",{auto:true})}<div class="macts">${btn("Cancel","mclose")}<button type="submit" class="b pri">Change setting</button></div>`,"weaken");}
+ else if(m.k==="catdel")h=dlg(`<h3 id="mt">Delete category “${esc(m.v||"Community")}”?</h3><p>Its items move to Uncategorised. No items are deleted.</p><div class="macts">${btn("Cancel","mclose","","data-autofocus")}${btn("Delete category","mclose","dng")}</div>`);
+ else if(m.k==="openfile")h=dlg(`<h3 id="mt">Lock this vault and open another?</h3><p>holm.vault locks now. Holm opens one vault at a time.</p><div class="macts">${btn("Cancel","mclose","","data-autofocus")}${btn(ic("folder")+"Lock and choose file…","go-openpick","pri")}</div>`);
+ return `<div class="scrim">${h}</div>`;
+}
+
+/* ---------- app render ---------- */
+const NAVOF={trash:"trash",gen:"gen",settings:"settings",chpw:"settings",export:"settings",import:"settings",cats:"settings"};
+function appHtml(){
+ const s=A.scr;
+ if(s==="errors")return errorsTable();
+ let inner;
+ if(s==="welcome")inner=`<div class="app center">${welcomeBody()}</div>`;
+ else if(s==="create")inner=`<div class="app center">${createBody()}</div>`;
+ else if(s==="created")inner=`<div class="app center">${createdBody()}</div>`;
+ else if(s==="unlock")inner=`<div class="app center">${unlockBody()}</div>`;
+ else if(s==="openfile"&&A.st==="pick")inner=`<div class="app center">${openpickBody()}</div>`;
+ else if(["items","phrase","edit"].includes(s)||s==="openfile")inner=`<div class="app">${side(A.nav)}${listPane()}${detailPane()}</div>`;
+ else{
+  const body={trash:trashBody,gen:genBody,settings:settingsBody,chpw:chpwBody,export:exportBody,import:importBody,cats:catsBody}[s]();
+  inner=`<div class="app tool">${side(NAVOF[s])}<section class="body" aria-label="${esc(SMAP[s].name)}">${body}</section></div>`;
+ }
+ return chrome(inner)+sbarHtml()+modalHtml();
+}
+function renderApp(keep){
+ const win=$("#win");
+ let fa=null,vals={};
+ if(keep){
+  const ae=document.activeElement;
+  if(ae&&win.contains(ae))fa={id:ae.id,a:ae.dataset.a,v:ae.dataset.v,g:ae.dataset.g};
+  $$("input[id],textarea[id]",win).forEach(el=>{vals[el.id]=el.type==="checkbox"?el.checked:el.value;});
+ }
+ win.innerHTML=appHtml();
+ if(keep){
+  Object.entries(vals).forEach(([id,v])=>{const el=document.getElementById(id);if(el&&win.contains(el)&&!el.disabled){if(el.type==="checkbox")el.checked=v;else if(id!=="q")el.value=v;}});
+ }
+ let target=null;
+ const scrim=$(".scrim",win);
+ if(scrim)target=$("[data-autofocus]",scrim)||$("input,button",scrim);
+ else if(keep&&fa){target=(fa.id&&document.getElementById(fa.id))||(fa.a&&$(`[data-a="${fa.a}"]${fa.v?`[data-v="${fa.v}"]`:""}`,win))||(fa.g&&$(`[data-g="${fa.g}"]`,win));}
+ else if(!keep&&A._focusWin){target=$("[data-autofocus]",win);}
+ if(target&&win.contains(target))target.focus({preventScroll:true});
+}
+
+/* ---------- actions ---------- */
+function guard(fn){if(A.scr==="edit"&&A.dirty&&!A.working){A.modal={k:"discard",then:fn};renderApp(true);}else fn();}
+function go(scr,st,patch){A._focusWin=true;enter(scr,st,Object.assign({_focusWin:true},patch||{}));}
+function lockNow(reason){
+ const discarded=A.scr==="edit"&&A.dirty;
+ go("unlock",discarded?"discarded":reason==="auto"?"autolocked":"manual");
+}
+function select(id){
+ guard(()=>{
+  const it=byId(id); if(!it)return;
+  const keep={q:A.q,cat:A.cat,nav:A.nav,sort:A.sort,gone:A.gone,clip:A.clip,clipWhat:A.clipWhat,al:A.al,set:A.set};
+  if(it.type==="phrase")go("phrase","hidden",Object.assign(keep,{sel:id}));
+  else go("items","normal",Object.assign(keep,{sel:id}));
+  const r=document.getElementById("r-"+id); if(r)r.focus({preventScroll:true});
+ });
+}
+function save(){
+ if(A.scr!=="edit"||A.working)return;
+ const t=$("#e-title");
+ if(t&&!t.value.trim()){A.bad=true;mark("invalid");renderApp(true);const e=$("#e-title");if(e)e.focus();return;}
+ A.working=true;A.save="saving";A.dirty=true;mark("saving");renderApp(true);
+ setTimeout(()=>{ if(A.scr!=="edit")return; go("items","normal",{sel:A.isNew?"mail":A.sel||"mail",toast:0}); },900);
+}
+const ACT={
+ noop(){},
+ nav(v){
+  if(v==="lock")return guard(()=>lockNow("manual"));
+  if(v==="gen")return guard(()=>go("gen","password"));
+  if(v==="settings")return guard(()=>go("settings","normal"));
+  if(v==="trash")return guard(()=>go("trash","list",{gone:A.gone}));
+  guard(()=>{const first=null;go("items","normal",{nav:v,sel:(v==="all"||v==="fav"||v==="login")?"mail":{crypto:"eth",phrase:"seed",note:"router"}[v],gone:A.gone,empty:A.empty});});
+ },
+ sel:select,
+ cat(v){A.cat=v;renderApp(true);},
+ clearq(){A.q="";renderApp(true);const q=$("#q");if(q)q.focus();},
+ showall(){A.nav="all";A.cat="All";A.q="";renderApp(true);},
+ new(){guard(()=>go("edit","new"));},
+ edit(){if(A.sel)go("edit","edit",{sel:A.sel});},
+ "cancel-edit"(){if(A.dirty){A.modal={k:"discard",then:()=>go("items","normal",{sel:A.sel||"mail"})};renderApp(true);}else go(A.sel==="seed"?"phrase":"items",A.sel==="seed"?"hidden":"normal",{sel:A.sel||"mail"});},
+ ntype(v){A.newType=v;renderApp(true);},
+ retry(){A.save="saved";save();},
+ savecopy(){},
+ "gen-from-edit"(){go("gen","fromedit");},
+ usegen(){go("edit","edit",{sel:"mail",dirty:true});const p=$("#e-pw");if(p)p.value=A.gout||"generated";},
+ "cancel-gen"(){go("edit","edit",{sel:"mail"});},
+ rev(v){A.rev=A.rev===v?null:v;A.revLeft=A.rev&&v!=="body"?30:0;renderApp(true);},
+ copy(v){A.copied=v;A.copiedT=2;if(v!=="gen"){A.clip=A.set.clip;A.clipWhat={user:"Username",pw:"Password",url:"Website",addr:"Address",memo:"Memo",body:"Note"}[v]||"Item";}else{A.clip=A.set.clip;A.clipWhat="Password";}if(v==="addr")A.addrHint=true;renderApp(true);},
+ clearclip(){A.clip=0;renderSbar();},
+ fav(){const it=byId(A.sel);if(it){it.fav=!it.fav;renderApp(true);}},
+ totrash(){const it=byId(A.sel);if(!it)return;A.gone=A.gone.concat(it.id);A.toast=10;A.toastMsg=`“${it.title}” moved to Trash.`;const xs=visible();A.sel=xs.length?xs[0].id:null;mark("trashed");renderApp(true);},
+ undo(){A.gone=A.gone.slice(0,-1);A.toast=0;renderApp(true);},
+ pshow(){A.modal={k:"gate"};mark("gate");renderApp(true);},
+ phide(){A.phr=false;A.phrCopied=false;mark("hidden");renderApp(true);},
+ pcopy(){A.clip=Math.min(30,A.set.clip);A.clipWhat="Recovery phrase";A.phrCopied=true;renderApp(true);},
+ mclose(){const m=A.modal;A.modal=null;if(m&&m.k==="gate")mark(A.phr?"shown":"hidden");if(m&&m.k==="discard")mark(A.save==="failed"?"failed":"edit");if(m&&(m.k==="del1"||m.k==="delall"))mark("list");if(m&&m.k==="weaken"){mark("normal");}if(m&&m.k==="catdel")mark("list");if(m&&m.k==="openfile")return go("items","normal");renderApp(true);},
+ mdiscard(){const m=A.modal;A.modal=null;A.dirty=false;if(m&&m.then)m.then();else go("items","normal");},
+ mdel1(){const id=A.modal.id;A.trash=A.trash.filter(i=>i.id!==id);A.gone=A.gone.filter(i=>i!==id);A.modal=null;mark(A.trash.length+A.gone.length?"list":"empty");renderApp(true);},
+ mdelall(){A.trash=[];A.gone=[];A.modal=null;mark("empty");renderApp(true);},
+ delall(){A.modal={k:"delall"};mark("confirmall");renderApp(true);},
+ del1(v){A.modal={k:"del1",id:v};mark("confirm1");renderApp(true);},
+ restore(v){A.trash=A.trash.filter(i=>i.id!==v);A.gone=A.gone.filter(i=>i!==v);renderApp(true);},
+ gtype(v){A.g.type=v;regen();renderApp(true);},
+ regen(){regen();const o=$("#gout");if(o)o.textContent=A.gout;const b=$("#gbits");if(b&&A.g.type!=="username")b.innerHTML=`<b>${bitsWord(A.gbits)}</b><span class="hint">≈ ${A.gbits} bits of randomness</span>`;},
+ backup(){if(A.scr==="settings"){A.banner="backup";mark("backup");renderApp(true);}else go("settings","backup");},
+ backup2(){go("settings","backup");},
+ catdel(v){A.modal={k:"catdel",v};mark("confirm");renderApp(true);},
+ "imp-pick"(){go("import","preview");},
+ "imp-cancel"(){go("import","choose");},
+ "imp-go"(){go("import","done");},
+ eye(_,el){const box=el.closest(".sf");const inp=box&&box.querySelector("input,textarea");if(!inp)return;const show=!box.classList.contains("vis-on");box.classList.toggle("vis-on",show);if(inp.tagName==="INPUT")inp.type=show?"text":"password";else inp.style.webkitTextSecurity=show?"none":"disc";el.setAttribute("aria-label",(show?"Hide":"Show")+el.getAttribute("aria-label").replace(/^(Show|Hide)/,""));el.innerHTML=ic(show?"eyeoff":"eye");clearTimeout(box._t);if(show)box._t=setTimeout(()=>{if(box.isConnected){box.classList.remove("vis-on");if(inp.tagName==="INPUT")inp.type="password";else inp.style.webkitTextSecurity="disc";el.innerHTML=ic("eye");}},30000);},
+ "first-add"(){go("edit","new",{gone:[]});},
+ "first-open"(){go("items","empty");},
+ "go-create"(){go("create","empty");},
+ "go-welcome"(){go("welcome","first");},
+ "go-unlock"(){go("unlock","ready");},
+ "go-openpick"(){go("openfile","pick");},
+ "go-openfile"(){go("openfile","confirm");},
+ "go-import"(){guard(()=>go("import","choose"));},
+ "go-export"(){go("export","form");},
+ "go-chpw"(){go("chpw","form");},
+ "go-cats"(){go("cats","list");},
+ "go-settings"(){go("settings","normal");},
+ "go-items"(){go("items","normal");}
+};
+const SUBMIT={
+ unlock(){
+  if(A.thr>0||A.working)return;
+  const v=$("#u-pw").value;
+  if(!v){$("#u-pw").focus();return;}
+  if(/wrong/i.test(v)){A.fails++;if(A.fails>=3){A.thr=Math.min(60,2**(A.fails-2));mark("throttled");}else mark("wrong");A.working=false;renderApp(false);const p=$("#u-pw");if(p&&!A.thr)p.focus();return;}
+  A.working=true;mark("working");renderApp(false);
+  setTimeout(()=>{if(A.scr==="unlock")go("items","normal");},900);
+ },
+ gate(){
+  const v=$("#g-pw").value; if(!v){$("#g-pw").focus();return;}
+  if(/wrong/i.test(v)){A.fails++;A.modal={k:"gate",bad:true};mark("gatewrong");renderApp(false);return;}
+  A.modal=null;A.phr=true;A.phrLeft=60;A.phrCopied=false;mark("shown");renderApp(true);
+  const h=$('[data-a="phide"]');if(h)h.focus({preventScroll:true});
+ },
+ create(){
+  const p=$("#c-pw").value,p2=$("#c-pw2").value,ack=$("#c-ack").checked;
+  const ok=score(p)>=3&&p.length>=12;
+  if(!ok){go("create","weak");const e=$("#c-pw");if(e){e.value=p;upMeter(e);}return;}
+  if(p!==p2){go("create","mismatch");return;}
+  if(!ack){const c=$("#c-ack");c.focus();c.closest(".chk").style.outline="2px solid var(--danger)";return;}
+  go("create","working");setTimeout(()=>{if(A.scr==="create")go("created","done");},1200);
+ },
+ chpw(){A.working=true;go("chpw","working");setTimeout(()=>{if(A.scr==="chpw")go("chpw","done");},1200);},
+ export(){if(!$("#x-ack").checked||!$("#x-pw").value)return;go("export","done");},
+ weaken(){const m=A.modal;if(!$("#w-pw").value){$("#w-pw").focus();return;}A.set[m.what]=m.to;A.modal=null;A.alMax=A.set.al*60;A.al=A.alMax;mark("normal");renderApp(true);},
+ edit(){save();}
+};
+function upMeter(inp){
+ const id=inp.id==="c-pw"?"cp":inp.id==="c-new"?"cn":null; if(!id)return;
+ const m=document.getElementById(id+"-m"); if(!m)return;
+ const tmp=document.createElement("div"); tmp.innerHTML=meterHtml(inp.value,id);
+ m.replaceWith(tmp.firstChild); const t=document.getElementById(id+"-t"); t.replaceWith(tmp.lastChild);
+}
+
+/* ---------- events ---------- */
+const win=$("#win");
+win.setAttribute("tabindex","-1");
+win.setAttribute("aria-label","Holm window (interactive)");
+win.setAttribute("role","application");
+function activity(){ if(!UNLOCKED.has(A.scr))return; const was=A.al; A.al=A.alMax; if(was<=30)setTimeout(renderSbar,0); }
+win.addEventListener("pointerdown",e=>{activity(); if(!e.target.closest("button,input,select,textarea,label,a"))win.focus({preventScroll:true});},true);
+win.addEventListener("keydown",activity,true);
+win.addEventListener("click",e=>{
+ const el=e.target.closest("[data-a]"); if(!el||!win.contains(el)||el.disabled)return;
+ const f=ACT[el.dataset.a]; if(f){e.preventDefault();f(el.dataset.v,el);}
+});
+win.addEventListener("submit",e=>{e.preventDefault();const f=SUBMIT[e.target.dataset.f];if(f)f();});
+win.addEventListener("input",e=>{
+ const t=e.target;
+ if(t.id==="q"){A.q=t.value;const r=$(".rows",win);if(r)r.innerHTML=rowsHtml();const det=$(".detail",win);if(det&&A.scr!=="edit")det.outerHTML=detailPane();return;}
+ if(t.id==="c-pw"||t.id==="c-new"){upMeter(t);return;}
+ if(t.id==="x-ack"||t.id==="x-pw"){const b=$("#x-go");if(b)b.disabled=!($("#x-ack").checked&&$("#x-pw").value);return;}
+ if(t.dataset.g){const k=t.dataset.g;A.g[k]=t.type==="checkbox"?t.checked:t.type==="range"?+t.value:t.value;const o=$(`[data-o="${k}"]`,win);if(o)o.textContent=t.value;ACT.regen();return;}
+ if(A.scr==="edit"&&t.closest('form[data-f="edit"]')&&!A.dirty){A.dirty=true;const u=$("#unsaved");if(u)u.hidden=false;renderSbar();}
+});
+win.addEventListener("change",e=>{
+ const t=e.target;
+ if(t.id==="sort"){A.sort=t.value;const r=$(".rows",win);if(r)r.innerHTML=rowsHtml();return;}
+ if(t.id==="s-al"||t.id==="s-clip"){const k=t.id==="s-al"?"al":"clip",to=+t.value,from=A.set[k];if(to>from){t.value=from;A.modal={k:"weaken",what:k,from,to};mark("weaken");renderApp(true);}else{A.set[k]=to;if(k==="al"){A.alMax=to*60;A.al=A.alMax;renderSbar();}}return;}
+ if(t.id==="s-sleep"){if(!t.checked){t.checked=true;A.modal={k:"weaken",what:"sleep",from:true,to:false};mark("weaken");renderApp(true);}else A.set.sleep=true;return;}
+});
+win.addEventListener("focusout",e=>{
+ if(e.target.id==="c-pw2"&&A.scr==="create"){const p=$("#c-pw"),p2=e.target;if(p2.value&&p.value!==p2.value&&!$(".ferr",win)){p2.closest(".sf").classList.add("bad");p2.closest(".lab").insertAdjacentHTML("afterend",ferr("These don't match. Type the password again."));}}
+});
+win.addEventListener("keydown",e=>{
+ const mod=isMac?e.metaKey:e.ctrlKey; const k=e.key;
+ // Enter never activates a filled danger button
+ if(k==="Enter"&&e.target.classList&&e.target.classList.contains("dng")){e.preventDefault();return;}
+ // focus trap inside modal
+ const scrim=$(".scrim",win);
+ if(scrim&&k==="Tab"){const fs=$$("button:not([disabled]),input:not([disabled]),select,textarea",scrim);if(fs.length){const i=fs.indexOf(document.activeElement);if(e.shiftKey&&i<=0){e.preventDefault();fs[fs.length-1].focus();}else if(!e.shiftKey&&i===fs.length-1){e.preventDefault();fs[0].focus();}}return;}
+ if(k==="Escape"){
+  e.preventDefault();
+  if(scrim){ACT.mclose();return;}
+  if(A.scr==="edit"&&!A.working){ACT["cancel-edit"]();return;}
+  if(A.rev){A.rev=null;renderApp(true);return;}
+  if(A.phr){ACT.phide();return;}
+  if(A.q){ACT.clearq();return;}
+  return;
+ }
+ if(mod&&!e.altKey&&!e.shiftKey){
+  const key=k.toLowerCase();
+  if(key==="l"&&UNLOCKED.has(A.scr)){e.preventDefault();lockNow("manual");return;}
+  if(!UNLOCKED.has(A.scr)||scrim)return;
+  if(key==="f"){e.preventDefault();if(!["items","phrase"].includes(A.scr))guard(()=>go("items","normal"));const q=$("#q");if(q){q.focus();q.select();}return;}
+  if(key==="n"){e.preventDefault();ACT.new();return;}
+  if(key==="e"&&["items","phrase"].includes(A.scr)&&A.sel){e.preventDefault();ACT.edit();return;}
+  if(key==="s"&&A.scr==="edit"){e.preventDefault();save();return;}
+  if(key==="g"){e.preventDefault();guard(()=>go("gen","password"));return;}
+  if(key===","){e.preventDefault();guard(()=>go("settings","normal"));return;}
+  if(key==="c"){const f=document.activeElement&&document.activeElement.closest&&document.activeElement.closest(".fld");const b=f&&$('[data-a="copy"]',f);if(b){e.preventDefault();ACT.copy(b.dataset.v);}return;}
+ }
+ // list keys
+ const row=e.target.closest&&e.target.closest(".ri");
+ if(row){
+  const rows=$$(".ri",win),i=rows.indexOf(row);let n=-1;
+  if(k==="ArrowDown")n=Math.min(rows.length-1,i+1);else if(k==="ArrowUp")n=Math.max(0,i-1);else if(k==="Home")n=0;else if(k==="End")n=rows.length-1;
+  if(n>=0){e.preventDefault();select(rows[n].dataset.v);return;}
+  if(k==="ArrowRight"||k==="Enter"){e.preventDefault();const b=$(".detail button",win);if(b)b.focus();return;}
+  if(k==="Delete"||k==="Backspace"){e.preventDefault();ACT.totrash();return;}
+ }
+ if(k==="ArrowLeft"&&e.target.closest&&e.target.closest(".detail")&&e.target.tagName==="BUTTON"){const r=$('.ri[aria-selected="true"]',win);if(r){e.preventDefault();r.focus();}}
+});
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&(A.rev||A.phr)){A.rev=null;if(A.phr){A.phr=false;A.st="rehidden";mark("rehidden");}renderApp(true);}});
+
+/* ---------- tick ---------- */
+setInterval(()=>{
+ if(document.hidden||!A.scr)return;
+ let full=false;
+ if(UNLOCKED.has(A.scr)&&!A.working&&!(A.scr==="openfile")){
+  A.al--; if(A.al<=0){lockNow("auto");return;}
+  if(A.al===30)renderSbar();
+ }
+ if(A.clip>0){A.clip--;if(!A.clip){A.clipWhat="";A.phrCopied=false;full=A.scr==="phrase";renderSbar();}}
+ if(A.copiedT>0){A.copiedT--;if(!A.copiedT)full=true;}
+ if(A.rev&&A.revLeft>0){A.revLeft--;if(!A.revLeft){A.rev=null;full=true;}}
+ if(A.phr&&A.phrLeft>0){A.phrLeft--;if(!A.phrLeft){A.phr=false;A.phrCopied=false;mark("rehidden");full=true;}}
+ if(A.thr>0){A.thr--;if(!A.thr){mark("ready");full=true;}}
+ if(A.toast>0){A.toast--;if(!A.toast)full=true;}
+ if(full){renderApp(true);return;}
+ const T={al:fmt(Math.max(0,A.al)),clip:A.clip,rev:A.revLeft,phr:A.phrLeft,thr:A.thr,toast:A.toast};
+ $$("[data-t]",win).forEach(n=>{const v=T[n.dataset.t];if(v!=null)n.textContent=v;});
+},1000);
+
+/* ---------- page chrome ---------- */
+$("#rail").addEventListener("click",e=>{const b=e.target.closest("[data-scr]");if(b)enter(b.dataset.scr);});
+$("#railsel").addEventListener("change",e=>enter(e.target.value));
+$("#states").addEventListener("click",e=>{const b=e.target.closest("[data-st]");if(b)enter(A.scr,b.dataset.st);});
+const VIEWS=["screens","audit","system","notes"];
+function setView(v){
+ VIEWS.forEach(x=>{$("#v-"+x).hidden=x!==v;});
+ $$("#views button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.view===v)));
+ try{history.replaceState(null,"","#"+(v==="screens"?A.scr:v))}catch(e){}
+}
+$("#views").addEventListener("click",e=>{const b=e.target.closest("[data-view]");if(b)setView(b.dataset.view);});
+const root=document.documentElement, initialTheme=root.getAttribute("data-theme");
+function setTheme(t){
+ if(t==="auto"){if(initialTheme)root.setAttribute("data-theme",initialTheme);else root.removeAttribute("data-theme");}
+ else root.setAttribute("data-theme",t);
+ $$("#themes button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.themeSet===t)));
+ try{localStorage.setItem("holm-theme",t)}catch(e){}
+}
+$("#themes").addEventListener("click",e=>{const b=e.target.closest("[data-theme-set]");if(b)setTheme(b.dataset.themeSet);});
+try{const t=localStorage.getItem("holm-theme");if(t&&t!=="auto")setTheme(t);}catch(e){}
+
+// specimen secret field on the design-system page
+document.addEventListener("click",e=>{const b=e.target.closest(".spec .eye");if(b)ACT.eye(null,b);});
+
+$("#icg").innerHTML=ICON_LIST.map(([k,l,p])=>`<div>${ic(k)}<span style="color:var(--fg)">${esc(l)}</span><span>${esc(p)}</span></div>`).join("");
+
+/* ---------- build notes per screen ---------- */
+var BN={
+ welcome:[["egui build",["`CentralPanel` with a 420 px centred column (`ui.vertical_centered` plus `set_max_width`).","Buttons are full-width stock `Button`s. Open uses `rfd::FileDialog` with a .vault filter.","No status bar until a vault is open, apart from \"No vault open\"."]],["Behaviour",["Shown when no vault exists at the default path, or the last path in the UI config is missing.","\"Last vault missing\" never deletes the remembered path; it only offers choices.","Enter activates the focused button only. No default action."]]],
+ create:[["egui build",["Two {SecretField} widgets and a {StrengthMeter}. Score from zxcvbn on a worker thread if it ever takes over 16 ms.","The checkbox is a stock `Checkbox`. The path row uses `rfd` for Change….","Create runs Argon2id (256 MiB, 3 passes) on a worker thread; the form disables and a `Spinner` shows."]],["Behaviour",["Refused unless zxcvbn score ≥ 3 and length ≥ 12. No override.","Mismatch is checked when Confirm loses focus or on submit, never while typing the first field.","Meter = 4 segments plus a word label plus a tip, so it never relies on colour.","Demo: type in the first field to see the meter react (stand-in scorer, not zxcvbn)."]]],
+ created:[["egui build",["Same centred column. Success `Frame` banner, three full-width actions."]],["Behaviour",["Backup is offered on day one: losing the only copy is the bigger risk (spec §9).","\"Go to my vault\" opens the empty vault state."]]],
+ unlock:[["egui build",["Centred column. {SecretField} gets focus on show (`request_focus`). Unlock runs on a worker thread; the session handle is the only route to the core.","Throttle countdown: `request_repaint_after(1 s)` only while the wait runs.","Cost, memory, lock-file, format and missing-file errors come from distinct core error variants; wrong password and tampered file are one variant."]],["Behaviour",["Demo: any password unlocks; a password containing \"wrong\" fails. Three failures start the wait.","Wait: 2, 4, 8 … up to 60 s, kept in memory only. The field stays editable while the button counts down.","Cost errors hide the password field: Holm didn't try it, so asking again would mislead.","Esc clears the field. The window title stays \"Holm\"."]]],
+ openfile:[["egui build",["Confirm uses `egui::Modal`. File choice via `rfd`; the lock happens before the dialog opens."]],["Behaviour",["One vault at a time (spec §8.0). No vault list or switcher in v1.","After choosing, the unlock screen shows the new path; the UI config stores only that path."]]],
+ items:[["egui build",["`SidePanel::left` (184 px), `SidePanel::left` list (296 px, resizable 260–400), `CentralPanel` detail, `TopBottomPanel::bottom` status bar.","Rows are {ItemRow}. Detail secrets use {SecretDisplay}; other fields are `Label`s.","Search is a plain `TextEdit` (not secret). Chips are `SelectableLabel`s, sort is a `ComboBox`."]],["Behaviour",["No copy on rows (fixed decision). Copy lives next to each detail field.","Show: amber frame, \"Visible · hides in N s\", 12-dot mask when hidden. Hides on timeout, item change, lock or window blur.","Copy starts the status-bar countdown; Clear now clears only if Holm's value is still on the clipboard.","Move to Trash is reversible: toast with Undo for 10 s, no modal.","Try it: arrows move through rows, Enter jumps to the detail, Esc hides a shown value, Delete moves to Trash."]]],
+ phrase:[["egui build",["Gate uses `egui::Modal` with a {SecretField}. The grid is {SecretDisplay} in PhraseGrid mode (3 × 4, 2 × 6 when narrow).","The phrase countdown repaints once a second only while shown."]],["Behaviour",["The master password is asked every time. The same throttle as unlock applies (spec §11).","Shown for 60 s, then hidden. Hide now is the focused button. Leaving the item, locking or window blur hides it.","Copy phrase exists only while shown, clears like any copy, and warns about clipboard managers.","Demo: any password shows it; \"wrong\" fails."]]],
+ edit:[["egui build",["Edit form replaces the detail pane; list and sidebar stay. Secrets use {SecretField} or {SecretTextArea}.","Save runs the atomic write on a worker thread; the form disables during it.","The discard guard is an `egui::Modal` with Keep editing focused."]],["Behaviour",["Type is fixed after creation, so fields can't silently drop.","Save failure keeps every field, says the file on disk is unchanged, and offers Save a copy elsewhere.","Auto-lock discards unsaved edits (security first). The status bar warns 30 s ahead.","Shortcuts: save, Esc to cancel (asks first if there are changes)."]]],
+ trash:[["egui build",["Tool layout: sidebar plus a `CentralPanel` list. Confirms use `egui::Modal`."]],["Behaviour",["Delete forever and Empty trash need a confirm. Cancel is focused; Enter never confirms.","Copy is honest: old copies and backups of the file still hold deleted items.","Trash is excluded from CSV export."]]],
+ gen:[["egui build",["Stock `Slider`, `Checkbox`, `ComboBox`. Output in the Gen text style (18 px mono), not selectable; Copy is the route out."]],["Behaviour",["Uniform rejection sampling from OS randomness (spec §8.5). Bits shown with a word.","From an edit, \"Use this password\" fills the field; nothing is saved until Save.","Copying a generated password uses the same clipboard countdown."]]],
+ settings:[["egui build",["`ScrollArea` with grouped `Grid`s. The weaken confirm is an `egui::Modal` with a {SecretField}."]],["Behaviour",["Security settings live in the encrypted body. Weakening needs the password; strengthening doesn't.","Ceilings: auto-lock max 60 min, clipboard max 90 s, no \"Never\".","Try it: raise the auto-lock time to open the confirm.","The About block is honest per OS about capture blocking and swap."]]],
+ chpw:[["egui build",["Three {SecretField}s, a {StrengthMeter}, a worker thread for the re-encrypt."]],["Behaviour",["Same strength rule as create. Wrong current password counts toward the throttle.","The data key rotates (spec §5.2). Done offers a new backup first, because old backups still open with the old password."]]],
+ export:[["egui build",["Danger banner, `Checkbox`, {SecretField}, filled danger button; save path via `rfd`."]],["Behaviour",["The button stays disabled until the box is ticked and the password entered. Enter doesn't trigger it.","Trash is excluded. Done reminds you to delete the file."]]],
+ import:[["egui build",["Source `ComboBox`, `rfd` picker, an issues list and a preview `Grid` of titles, types and categories only."]],["Behaviour",["Size limit 10 MB checked before parsing. Then encoding, then header, then rows.","Rows with problems are listed by number; values never appear.","Unknown categories go to Uncategorised (old importer rule: no auto-create).","Done reminds you to delete the source file."]]],
+ cats:[["egui build",["List of rows with Rename (inline `TextEdit`) and Delete (`egui::Modal`)."]],["Behaviour",["Built-ins: Personal, Work, Community. Uncategorised can't be renamed or deleted.","Delete moves items to Uncategorised; nothing is lost."]]],
+ errors:[["Copy rules",["Say what happened, then what to do.","No codes, no \"Error:\", no \"Something went wrong\".","Never include secrets, values or file contents in messages or logs."]]]
+};
+
+/* ---------- init ---------- */
+renderRail();
+const h=(location.hash||"").slice(1);
+if(VIEWS.includes(h)&&h!=="screens"){enter("items","normal");setView(h);}
+else if(SMAP[h])enter(h);
+else enter("items","normal");
+})();
+</script>
