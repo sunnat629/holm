@@ -1,0 +1,45 @@
+# Fuzz targets for holm-core. Never shipped. Its own workspace (the root
+# Cargo.toml excludes it) so libfuzzer-sys stays out of the product graph.
+[workspace]
+
+[package]
+name = "holm-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.99.1"
+publish = false
+description = "cargo-fuzz targets for Holm (never shipped)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+holm-core = { path = "../crates/holm-core" }
+holm-crypto = { path = "../crates/holm-crypto" }
+
+[[bin]]
+name = "parse_header"
+path = "fuzz_targets/parse_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_header_structured"
+path = "fuzz_targets/parse_header_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "unpad"
+path = "fuzz_targets/unpad.rs"
+test = false
+doc = false
+bench = false
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -246,4 +246,4 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
 - [Chapter 4.2, References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html)
 - [Chapter 9.2, Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html)
 
-Next lesson (written when its task lands): property tests and fuzzing.
+Next lesson: [08, property tests and fuzzing](08-property-tests-and-fuzzing.md).

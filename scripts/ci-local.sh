@@ -64,14 +64,39 @@ oracle_gate() {
 # requires zip 8.x. Its build script uses zip only for *-windows-msvc targets, where this
 # gate is skipped, and only on an archive it has minisign-verified first. Remove the
 # ignores once libsodium-sys-stable moves to zip 9.
+# The fuzz targets are their own workspace (fuzz/Cargo.toml) and need nightly Rust and
+# cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target;
+# new corpus entries land in the git-ignored fuzz/corpus/, so the tree stays clean.
+fuzz_gate() {
+  if ! cargo +nightly --version >/dev/null 2>&1; then
+    echo "MISSING nightly toolchain. Install: rustup toolchain install nightly" >&2
+    return 1
+  fi
+  if ! cargo fuzz --version >/dev/null 2>&1; then
+    echo "MISSING cargo-fuzz. Install: cargo install --locked cargo-fuzz --version 0.13.2" >&2
+    return 1
+  fi
+  cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
+  cargo audit --file fuzz/Cargo.lock || return 1
+  local t seeds
+  for t in parse_header parse_header_structured unpad; do
+    mkdir -p "fuzz/corpus/$t"
+    seeds=""
+    if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi
+    # shellcheck disable=SC2086 # $seeds is empty or one path without spaces
+    cargo +nightly fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 || return 1
+  done
+}
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     # On Windows libsodium-sys-stable downloads a prebuilt zip over HTTP.
     echo "SKIP oracle (Windows shell: libsodium-sys-stable would download a prebuilt library)"
-    echo "ALL GATES PASSED (oracle skipped)"
+    echo "SKIP fuzz (Windows shell: libFuzzer is not supported here)"
+    echo "ALL GATES PASSED (oracle and fuzz skipped)"
     ;;
   *)
     gate oracle oracle_gate
+    gate fuzz fuzz_gate
     echo "ALL GATES PASSED"
     ;;
 esac

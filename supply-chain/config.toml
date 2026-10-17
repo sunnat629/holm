@@ -23,10 +23,20 @@ version = "0.6.0"
 criteria = "safe-to-deploy"
 notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
+[[exemptions.autocfg]]
+version = "1.5.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.base64ct]]
 version = "1.8.3"
 criteria = "safe-to-deploy"
 notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.bitflags]]
+version = "2.13.2"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.blake2]]
 version = "0.11.0"
@@ -37,6 +47,21 @@ notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with 
 version = "0.12.1"
 criteria = "safe-to-deploy"
 notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.borsh]]
+version = "1.8.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.borsh-derive]]
+version = "1.8.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.bytes]]
+version = "1.12.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.cfg-if]]
 version = "1.0.5"
@@ -83,20 +108,40 @@ version = "0.11.3"
 criteria = "safe-to-deploy"
 notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
+[[exemptions.equivalent]]
+version = "1.0.3"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.errno]]
+version = "0.3.14"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.fastrand]]
+version = "2.5.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.getrandom]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
 
-[[exemptions.hex]]
-version = "0.4.3"
+[[exemptions.hashbrown]]
+version = "0.14.5"
 criteria = "safe-to-run"
-notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.hybrid-array]]
 version = "0.4.15"
 criteria = "safe-to-deploy"
 notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.indexmap]]
+version = "2.14.2"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.inout]]
 version = "0.2.4"
@@ -113,10 +158,20 @@ version = "0.2.191"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
 
+[[exemptions.linux-raw-sys]]
+version = "0.12.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.memchr]]
 version = "2.8.3"
 criteria = "safe-to-run"
 notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.once_cell]]
+version = "1.21.4"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.password-hash]]
 version = "0.6.1"
@@ -133,14 +188,55 @@ version = "0.9.1"
 criteria = "safe-to-deploy"
 notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
+[[exemptions.proc-macro-crate]]
+version = "3.5.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.proc-macro2]]
 version = "1.0.107"
 criteria = "safe-to-deploy"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.proptest]]
+version = "1.12.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.r-efi]]
 version = "6.0.0"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
+
+[[exemptions.rand]]
+version = "0.10.3"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.rand_core]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.rand_xorshift]]
+version = "0.5.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.regex-syntax]]
+version = "0.8.11"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.rustix]]
+version = "1.1.5"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.rusty-fork]]
+version = "0.3.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.serde]]
 version = "1.0.229"
@@ -170,6 +266,7 @@ notes = "Added in Task 8 (constant-time DEK comparison in verify_password). Repl
 [[exemptions.syn]]
 version = "2.0.119"
 criteria = "safe-to-deploy"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.syn]]
 version = "3.0.9"
@@ -189,6 +286,22 @@ notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace 
 [[exemptions.tinyvec]]
 version = "1.13.3"
 criteria = "safe-to-deploy"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.toml_datetime]]
+version = "1.1.2+spec-1.1.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.toml_edit]]
+version = "0.25.17+spec-1.1.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.toml_parser]]
+version = "1.1.5+spec-1.1.0"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.typenum]]
 version = "1.20.1"
@@ -198,11 +311,27 @@ notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with 
 [[exemptions.unicode-ident]]
 version = "1.0.27"
 criteria = "safe-to-deploy"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.universal-hash]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
 notes = "Added in Task 6 (XChaCha20-Poly1305 and Wycheproof test dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.windows-link]]
+version = "0.2.1"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.windows-sys]]
+version = "0.61.2"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.winnow]]
+version = "1.0.4"
+criteria = "safe-to-run"
+notes = "Added in Task 9 (proptest dev-dependency of holm-core and its dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.zeroize]]
 version = "1.9.1"

@@ -1,0 +1,44 @@
+# Manual-only, like ci.yml: GitHub Actions minutes are limited. Not a gate; the gate is
+# the 30 s smoke run in scripts/ci-local.sh. Add a weekly `schedule:` trigger when the
+# repo goes public.
+name: Fuzz
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_header, parse_header_structured, unpad]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz --version 0.13.2
+      - name: Fuzz ${{ matrix.target }} for 600 s
+        run: |
+          seeds=""
+          if [ -d "fuzz/seeds/${{ matrix.target }}" ]; then seeds="fuzz/seeds/${{ matrix.target }}"; fi
+          mkdir -p "fuzz/corpus/${{ matrix.target }}"
+          cargo +nightly fuzz run "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" $seeds -- -max_total_time=600
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

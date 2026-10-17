@@ -18,3 +18,4 @@ zeroize.workspace = true
 
 [dev-dependencies]
 static_assertions.workspace = true
+proptest.workspace = true
