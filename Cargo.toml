@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-cli"]
+# Separate workspaces (own lockfiles): libsodium oracle tests and cargo-fuzz.
+exclude = ["oracle", "fuzz"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.99.1"
+repository = "https://github.com/sunnat629/holm"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# Internal crates
+holm-crypto = { path = "crates/holm-crypto", version = "0.0.0" }
+holm-core = { path = "crates/holm-core", version = "0.0.0" }
+
+# Runtime
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+# Direct dep only to unify features: chacha20poly1305 does not enable poly1305/zeroize
+# itself, so the MAC key and state would not be wiped. Keep this line.
+poly1305 = { version = "0.9", default-features = false, features = ["zeroize"] }
+zeroize = { version = "1.9", features = ["derive"] }
+getrandom = "0.4"
+unicode-normalization = "0.1"
+thiserror = "2"
+subtle = "2.6"
+
+# Dev and test only
+proptest = "1.12"
+hex = "0.4"
+serde_json = "1"
+static_assertions = "1.1"
+
+# Argon2 is slow in unoptimised builds. Optimise dependencies even in dev
+# so tests that derive keys stay fast. Our own code stays easy to debug.
+[profile.dev.package."*"]
+opt-level = 3

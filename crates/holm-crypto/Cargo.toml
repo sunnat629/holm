@@ -1,0 +1,31 @@
+[package]
+name = "holm-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Holm cryptography: secret types, randomness, Argon2id, XChaCha20-Poly1305"
+
+[lints]
+workspace = true
+
+[dependencies]
+zeroize.workspace = true
+unicode-normalization.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+# Turns on poly1305/zeroize through feature unification (see root Cargo.toml).
+poly1305.workspace = true
+
+[features]
+# Exposes `kdf::argon2id_raw`, which skips the cost policy. Only the test-only
+# `oracle/` workspace turns this on. Never enable it in a shipping build.
+test-vectors = []
+
+[dev-dependencies]
+static_assertions.workspace = true
+serde_json.workspace = true
+hex.workspace = true
