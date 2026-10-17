@@ -188,7 +188,7 @@ The vault is not excluded from Time Machine or other backups (security decision)
 ## 10. GUI (egui)
 
 - Three panes: menu (Vault, Generator, Settings, Lock), list (search, category chips, sort, New), detail (view or edit). Locked state shows only the unlock screen.
-- Plain look, system-like font, light and dark themes, keyboard shortcuts. Accessibility through egui's AccessKit support.
+- Plain look, bundled Atkinson Hyperlegible font (Latin subset), light and dark themes, keyboard shortcuts. Accessibility through egui's AccessKit support.
 - Secret entry uses Holm's own small password widget, not egui's `TextEdit` (security decision). `TextEdit` keeps its own copies through undo history, the layout cache and the accessibility tree. The Holm widget has no undo, lays out only mask characters, exposes no value to accessibility tools, and keeps text in a pre-allocated buffer that wipes itself. A revealed secret is shown read-only, straight from the wiping buffer. This **reduces** copies; it can't promise there are none (font and GPU layers may still hold rendered glyphs).
 - egui's built-in state saving (`persistence` feature) is **off**, so titles and search text never land on disk.
 - The secrets never appear in the window title, notifications or OS recent-items lists.

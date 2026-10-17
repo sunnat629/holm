@@ -56,7 +56,7 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 | warn-bg / warn / warn-line | warn_fg_color = warn | #FFF3D9 / #8A5100 / #B97A12 | #32260E / #F0B44C / #B58222 |
 | ok-bg / ok | custom | #E5F3EA / #1C6B3A | #15301F / #72D29B |
 
-**Type.** Atkinson Hyperlegible Next for the UI and Atkinson Hyperlegible Mono for secrets, both OFL-1.1 and subset to Latin. They are the only fonts: egui's `default_fonts` feature is off (it pulls in OFL-1.1 and Ubuntu-font-1.0 files that `deny.toml` does not allow), and `deny.toml` gets OFL-1.1 when the GUI crate lands.
+**Type.** Atkinson Hyperlegible Next for the UI and Atkinson Hyperlegible Mono for secrets, both OFL-1.1 and subset to Latin. They are the only fonts: egui's `default_fonts` feature is off (it pulls in OFL-1.1 and Ubuntu-font-1.0 files that `deny.toml` does not allow), and `deny.toml` is not involved: it checks crate licences, not a bundled TTF. When the GUI lands, the fonts' OFL-1.1 text and copyright notices go in a `LICENSES/` or `NOTICE` file in the repo and in the binary's notices. (Only if a font ever arrives through a crate would OFL-1.1 need to be allowlisted.)
 
 | Style | Size and weight | Used for |
 |---|---|---|

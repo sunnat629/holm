@@ -271,8 +271,8 @@ eframe can save window size, positions and your app state to disk (the `persiste
 
 ### 4.5 Auto-lock, minimise, sleep
 
-- **Where the check lives**: put it in `App::logic`, not in `App::ui`. While the window is minimised or fully covered, eframe calls only `logic` and skips `ui` (`ViewportInfo::visible()` is `Some(false)` then). Input seen in that state is stale, so do not count it as activity.
-- **Idle timer**: remember `last_activity: Instant`. Check `elapsed() >= 5 min` **first**, and only then record this frame's input as activity. The other order lets the first key press after a long sleep reset the timer. The tutorial uses 20 seconds so you can watch it. Count user input only, not repaints or timers.
+- **Where the check lives**: put it in `App::logic`, not in `App::ui`. While the window is minimised or fully covered, eframe calls only `logic` and skips `ui` (`ViewportInfo::visible()` is `Some(false)` then). Input seen in that state is stale, so never record activity in `logic`. Record it in `ui`/`show()`, where input is fresh, and as defence in depth skip recording whenever `viewport().visible()` is `Some(false)`.
+- **Idle timer**: remember `last_activity: Instant`. In `logic`, check `elapsed() >= 5 min`. In `ui`, record this frame's input as activity. `logic` runs before `ui` in a full pass, so the check comes first. The other order lets the first key press after a long sleep reset the timer. The tutorial uses 20 seconds so you can watch it. Count user input only, not repaints or timers.
 - **Minimise**: `ctx.input(|i| i.viewport().minimized)` is `Option<bool>`. Lock when it is `Some(true)`. The same `viewport()` info has `focused` and `occluded`.
 - **Sleep, screen lock, logout**: egui does not give you these. They are OS events and belong to `holm-platform` (macOS notifications, Windows `WM_POWERBROADCAST` and session change, Linux logind signals). The platform crate sends a message over a channel, and the app locks on it. Remember to call `request_repaint()` from that thread.
 - **Quit**: wipe in `Drop` and on a `ViewportCommand::Close` path. A hard kill cannot run code. That is a known limit.
@@ -291,7 +291,7 @@ Goal: other programs and screen recorders should not capture the Holm window.
 
 - `egui::ViewportCommand::ContentProtected(bool)` exists in 0.37. It asks winit to mark the window as protected. winit 0.30.13 implements `ContentProtected` on Windows and macOS. Holm should set `ViewportBuilder::with_content_protected(true)` from the first frame, as best effort. Whether it covers every capture tool is **unverified**. Do not promise it to users.
 - Windows has `SetWindowDisplayAffinity` with `WDA_EXCLUDEFROMCAPTURE`. macOS has `NSWindow.sharingType = .none` (and macOS 15 and later screen capture can bypass it in some cases, **unverified**). Wayland has no general mechanism. X11 has none.
-- Why `holm-platform`: these calls need `unsafe` (FFI to OS libraries). The project rule is `forbid(unsafe_code)` everywhere except one crate. Putting all of them in `holm-platform` keeps the dangerous code small and auditable. The GUI crate calls a safe function such as `holm_platform::protect_window(&window_handle)` and nothing else.
+- Why `holm-platform` is still needed: winit already makes the `unsafe` OS calls behind `with_content_protected(true)`, so the GUI crate needs no `unsafe` for that. Anything winit does not cover (for example a platform where its flag does nothing) would need FFI, and the project rule is `forbid(unsafe_code)` everywhere except one crate. Keep any such call in `holm-platform`, behind a safe function, so the dangerous code stays small and auditable.
 - Tell the user honestly: this is a speed bump, not a wall.
 
 ### 4.8 One more rule: slow work off the UI thread
@@ -378,7 +378,7 @@ cargo add eframe@=0.37.0 --no-default-features --features default_fonts,glow,way
 cargo add --dev egui_kittest@=0.37.0 --features snapshot
 ```
 
-Why `--no-default-features`: this is for the throwaway tutorial crate only. Holm itself must keep the eframe `accesskit` and `clipboard` features (accessibility and copy support are required; egui core always builds the accessibility tree anyway). The defaults pull in `wgpu`, `accesskit`, clipboard and more. We pick features on purpose (section 4.3). `glow` is the OpenGL backend. On Windows and macOS you may add nothing else. If the window does not open on your machine, try adding the default `wgpu` feature back.
+Why `--no-default-features`: this is for the throwaway tutorial crate only. Holm itself must keep the eframe `accesskit` and `clipboard` features (accessibility and copy support are required; egui core always builds the accessibility tree anyway). The defaults pull in `wgpu`, `accesskit`, clipboard and more. We pick features on purpose (section 4.3). The tutorial keeps `default_fonts` so text renders without extra files. Holm itself turns `default_fonts` off and bundles one font (see `docs/design/ui-final-notes.md`). `glow` is the OpenGL backend. On Windows and macOS you may add nothing else. If the window does not open on your machine, try adding the default `wgpu` feature back.
 
 `Cargo.toml` after that:
 
@@ -591,11 +591,14 @@ impl HolmApp {
 
     /// Auto-lock and lock-on-minimise. Called from `App::logic`, NOT from `ui`.
     /// While the window is minimised or hidden, eframe calls `logic` but never `ui`.
+    /// This function only CHECKS. It never records activity: inside `logic` the
+    /// input state can be stale (events of the last shown frame), so it is not
+    /// evidence that the user is here. Activity is recorded in `show`.
     fn tick(&mut self, ctx: &egui::Context) {
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         let vault_open = matches!(self.screen, Screen::Vault);
 
-        // 1. Minimised: lock now. Input in this state is stale, so it is not activity.
+        // 1. Minimised: lock now.
         if minimized {
             if vault_open {
                 self.lock();
@@ -603,22 +606,27 @@ impl HolmApp {
             return;
         }
 
-        // 2. Idle check FIRST, before recording this frame's input. If the window
-        //    slept for an hour and the first thing we see is a key press, the key
-        //    must not reset the timer before we compare.
-        let idle = self.last_activity.elapsed();
-        if vault_open && idle >= AUTO_LOCK {
+        // 2. Idle check. In a full pass `logic` runs before `ui`, so this always
+        //    compares against the activity of EARLIER frames. A key press that
+        //    wakes the window after a long sleep is recorded later, in `show`.
+        if vault_open && self.last_activity.elapsed() >= AUTO_LOCK {
             self.lock();
         }
 
-        // 3. Only now record activity (user input only).
-        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
-            self.last_activity = Instant::now();
-        }
-
-        // 4. Wake up exactly when the lock is due, even with no input.
+        // 3. Wake up exactly when the lock is due, even with no input.
         if matches!(self.screen, Screen::Vault) {
             ctx.request_repaint_after(AUTO_LOCK.saturating_sub(self.last_activity.elapsed()));
+        }
+    }
+
+    /// Record user input as activity. Called from `show`, where input is fresh.
+    /// Defence in depth: skip it whenever the window is known to be hidden.
+    fn record_activity(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().visible() == Some(false)) {
+            return;
+        }
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
+            self.last_activity = Instant::now();
         }
     }
 }
@@ -636,7 +644,9 @@ impl HolmApp {
     fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Display only. The locking itself happens in `tick`, called from `App::logic`.
+        // `logic` (which calls `tick`) already ran for this pass, so the idle check
+        // is done. Input here is fresh: record it, then show the countdown.
+        self.record_activity(&ctx);
         let idle = self.last_activity.elapsed();
 
         egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
@@ -691,8 +701,9 @@ impl HolmApp {
 
 Things to notice:
 
-- `show` only draws. The locking lives in `tick` (shown under Step 3), which Step 5 calls from `App::logic`. Reason: while a window is minimised or fully covered, eframe stops calling `App::ui` but still calls `App::logic`. A lock check inside `ui` would never run in exactly the case it exists for.
-- In `tick` the idle check comes **before** the activity reset. The other order is a bug: after a long sleep the first key press would reset the timer and the vault would stay open.
+- The locking lives in `tick` (shown under Step 3), which Step 5 calls from `App::logic`. Reason: while a window is minimised or fully covered, eframe stops calling `App::ui` but still calls `App::logic`. A lock check inside `ui` would never run in exactly the case it exists for.
+- Recording activity lives in `show`, not in `tick`. Reason: inside `logic` while the window is hidden, `ctx.input` still holds the events of the last shown frame (often the "focus lost" event from clicking away). Counting those would reset the timer on every logic tick and the vault would never lock. `record_activity` also skips when `viewport().visible()` is `Some(false)`.
+- The idle check still comes **before** the activity reset. In a full pass eframe runs `logic` before `ui`, so this order holds by construction. The other order is a bug: after a long sleep the first key press would reset the timer and the vault would stay open.
 - `ctx.request_repaint_after(..)` in `tick` wakes the app when it should lock, even with no input. This is the answer to "no recomposition, so how do timers work".
 - `match &mut self.screen { .. }` handles every variant. Delete one arm and the compiler complains.
 - In `Working`, `rx.try_recv().ok()` never blocks. If the result is not there yet, we ask for another frame in 100 ms.
@@ -724,7 +735,7 @@ fn main() -> eframe::Result {
 }
 ```
 
-Why `show` is separate: the test in step 6 can call `app.show(ui)` without building a real `eframe::Frame`. Why `tick` is in `logic`: see the notes under Step 4.
+Why `show` is separate: the test in step 6 can call `app.show(ui)` without building a real `eframe::Frame`. Why `tick` is in `logic` and `record_activity` is in `show`: see the notes under Step 4. Whether eframe really behaves this way on each OS (occluded, Cmd+H, minimised) is **not tested by hand**; check it on your machine.
 
 Run it with `cargo run`. Type `correct horse` and press Enter. Try a wrong password. Unlock, then leave the mouse alone for 20 seconds, or minimise the window. It should lock.
 
@@ -747,6 +758,49 @@ mod tests {
         b.clear();
         assert!(b.is_empty());
         assert_eq!(format!("{b:?}"), "SecretBuf(<0 chars hidden>)");
+    }
+
+    /// Stale events seen during `logic` must not reset the idle timer.
+    #[test]
+    fn stale_events_in_logic_do_not_reset_timer() {
+        let ctx = egui::Context::default();
+        // A shown frame whose last event is "focus lost" (the user clicked away).
+        let shown = egui::RawInput {
+            events: vec![egui::Event::WindowFocused(false)],
+            ..Default::default()
+        };
+        ctx.run_ui(shown, |_| {}).textures_delta.clear();
+
+        let mut app = HolmApp::new();
+        app.screen = Screen::Vault;
+        let old = Instant::now() - (AUTO_LOCK + Duration::from_secs(1));
+        app.last_activity = old;
+
+        // A logic-only pass: the window is occluded, input is still the old events.
+        app.tick(&ctx);
+        assert!(matches!(app.screen, Screen::Unlock { .. }), "idle vault must lock");
+        assert_eq!(app.last_activity, old, "logic must not touch the timer");
+    }
+
+    /// Defence in depth: no recording while the window is known to be hidden.
+    #[test]
+    fn record_activity_skips_hidden_window() {
+        let ctx = egui::Context::default();
+        let mut vp = egui::ViewportInfo::default();
+        vp.minimized = Some(true);
+        let mut raw = egui::RawInput {
+            events: vec![egui::Event::WindowFocused(true)],
+            ..Default::default()
+        };
+        raw.viewports.insert(egui::ViewportId::ROOT, vp);
+        ctx.run_ui(raw, |_| {}).textures_delta.clear();
+        assert_eq!(ctx.input(|i| i.viewport().visible()), Some(false));
+
+        let mut app = HolmApp::new();
+        let old = Instant::now() - Duration::from_secs(5);
+        app.last_activity = old;
+        app.record_activity(&ctx);
+        assert_eq!(app.last_activity, old);
     }
 
     #[test]
