@@ -32,7 +32,9 @@ criteria = "safe-to-deploy"
 [[exemptions.zeroize]]
 version = "1.9.1"
 criteria = "safe-to-deploy"
+notes = "Replace with delta audit 1.8.2 -> 1.9.1 (cargo vet diff) before Phase 1 closes."
 
 [[exemptions.zeroize_derive]]
 version = "1.5.0"
 criteria = "safe-to-deploy"
+notes = "Replace with delta audit 1.4.2 -> 1.5.0 (cargo vet diff) before Phase 1 closes."

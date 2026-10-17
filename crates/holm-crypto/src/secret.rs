@@ -8,7 +8,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 ///
 /// The bytes live in a `Box` so moving the key moves only a pointer, never a
 /// copy of the key. There is no `Clone` or `Copy`, and `Debug` hides the bytes.
-#[derive(Zeroize, ZeroizeOnDrop)]
+#[derive(ZeroizeOnDrop)]
 pub struct SecretKey(Box<[u8; 32]>);
 
 impl SecretKey {
@@ -61,6 +61,9 @@ pub struct SecretBuf(Zeroizing<Vec<u8>>);
 
 impl SecretBuf {
     /// Takes ownership of `v`. The bytes are wiped when the buffer drops.
+    ///
+    /// Copies left behind by the caller's earlier reallocations of `v`
+    /// cannot be wiped; we only wipe what we hold.
     #[must_use]
     pub fn from_vec(v: Vec<u8>) -> SecretBuf {
         SecretBuf(Zeroizing::new(v))
@@ -109,10 +112,13 @@ impl MasterPassword {
     /// NFC makes "caf\u{e9}" and "cafe\u{301}" produce the same key.
     #[must_use]
     pub fn to_kdf_bytes(&self) -> SecretBuf {
-        // NFC grows UTF-8 by at most 3x. Reserving that up front means the
-        // buffer never reallocates, so no unwiped copy is left behind.
-        let mut normalized = Zeroizing::new(String::with_capacity(3 * self.0.len()));
+        // NFC grows UTF-8 by at most 3x. Reserving that up front means our
+        // buffer never reallocates. (The normaliser's own small scratch
+        // buffers are outside our control.)
+        let cap = 3 * self.0.len();
+        let mut normalized = Zeroizing::new(String::with_capacity(cap));
         normalized.extend(self.0.nfc());
+        debug_assert_eq!(normalized.capacity(), cap, "NFC outgrew the 3x bound");
         let mut out = Vec::with_capacity(normalized.len());
         out.extend_from_slice(normalized.as_bytes());
         SecretBuf::from_vec(out)
@@ -167,6 +173,22 @@ mod tests {
         assert_eq!(
             format!("{:?}", MasterPassword::new("hunter2".into())),
             "MasterPassword([REDACTED])"
+        );
+    }
+    #[test]
+    fn nfc_worst_case_expansion() {
+        let b = MasterPassword::new("\u{1D160}".repeat(8)).to_kdf_bytes();
+        assert_eq!(b.len(), 96);
+    }
+    #[test]
+    fn empty_password_gives_empty_bytes() {
+        assert!(MasterPassword::new(String::new()).to_kdf_bytes().is_empty());
+    }
+    #[test]
+    fn empty_secretbuf_debug_len_zero() {
+        assert_eq!(
+            format!("{:?}", SecretBuf::from_vec(Vec::new())),
+            "SecretBuf([REDACTED], len = 0)"
         );
     }
     static_assertions::assert_not_impl_any!(SecretKey: Clone, Copy);
