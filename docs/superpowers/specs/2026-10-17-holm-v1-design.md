@@ -162,7 +162,7 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 4. Copy to clipboard with auto-clear (default 30 s). It clears only if the clipboard still holds what Holm put there. Recovery phrases are never copied without re-entering the master password.
 5. Generator: passwords (length, character sets, avoid look-alikes, minimum digits and symbols), passphrases (EFF large word list, separator, capitals, number), usernames. Uniform sampling by rejection, OS randomness only.
 6. Change master password (rotates DEK; section 5.2).
-7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards.
+7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards. Clarified 2026-10-18 (owner answer): an item keeps its source category when the name matches an existing category; otherwise it goes to Uncategorised. Import never creates categories.
 8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool).
 9. Settings: auto-lock time, clipboard time, lock on sleep, generator defaults. These security settings live **inside the encrypted body** (security decision), so nobody can weaken them by editing a file; making any of them weaker needs the master password again. A separate plain config file holds only harmless UI preferences (window size, theme, last vault path).
 10. CLI: `holm init`, `list`, `get`, `add`, `edit`, `rm`, `gen`, `import`, `export`, `passwd`, `shell`. Passwords are read from the terminal with no echo, never from flags. There is **no background agent** (security decision): each one-shot command asks for the password and opens the vault, and `holm shell` keeps one unlocked session inside a single interactive process, with the same throttle and auto-lock as the GUI. An agent would add IPC and client-authentication surface for little gain in v1.
@@ -254,9 +254,9 @@ Each phase ends with a security review before merge.
 |---|---|---|
 | 0 | Repo, workspace, local CI gate on macOS (three OSes when Actions returns, see §12), deny/audit/vet gates, open-source files | `scripts/ci-local.sh` green on an empty workspace |
 | 1 | `holm-crypto` plus file format | All known-answer tests pass, fuzzers run, hostile fixtures rejected |
-| 2 | `holm-core`: vault, items, generator, import/export, throttle | Full round trip; crash tests pass |
+| 2 | `holm-core`: vault, items, generator, import/export, throttle; plus a std-only durable `FsStore` in a new `holm-platform` crate (still `forbid(unsafe_code)`) so crash tests run on real files | Full round trip; crash tests pass |
 | 3 | `holm-cli` | Daily use possible from the terminal |
-| 4 | `holm-platform`: lock, durable save, clipboard, OS events, capture exclusion | Per-OS manual checklist passed on real machines |
+| 4 | `holm-platform`: lock, per-OS durable save hardening (Windows write-through, directory sync), clipboard, OS events, capture exclusion | Per-OS manual checklist passed on real machines |
 | 5 | `holm-gui` (egui) | All v1 features through the GUI |
 | 6 | Hardening and release | Internal review, long fuzz run, outside audit, signed installers, public repo |
 | Later | Android (`holm-ffi` + Compose), then iOS (SwiftUI) | Separate design |
