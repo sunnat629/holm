@@ -23,6 +23,10 @@ Out of scope: other projects, third-party dependencies (report those upstream, b
 too), and attacks the [threat model](docs/THREAT-MODEL.md) lists as out of scope, such as
 malware running as your user while the vault is unlocked.
 
+## Design decisions
+
+Accepted risks and deferrals are listed in [docs/DECISIONS.md](docs/DECISIONS.md).
+
 ## Status
 
 Holm is pre-alpha. Do not trust it with real secrets yet.

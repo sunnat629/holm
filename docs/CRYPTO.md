@@ -98,9 +98,10 @@ file without running Argon2 once per flip.
 **Timing.** A wrong password fails at step 3, before the body is decrypted, so it can
 return sooner than a damaged body, which fails at step 4. Both give the same error. We
 accept this difference for two reasons. First, Argon2 in step 2 takes far longer than
-either AEAD step. Second, anyone holding the file can already tell the two cases apart
-offline: with a candidate password they can run the unwrap themselves. Holm makes no
-claim of equal timing.
+either AEAD step. Second, the timing difference only shows whether the key unwrap
+succeeded. Anyone in a position to measure it already holds the file and can test that
+offline for any candidate password at the same Argon2 cost, so timing reveals nothing
+they could not compute. Holm makes no claim of equal timing.
 
 ## Saving
 
@@ -159,7 +160,7 @@ produced the file. It reveals nothing about the password, and it is not a paddin
 | Error | When | Says anything about the password? |
 |---|---|---|
 | `Format(..)` | The public bytes are not a valid v1 file. | No |
-| `KdfPolicy(..)` | Costs outside the policy, from the header or from the caller. Message: "this vault needs more resources than allowed". | No |
+| `KdfPolicy(..)` | Costs outside the policy, from the header or from the caller. Message: "this vault's key-derivation settings are outside Holm's policy". | No |
 | `WrongPasswordOrCorrupt` | The DEK unwrap failed (wrong password, or a changed salt, in-policy cost, wrap nonce or wrapped DEK) or the body failed to open (any other change). | It is the only error a wrong password can cause. |
 | `BadPadding` | The body authenticated but its padding is malformed. | No |
 | `TooLargeToSave` | The body is over the write cap. | No |
@@ -183,6 +184,9 @@ work area, the padded plaintext, the decrypted body, the unwrapped DEK buffer, a
 AEAD working buffers on both success and failure. Keys go from a wiped buffer straight
 into the key's heap box, without a copy on the stack. No error carries secret bytes, and
 `Debug` for `VaultKeys`, `SecretKey`, `SecretBuf` and `MasterPassword` prints no secret.
+
+Rust cannot guarantee that temporary copies on the stack or in registers are wiped; Holm
+wipes every buffer it owns and keeps secrets in heap boxes to limit copies.
 
 Known gaps:
 

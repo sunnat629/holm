@@ -17,18 +17,18 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Attacker | In scope? | What Holm does |
 |---|---|---|
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
-| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. Planned: fuzz the parser. |
+| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser and body decoding are fuzzed (`fuzz/`); full open with a fixed key is fuzzed from Phase 2. |
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on sleep and screen lock, password re-entry for recovery phrases and settings changes. |
 | Clipboard snooping and clipboard history | Partly | Auto-clear, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
-| Malicious or fake Holm build, poisoned dependency | Yes, via process | Planned: signed releases, reproducible builds, dependency audit gates. |
+| Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Planned: signed releases, reproducible builds, SBOM. |
 | Malware running as the same user while unlocked | No | Cannot be defended against. Documented plainly. |
 | Rollback (swapping in an older copy of the file) | No | Documented. Needs outside state Holm does not have. |
 
 ## Limits we state plainly
 
 - A weak master password is the weakest link. Argon2id slows guessing; it does not stop it.
-- Tampering with the encrypted data looks the same as a wrong password. That is unavoidable and correct. Format errors and KDF cost rejections are their own errors, never reported as a wrong password.
+- Tampering with the encrypted data, or with any header field that still parses, looks the same as a wrong password. That is unavoidable and correct. Format errors and KDF cost rejections are their own errors, never reported as a wrong password.
 - A deleted item is gone from the new file, not from old copies or backups of it.
 - Wiping memory is best effort. See the claims below.
 - Holm cannot see or stop what the operating system, other programs or hardware do.

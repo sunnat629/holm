@@ -83,7 +83,7 @@ Rules:
 | Unicode cleanup | NFC normalisation | `unicode-normalization` |
 | Password strength | zxcvbn estimate | `zxcvbn` |
 
-The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in the local CI gate (`scripts/ci-local.sh`). GitHub Actions is manual-only for now (owner ruling); the cross-check moves back into Actions when Actions is re-enabled for the public repo. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
+The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in the local CI gate (`scripts/ci-local.sh`). GitHub Actions is manual-only for now (project decision, see §12); the cross-check moves back into Actions when Actions is re-enabled for the public repo. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
 
 ### 5.2 Keys
 
@@ -109,7 +109,7 @@ body:          XChaCha20-Poly1305(DEK, body_nonce, padded plaintext, aad = whole
 
 Parallelism is fixed at 1 in v1 (security decision): every value Holm accepts can then be cross-checked against libsodium, and the header field leaves room to allow more later.
 
-The builder measures the default on a slow reference machine. Target: unlock under about 1.5 s on that machine. The default must also be openable on a mid-range phone later; if not, lower it, but never below the floor. Costs are stored in the header, so later versions can raise them. A cost rejection is its own error ("this vault needs more resources than allowed"), never reported as "wrong password".
+The builder measures the default on a slow reference machine. Target: unlock under about 1.5 s on that machine. The default must also be openable on a mid-range phone later; if not, lower it, but never below the floor. Costs are stored in the header, so later versions can raise them. A policy rejection is its own error ("this vault's key-derivation settings are outside Holm's policy"), never reported as "wrong password".
 
 ## 6. Vault file format v1
 
@@ -213,11 +213,12 @@ The vault is not excluded from Time Machine or other backups (security decision)
 **Tests**
 - Known-answer tests: RFC 9106 Argon2id vectors, draft-irtf-cfrg-xchacha vectors, the Wycheproof XChaCha20-Poly1305 file, libsodium cross-check (test-only).
 - Property tests (`proptest`) for format round trips, generator distribution and import parsing.
-- Fuzzing (`cargo-fuzz`) on header parsing, full open with a fixed key, body decoding, CSV and JSON import. Runs in CI on a schedule.
+- Fuzzing (`cargo-fuzz`) on header parsing, full open with a fixed key, body decoding, CSV and JSON import. Runs in CI on a schedule (until Actions returns: in the local gate, see §12).
 - Hostile-file fixtures: too large, truncated, trailing bytes, out-of-range costs, flipped bits in every header field.
 - Crash tests: a child process is killed at each save step, then a fresh process must open either the old or the new vault, never neither (method taken from the old project).
 - `holm-platform` `unsafe` code is checked by line-by-line review and by tests on real machines for each OS. Miri can't run FFI or system calls, so it gives no real assurance there and isn't counted.
 - CI on macOS, Windows and Linux.
+- Security decision: until the repo is public, the merge gate is `scripts/ci-local.sh` on macOS. 3-OS CI and scheduled fuzzing return when GitHub Actions is re-enabled. Cost if wrong: a Linux- or Windows-only bug ships unnoticed until then. Details and the other deferrals: `docs/DECISIONS.md`.
 
 **Releases**
 - macOS: Developer ID signing and notarisation, `.dmg`. The owner already has an Apple Developer account.
@@ -249,7 +250,7 @@ Each phase ends with a security review before merge.
 
 | Phase | Output | Done when |
 |---|---|---|
-| 0 | Repo, workspace, CI on three OSes, deny/audit/vet gates, open-source files | CI green on an empty workspace |
+| 0 | Repo, workspace, local CI gate on macOS (three OSes when Actions returns, see §12), deny/audit/vet gates, open-source files | `scripts/ci-local.sh` green on an empty workspace |
 | 1 | `holm-crypto` plus file format | All known-answer tests pass, fuzzers run, hostile fixtures rejected |
 | 2 | `holm-core`: vault, items, generator, import/export, throttle | Full round trip; crash tests pass |
 | 3 | `holm-cli` | Daily use possible from the terminal |

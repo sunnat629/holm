@@ -18,6 +18,8 @@ cargo test --workspace
 
 ## Read more
 
+- [How Holm encrypts your vault](docs/CRYPTO.md): the key hierarchy, file format and error model.
+- [Design decisions and accepted risks](docs/DECISIONS.md): what we chose, why, and when to revisit.
 - [Threat model](docs/THREAT-MODEL.md): what Holm defends against, and what it does not.
 - [Learn Rust with Holm](docs/learn/README.md): a course for beginners, one lesson per task.
 - [Security policy](SECURITY.md): how to report a vulnerability.
