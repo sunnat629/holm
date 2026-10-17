@@ -142,10 +142,12 @@ its condition is false. In Kotlin you'd write: a JUnit `@Test` that uses `Proces
 
 ## Why this matters for security
 
-Pinning the compiler and the dependency versions means every build is repeatable, which is
-the first step toward builds others can verify. `forbid(unsafe_code)` means that, in our
-crates, the compiler itself proves a whole class of memory bugs (buffer overflows, use after
-free) cannot happen. Most password manager flaws in memory-unsafe languages are of that kind.
+Pinning the compiler version, and committing `Cargo.lock` (which records the exact version of
+every dependency), makes builds repeatable. That is the first step toward builds others can
+verify. `forbid(unsafe_code)` means that, in our own crates, the compiler proves a whole class
+of memory bugs (buffer overflows, use after free) cannot happen. It does not cover our
+dependencies, which do use `unsafe` internally; that is why we keep the dependency list short
+and reviewed.
 
 ## Try it
 

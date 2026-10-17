@@ -3,5 +3,5 @@
 #![forbid(unsafe_code)]
 
 fn main() {
-    println!("holm 0.0.0");
+    println!("holm {}", env!("CARGO_PKG_VERSION"));
 }

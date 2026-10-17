@@ -20,7 +20,7 @@ cargo fmt --check
 - Keep dependencies few. Every new one needs a reason in the pull request.
 - Secrets must never appear in logs, errors, panic messages or `Debug` output.
 - Every security claim needs a test, or must be written down as a limit.
-- Do not write your own cryptography. Use the audited primitives already chosen.
+- Do not write your own cryptography. Use the well-reviewed primitives already chosen (RustCrypto). Never add a custom construction.
 - Never put real passwords or keys in tests, examples or issues.
 
 ## Licence

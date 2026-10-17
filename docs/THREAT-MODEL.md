@@ -2,12 +2,15 @@
 
 Holm is a local-only, offline password and secrets vault: one encrypted file, no account,
 no cloud, no network. This page says who we defend against, who we do not, and which
-claims we refuse to make. If a statement here is not backed by a test, it is marked as a limit.
+claims we refuse to make.
+
+**Status:** this page describes the v1 design. Defences listed below are planned, not
+shipped, until v1 is released. Each one will be backed by a test, or marked as a limit.
 
 ## What we protect
 
 The contents of the vault file: logins, crypto addresses, recovery phrases and notes.
-Everything in the file is encrypted, and every header field is authenticated.
+Item contents are encrypted. The header is not secret, but every header field is authenticated.
 
 ## Attackers
 
@@ -25,7 +28,7 @@ Everything in the file is encrypted, and every header field is authenticated.
 ## Limits we state plainly
 
 - A weak master password is the weakest link. Argon2id slows guessing; it does not stop it.
-- A wrong password and a tampered file give the same error. That is unavoidable and correct.
+- Tampering with the encrypted data looks the same as a wrong password. That is unavoidable and correct. Format errors and KDF cost rejections are their own errors, never reported as a wrong password.
 - A deleted item is gone from the new file, not from old copies or backups of it.
 - Wiping memory is best effort. See the claims below.
 - Holm cannot see or stop what the operating system, other programs or hardware do.
