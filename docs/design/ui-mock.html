@@ -1,0 +1,254 @@
+<title>Holm Desktop Mock</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root{--bg:#f3f4f6;--panel:#ffffff;--panel2:#eceef2;--fg:#1d2129;--mut:#5b6472;--line:#c9ced8;--acc:#2a5fd0;--accfg:#ffffff;--ok:#1d7a3a;--warn:#9a5b00;--err:#b3261e;--errbg:#fbe9e7;--warnbg:#fff3d6;--note:#e8efff;--sel:#dbe6fb}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#16181d;--panel:#1f2229;--panel2:#292d36;--fg:#e4e7ee;--mut:#9aa3b2;--line:#3a4050;--acc:#6e9bff;--accfg:#0d1426;--ok:#5fcf84;--warn:#f0b24a;--err:#ff8a80;--errbg:#3a1f1d;--warnbg:#3a2e14;--note:#1f2b47;--sel:#2b3b61;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#16181d;--panel:#1f2229;--panel2:#292d36;--fg:#e4e7ee;--mut:#9aa3b2;--line:#3a4050;--acc:#6e9bff;--accfg:#0d1426;--ok:#5fcf84;--warn:#f0b24a;--err:#ff8a80;--errbg:#3a1f1d;--warnbg:#3a2e14;--note:#1f2b47;--sel:#2b3b61;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:16px;margin:0}h2{font-size:15px;margin:0 0 6px}h3{font-size:13px;margin:12px 0 4px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+.top{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}.top .sp{flex:1}
+.wrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+nav{flex:0 0 200px;display:flex;flex-direction:column;gap:2px;max-width:100%}
+nav button{text-align:left}
+nav .grp{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin:8px 0 2px}
+main{flex:1 1 380px;min-width:0}
+button,input,select,textarea{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:4px 8px}
+button{cursor:pointer;background:var(--panel2)}button:hover{border-color:var(--acc)}
+button.pri{background:var(--acc);color:var(--accfg);border-color:var(--acc)}button.pri:disabled{opacity:.45;cursor:not-allowed}
+button.danger{color:var(--err);border-color:var(--err)}
+nav button.on{background:var(--sel);border-color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+input[type=text],input[type=password],input[type=search],input[type=number],select,textarea{width:100%}
+.win{background:var(--panel);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.title{background:var(--panel2);border-bottom:1px solid var(--line);padding:4px 10px;font-size:12px;color:var(--mut)}
+.body{padding:16px}
+.center{max-width:440px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>.grow{flex:1;min-width:0}
+.lbl{font-size:12px;color:var(--mut);margin-bottom:2px}
+.mut{color:var(--mut);font-size:12px}
+.box{border:1px solid var(--line);border-radius:3px;padding:8px 10px;background:var(--panel2)}
+.err{background:var(--errbg);color:var(--err);border:1px solid var(--err);border-radius:3px;padding:8px 10px}
+.warn{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn);border-radius:3px;padding:8px 10px}
+.ok{color:var(--ok)}
+.egui{background:var(--note);border:1px dashed var(--acc);border-radius:3px;padding:6px 10px;font-size:12px;color:var(--fg)}
+.egui b{color:var(--acc)}
+.meter{height:8px;background:var(--panel2);border:1px solid var(--line);border-radius:2px;overflow:hidden}.meter i{display:block;height:100%;width:0;background:var(--err)}
+.sec{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.1em}
+.shell{display:grid;grid-template-columns:140px 240px 1fr;min-height:430px}
+.shell>div{min-width:0}
+.menu{background:var(--panel2);border-right:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:4px}
+.menu button{text-align:left;width:100%}.menu button.on{background:var(--sel);border-color:var(--acc)}
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column}
+.list .tools{padding:8px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--line)}
+.list .items{overflow:auto;flex:1}
+.it{padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:8px;align-items:center}
+.it:hover{background:var(--panel2)}.it.on{background:var(--sel)}.it .t{font-weight:600}.it .s{font-size:12px;color:var(--mut)}
+.ic{width:24px;height:24px;border:1px solid var(--line);border-radius:3px;display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--acc);flex:none}
+.det{padding:14px;display:flex;flex-direction:column;gap:8px}
+.kv{display:grid;grid-template-columns:110px 1fr auto;gap:6px 8px;align-items:center}
+.kv>div{min-width:0;overflow-wrap:anywhere}
+.status{border-top:1px solid var(--line);background:var(--panel2);padding:3px 10px;font-size:12px;color:var(--mut);display:flex;gap:14px;flex-wrap:wrap}
+.modal{border:1px solid var(--line);background:var(--panel);box-shadow:0 2px 0 var(--line);border-radius:4px;max-width:460px;margin:0 auto}
+.dim{background:var(--panel2);padding:18px 10px;border-radius:3px}
+.modal .body{display:flex;flex-direction:column;gap:10px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}.tabs button.on{background:var(--sel);border-color:var(--acc)}
+@media(max-width:640px){nav{flex:1 1 100%;flex-direction:row;flex-wrap:wrap}nav .grp{width:100%}.shell{grid-template-columns:1fr}.menu{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}.menu button{width:auto}.list{border-right:0;border-bottom:1px solid var(--line)}.kv{grid-template-columns:1fr auto}.kv>.k{grid-column:1/-1;color:var(--mut);font-size:12px}}
+</style>
+<div class="top"><h1>Holm desktop GUI mock (egui, v1)</h1><span class="mut">Fake data only. Spec wins over the old Compose UI.</span><span class="sp"></span><button id="theme">Theme: auto</button></div>
+<div class="wrap"><nav id="nav" aria-label="Screens"></nav><main id="main"></main></div>
+<script>
+const S={};let cur='create',st={};
+const FAKE='correct-horse-battery-staple';
+function dots(n){return '•'.repeat(n||12)}
+function note(t){return '<div class="egui"><b>egui:</b> '+t+'</div>'}
+function pw(id,label,ph){return '<div><div class="lbl">'+label+'</div><div class="row"><input class="grow" id="'+id+'" type="password" autocomplete="off" placeholder="'+(ph||'')+'"><button data-show="'+id+'">Show</button></div></div>'}
+const PWNOTE=note('<b>Custom widget:</b> secret password field replaces <code>TextEdit</code>. No undo history, mask characters only, hidden from accessibility, buffer wiped on drop. "Show" is hold-to-reveal and never persists (spec 8).');
+function win(t,b,sb){return '<div class="win"><div class="title">'+t+'</div>'+b+(sb?'<div class="status">'+sb+'</div>':'')+'</div>'}
+const ITEMS=[
+{id:1,t:'Example Mail',ty:'Login',u:'ada@example.com',url:'https://mail.example.com',cat:'Personal',fav:1,pw:'correct-horse-battery-staple',n:'Fake demo item.'},
+{id:2,t:'Example Bank',ty:'Login',u:'ada.l',url:'https://bank.example.com',cat:'Personal',pw:'example-only-not-real-1',n:''},
+{id:3,t:'Team Wiki',ty:'Login',u:'ada@work.example.com',url:'https://wiki.example.com',cat:'Work',pw:'example-only-not-real-2',n:''},
+{id:4,t:'Main wallet',ty:'Crypto',chain:'Ethereum',addr:'0x0000...EXAMPLE',cat:'Personal',n:'Address only. Public.'},
+{id:5,t:'Hardware wallet seed',ty:'Recovery',words:12,cat:'Personal',n:'Needs password to show.'},
+{id:6,t:'Router notes',ty:'Note',cat:'Uncategorised',n:'Admin page is http://192.0.2.1 (example range).'}];
+const ABBR={Login:'Lg',Crypto:'Cr',Recovery:'Rc',Note:'Nt'};
+function menu(on){return '<div class="menu"><b style="padding:2px 4px">Holm</b><button data-go="main" class="'+(on=='v'?'on':'')+'">Vault</button><button data-go="gen" class="'+(on=='g'?'on':'')+'">Generator</button><button data-go="settings" class="'+(on=='s'?'on':'')+'">Settings</button><button class="pri" data-go="edit">+ New item</button><span style="flex:1"></span><button data-go="locked">Lock</button></div>'}
+function sbar(){return '<span>6 items</span><span>Auto-lock in <b id="al">'+fmt(st.al)+'</b></span><span>Vault: ~/Documents/Holm/holm.vault</span>'}
+function fmt(s){return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
+st={al:300,sel:1,q:'',filter:'All',cat:'All',clip:0,rev:false,cost:'normal',unl:'normal',gen:'pw',show:{}};
+
+S.create=()=>win('Holm - Create vault',`<div class="body"><div class="center">
+<h2>Create a vault</h2><div class="mut">Everything stays on this computer. Holm has no sync, no account and no way to recover a forgotten master password.</div>
+<div class="box mut">Vault file: <b>~/Documents/Holm/holm.vault</b> <button data-go="openfile" style="margin-left:6px">Choose another place...</button></div>
+${pw('p1','Master password')}
+<div class="meter" aria-hidden="true"><i id="mt"></i></div><div id="mtx" class="mut">Type a master password.</div>
+${pw('p2','Confirm master password')}
+<div id="cerr" class="err" hidden></div>
+<div class="row"><button class="pri" id="mk" disabled>Create vault</button><button data-go="unlock">I already have a vault</button></div>
+<div class="mut">Rule: score 3 or 4 of 4 (zxcvbn) and at least 12 characters. Weak passwords are refused, not just warned about. Try <code>password1234</code> then <code>${FAKE}-moon</code>.</div>
+${PWNOTE}${note('Strength meter is a plain <code>ProgressBar</code> or painter rect; no animation. Create runs Argon2id on a worker thread, UI shows "Working..." with a spinner (spec 9).')}
+</div></div>`);
+S.unlock=()=>{const u=st.unl;let m='';
+if(u=='wrong')m='<div class="err">Wrong master password.</div>';
+if(u=='throttle')m='<div class="warn">Too many wrong tries. Wait <b>8</b> seconds before trying again. (Resets when Holm closes.)</div>';
+if(u=='cost')m='<div class="err">This vault file needs more resources than Holm allows, so it was not opened. This is not a wrong password. The file may be damaged or made by something else.</div>';
+return win('Holm - Unlock',`<div class="body"><div class="center">
+<h2>Unlock your vault</h2><div class="mut">holm.vault in ~/Documents/Holm</div>
+<div class="tabs" role="group" aria-label="Mock state">${['normal','wrong','throttle','cost','working'].map(x=>`<button data-un="${x}" class="${u==x?'on':''}">${{normal:'Ready',wrong:'Wrong password',throttle:'Throttled',cost:'Cost-rejected',working:'Working'}[x]}</button>`).join('')}</div>
+${m}
+${pw('up','Master password')}
+<div class="row"><button class="pri" data-go="main" ${u=='throttle'||u=='working'?'disabled':''}>${u=='working'?'Unlocking...':'Unlock'}</button><button data-go="openfile">Open other vault file...</button></div>
+${u=='working'?'<div class="mut">Deriving key (about 1 second). Window stays responsive; worker thread.</div>':''}
+<div class="mut">Holm cannot reset or recover this password. After 3 wrong tries the wait grows: 2, 4, 8 ... up to 60 s.</div>
+${PWNOTE}${note('Unlock button disabled while throttled; countdown text is a normal label repainted once per second via <code>request_repaint_after</code>.')}
+</div></div>`)};
+S.openfile=()=>win('Holm - Open or create vault file',`<div class="body"><div class="modal"><div class="title">Open vault file</div><div class="body">
+<div class="mut">One vault is open at a time. Pick a file anywhere (USB drive, other folder). Holm remembers the last path.</div>
+<div class="box">Default: <b>~/Documents/Holm/holm.vault</b></div>
+<div class="row"><button class="pri" data-go="unlock">Open existing file...</button><button data-go="create">Create new vault file...</button><button data-go="unlock">Cancel</button></div>
+${note('Native file dialog via <code>rfd</code> crate; not drawn by egui.')}</div></div></div>`);
+S.main=()=>{const q=st.q.toLowerCase();let its=ITEMS.filter(i=>(st.filter=='All'||(st.filter=='Fav'?i.fav:i.ty==st.filter))&&(st.cat=='All'||i.cat==st.cat)&&(!q||[i.t,i.u,i.url,i.chain,i.cat].join(' ').toLowerCase().includes(q)));
+const it=ITEMS.find(i=>i.id==st.sel)||ITEMS[0];
+const cl=st.clip>0?`<span class="ok">Copied. Clipboard clears in <b id="cc">${st.clip}</b> s</span>`:'<span>Clipboard: empty</span>';
+return win('Holm - Vault',`<div class="shell">${menu('v')}
+<div class="list"><div class="tools"><input type="search" id="q" placeholder="Search title, user, URL, chain, category" value="${st.q}" aria-label="Search">
+<div class="row"><select id="fl">${['All','Fav','Login','Crypto','Recovery','Note'].map(x=>`<option ${st.filter==x?'selected':''}>${x}</option>`).join('')}</select><select id="ct">${['All','Personal','Work','Community','Uncategorised'].map(x=>`<option ${st.cat==x?'selected':''}>${x}</option>`).join('')}</select></div>
+<button data-go="trash">Trash (2)</button></div>
+<div class="items">${its.length?its.map(i=>`<div class="it ${i.id==it.id?'on':''}" data-sel="${i.id}"><span class="ic">${ABBR[i.ty]}</span><div><div class="t">${i.fav?'* ':''}${i.t}</div><div class="s">${i.u||i.chain||i.ty} - ${i.cat}</div></div></div>`).join(''):'<div class="body mut">No matches. Search never looks inside secrets.</div>'}</div></div>
+<div class="det">${detail(it)}</div></div>`,sbar()+cl)};
+function detail(i){let h=`<div class="row"><h2 class="grow">${i.t}</h2><button data-go="edit">Edit</button></div><div class="mut">${i.ty} - ${i.cat}${i.fav?' - Favourite':''}</div><div class="kv">`;
+const r=(k,v,c)=>`<div class="k">${k}</div><div>${v}</div><div>${c||''}</div>`;
+if(i.ty=='Login'){h+=r('Username',i.u,'<button data-copy="u">Copy</button>')+r('Password',st.rev?'<span class="sec">'+i.pw+'</span>':'<span class="sec">'+dots(14)+'</span>','<span class="row"><button data-rev>'+(st.rev?'Hide':'Show')+'</button><button data-copy="p">Copy</button></span>')+r('Website',i.url,'')}
+else if(i.ty=='Crypto'){h+=r('Chain',i.chain)+r('Address',i.addr,'<button data-copy="a">Copy</button>')}
+else if(i.ty=='Recovery'){h+=r('Phrase',`<span class="sec">${dots(12)}</span> <span class="mut">${i.words} words</span>`,'<button data-go="recover">Show...</button>')}
+h+=r('Notes',i.n||'-')+'</div>';
+if(i.ty=='Recovery')h+='<div class="warn">Recovery phrases need your master password to show or copy, and are never copied quickly.</div>';
+if(i.ty=='Login')h+=note('Revealed secret is a read-only custom widget, auto-hides after 30 s or on lock.');
+return h}
+S.trash=()=>win('Holm - Trash',`<div class="shell">${menu('v')}<div style="grid-column:2/4" class="det"><h2>Trash</h2><div class="mut">Items stay until you delete them forever.</div>
+<div class="box row"><div class="grow"><b>Old forum login</b><div class="mut">Login - deleted yesterday</div></div><button>Restore</button><button class="danger">Delete forever</button></div>
+<div class="box row"><div class="grow"><b>Test note</b><div class="mut">Secure note - deleted 3 days ago</div></div><button>Restore</button><button class="danger">Delete forever</button></div>
+<div class="row"><button class="danger">Empty trash</button><button data-go="main">Back to vault</button></div>
+<div class="mut">Deleting a category moves its items to "Uncategorised".</div></div></div>`,sbar());
+S.edit=()=>win('Holm - Edit item',`<div class="shell">${menu('v')}<div style="grid-column:2/4" class="det">
+<h2>Edit item</h2><div class="row"><div class="grow"><div class="lbl">Type</div><select id="ty"><option>Login</option><option>Crypto address</option><option>Recovery phrase</option><option>Secure note</option></select></div><div class="grow"><div class="lbl">Category</div><select><option>Personal</option><option>Work</option><option>Community</option><option>Uncategorised</option></select></div></div>
+<div><div class="lbl">Title</div><input type="text" value="Example Mail"></div>
+<div><div class="lbl">Username</div><input type="text" value="ada@example.com"></div>
+<div><div class="lbl">Website</div><input type="text" value="https://mail.example.com"></div>
+${pw('ep','Password','(unchanged)')}
+<div class="row"><button data-go="gen">Generate...</button><label><input type="checkbox" checked> Favourite</label></div>
+<div><div class="lbl">Notes</div><textarea rows="3">Fake demo item.</textarea></div>
+<div class="row"><button class="pri" data-go="main">Save</button><button data-go="main">Cancel</button><span style="flex:1"></span><button class="danger" data-go="main">Move to trash</button></div>
+${PWNOTE}${note('Type switch swaps the field set (Crypto: chain, address, memo; Recovery: phrase, needs re-entry; Note: body only). Plain <code>ui.horizontal</code> / <code>Grid</code>; no dialogs for save, Save writes at once.')}
+</div></div>`,sbar());
+S.recover=()=>win('Holm - Recovery phrase',`<div class="body"><div class="modal"><div class="title">Show recovery phrase</div><div class="body">
+<div class="warn">Anyone who sees these words can take the funds. Make sure nobody is watching your screen. Holm never copies this by default.</div>
+${pw('rp','Master password')}
+<div class="mut">Wrong tries here share the same throttle as unlock.</div>
+<div class="row"><button class="pri" id="rvl">Show</button><button data-go="main">Cancel</button></div>
+<div id="rvo" hidden class="box sec">example example example example example example example example example example example example</div>
+<div class="mut" id="rvm" hidden>Hides after 30 s. Copy is a separate, explicit button.</div>
+${note('Modal is a plain <code>egui::Window</code>. Revealed text uses the same read-only secret widget.')}</div></div></div>`);
+S.gen=()=>win('Holm - Generator',`<div class="shell">${menu('g')}<div style="grid-column:2/4" class="det"><h2>Generator</h2>
+<div class="tabs">${[['pw','Password'],['pp','Passphrase'],['un','Username']].map(x=>`<button data-gm="${x[0]}" class="${st.gen==x[0]?'on':''}">${x[1]}</button>`).join('')}</div>
+<div class="box sec" id="gout" style="overflow-wrap:anywhere">-</div>
+<div id="gopt"></div>
+<div class="row"><button class="pri" id="gre">Regenerate</button><button id="gcp">Copy</button><span id="gst" class="mut"></span></div>
+${note('Sliders and checkboxes are stock widgets. Output here is a demo of random fake text, not real generation.')}
+</div></div>`,sbar());
+S.settings=()=>win('Holm - Settings',`<div class="shell">${menu('s')}<div style="grid-column:2/4" class="det"><h2>Settings</h2>
+<h3>Security</h3>
+<div class="kv"><div class="k">Auto-lock after</div><div><select id="sal"><option>1 minute</option><option>2 minutes</option><option selected>5 minutes</option><option>15 minutes</option><option>30 minutes</option></select></div><div></div>
+<div class="k">Clear clipboard after</div><div><select id="scl"><option>10 seconds</option><option selected>30 seconds</option><option>60 seconds</option><option>2 minutes</option></select></div><div></div></div>
+<div class="mut">Also locks on sleep, screen lock and quit. Making either value longer or turning it off asks for your master password (settings live inside the encrypted vault).</div>
+<h3>Master password</h3><div class="row"><button data-go="chpw">Change master password...</button></div>
+<h3>Data</h3><div class="row"><button data-go="import">Import...</button><button data-go="export">Export plaintext CSV...</button><button>Save encrypted backup copy...</button></div>
+<h3>Categories</h3><div class="row"><span>Personal, Work, Community, Pets</span><button>Manage...</button></div>
+<h3>Appearance</h3><div class="row"><select><option>System</option><option>Light</option><option>Dark</option></select><span class="mut">Saved in a plain config file with window size and last vault path. Nothing secret.</span></div>
+<h3>About</h3><div class="mut">Holm v1. Local only. No network, sync, accounts, autofill or update checks. Vault: Argon2id 256 MiB, 3 passes.</div>
+${note('One scrolling <code>ScrollArea</code> with <code>CollapsingHeader</code> or headings. Stock <code>ComboBox</code>.')}
+</div></div>`,sbar());
+S.chpw=()=>win('Holm - Change master password',`<div class="body"><div class="modal"><div class="title">Change master password</div><div class="body">
+<div class="mut">This makes a new data key and re-encrypts the whole vault. Old copies of the vault file still open with the old password.</div>
+${pw('o1','Current master password')}${pw('n1','New master password')}
+<div class="meter"><i style="width:75%;background:var(--ok)"></i></div><div class="mut">Strong enough. Needs score 3+ and 12+ characters.</div>
+${pw('n2','Confirm new master password')}
+<div class="err" id="sameold" hidden>New password must differ from the current one.</div>
+<div class="row"><button class="pri" id="chgo">Change password</button><button data-go="settings">Cancel</button></div>
+<div class="mut" id="chmsg"></div>
+${PWNOTE}${note('Runs on worker thread; modal shows "Working..." and blocks other input. Same throttle as unlock.')}</div></div></div>`);
+S.export=()=>win('Holm - Export plaintext CSV',`<div class="body"><div class="modal"><div class="title">Export plaintext CSV</div><div class="body">
+<div class="err"><b>Danger.</b> The file will hold every password, recovery phrase and note in readable form. Anyone who finds it can read all of them. Save it on an encrypted disk, use it, then delete it securely.</div>
+${pw('xp','Master password')}
+<label><input type="checkbox" id="xk"> I understand this file is not protected</label>
+<div class="row"><button class="danger" id="xgo" disabled>Choose file and export...</button><button data-go="settings">Cancel</button></div>
+<div class="mut" id="xmsg"></div>
+<div class="mut">For a safe copy use "Save encrypted backup copy" in Settings instead.</div></div></div></div>`);
+S.import=()=>win('Holm - Import',`<div class="body"><div class="modal"><div class="title">Import</div><div class="body">
+<div class="lbl">Format</div><select><option>Holm generic CSV</option><option>Holm generic JSON</option><option>Chrome CSV</option><option>Firefox CSV</option><option>Safari CSV</option></select>
+<div class="mut">Generic columns: title, username, password, url, notes, category, type, chain, address, memo, recovery.</div>
+<div class="row"><button>Choose file...</button><span class="mut">passwords-export.csv (48 KB)</span></div>
+<div class="warn">The file you import holds passwords in plain text. After import, delete it. Holm does not touch the source. Files over the size limit are refused.</div>
+<div class="box"><b>Preview</b><div class="mut">42 items found. 40 ready, 2 skipped: missing title (row 7), unknown type (row 19).</div></div>
+<div class="row"><button class="pri" data-go="settings">Import 40 items</button><button data-go="settings">Cancel</button></div></div></div></div>`);
+S.clip=()=>win('Holm - Copy and auto-lock',`<div class="shell">${menu('v')}<div style="grid-column:2/4" class="det"><h2>Copy and auto-lock</h2>
+<div class="mut">Live demo. Press Copy, then watch the status bar. Auto-lock also ticks down; any click or key in the mock resets it.</div>
+<div class="row"><button class="pri" data-copy="p">Copy password (Example Mail)</button><button data-lockin>Lock in 10 s (demo)</button></div>
+<div class="box">Status bar example:<div class="status" style="border:0;margin-top:4px">${sbar()}<span id="cc2" class="ok">${st.clip>0?'Clears in '+st.clip+' s':''}</span></div></div>
+<div class="mut">Clipboard clears only if it still holds Holm's value, so something you copied later is never wiped. Lock also clears it. Nothing is really copied here.</div>
+${note('Countdown is a label plus <code>request_repaint_after(1s)</code>. Clear timer lives on a background thread so it works while locked.')}
+</div></div>`,sbar());
+S.locked=()=>win('Holm - Locked',`<div class="body"><div class="center" style="text-align:center">
+<h2>Vault locked</h2><div class="mut">Locked after 5 minutes of no activity. Window title and contents show nothing about your items. Clipboard was cleared.</div>
+<div class="row" style="justify-content:center"><button class="pri" data-go="unlock">Unlock...</button><button>Quit</button></div>
+${note('Same window, just swaps the central panel to this view. Item data is dropped from memory, not hidden.')}</div></div>`);
+S.error=()=>win('Holm - Error',`<div class="body"><div class="center">
+<h2>Something went wrong</h2>
+<div class="err"><b>Could not save the vault.</b><br>The disk is full or the file is read-only. Your change was not saved and the old file is unchanged.</div>
+<div class="row"><button class="pri" data-go="main">Back to vault</button><button>Try again</button></div>
+<h3>Other errors Holm shows</h3>
+<div class="box mut">- "Vault is open in another Holm window. Close it and try again."<br>- "This file is not a Holm vault, or it is damaged."<br>- "This vault was made by a newer Holm. Update Holm to open it."<br>- "Not enough memory to unlock this vault."</div>
+${note('Inline <code>Frame</code> with red fill, or a modal <code>Window</code>. Messages never include secrets or full file contents.')}</div></div>`);
+const NAV=[['First run',[['create','Create vault'],['openfile','Open or create file']]],['Unlock',[['unlock','Unlock and its errors'],['locked','Locked']]],['Vault',[['main','List and detail'],['edit','Add or edit item'],['recover','Recovery phrase'],['trash','Trash'],['gen','Generator'],['clip','Copy and auto-lock']]],['Settings',[['settings','Settings'],['chpw','Change master password'],['export','Export plaintext CSV'],['import','Import']]],['Errors',[['error','Error state']]]];
+function nav(){document.getElementById('nav').innerHTML=NAV.map(g=>'<div class="grp">'+g[0]+'</div>'+g[1].map(s=>`<button data-go="${s[0]}" class="${cur==s[0]?'on':''}">${s[1]}</button>`).join('')).join('')}
+function render(){nav();document.getElementById('main').innerHTML=S[cur]();after()}
+function go(s){cur=s;st.rev=false;render()}
+function after(){
+ const q=document.getElementById('q');if(q){q.oninput=e=>{st.q=e.target.value;const p=e.target.selectionStart;render();const n=document.getElementById('q');n.focus();n.setSelectionRange(p,p)}}
+ const fl=document.getElementById('fl');if(fl)fl.onchange=e=>{st.filter=e.target.value;render()};
+ const ct=document.getElementById('ct');if(ct)ct.onchange=e=>{st.cat=e.target.value;render()};
+ const p1=document.getElementById('p1');if(p1&&document.getElementById('mk')){const chk=()=>{const v=p1.value,v2=document.getElementById('p2').value;let sc=0;if(v.length>=1)sc=1;if(v.length>=8)sc=2;if(v.length>=12&&/[a-z]/.test(v)&&(/\d/.test(v)||/[^a-z0-9]/i.test(v)||v.split(/[-\s]/).length>=4))sc=3;if(sc==3&&v.length>=20)sc=4;if(/^(password|123456|qwerty)/i.test(v))sc=Math.min(sc,1);
+  const m=document.getElementById('mt');m.style.width=(sc*25)+'%';m.style.background=sc>=3?'var(--ok)':sc==2?'var(--warn)':'var(--err)';
+  document.getElementById('mtx').textContent=!v?'Type a master password.':['','Very weak. Refused.','Weak. Refused.','Good enough.','Strong.'][sc]+(v.length<12&&v?' Needs 12+ characters ('+v.length+').':'');
+  const ok=sc>=3&&v.length>=12&&v===v2;document.getElementById('mk').disabled=!ok;const e=document.getElementById('cerr');
+  if(v&&sc<3){e.hidden=false;e.textContent='This password is too easy to guess. Holm will not create a vault with it. Try a long phrase of unrelated words.'}else if(v2&&v!==v2){e.hidden=false;e.textContent='Passwords do not match.'}else e.hidden=true};
+  p1.oninput=chk;document.getElementById('p2').oninput=chk;document.getElementById('mk').onclick=()=>go('main')}
+ const rv=document.getElementById('rvl');if(rv)rv.onclick=()=>{document.getElementById('rvo').hidden=false;document.getElementById('rvm').hidden=false};
+ const xk=document.getElementById('xk');if(xk)xk.onchange=()=>{document.getElementById('xgo').disabled=!xk.checked};
+ const xg=document.getElementById('xgo');if(xg)xg.onclick=()=>{document.getElementById('xmsg').textContent='Mock: a native Save dialog would open here. Nothing is written.'};
+ const cg=document.getElementById('chgo');if(cg)cg.onclick=()=>{document.getElementById('chmsg').textContent='Working... (Argon2id on worker thread)';setTimeout(()=>{const m=document.getElementById('chmsg');if(m)m.innerHTML='<span class="ok">Master password changed. New data key made.</span>'},1200)};
+ if(cur=='gen')gen();
+}
+function gen(){const o=document.getElementById('gopt');const w=['moss','lantern','crane','velvet','otter','ember','quartz','harbor'];
+ const mk=()=>{let r;if(st.gen=='pw'){const c='abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%';r='';for(let i=0;i<20;i++)r+=c[Math.floor(Math.random()*c.length)];r='EXAMPLE-'+r.slice(0,12)}else if(st.gen=='pp'){r=Array.from({length:5},()=>w[Math.floor(Math.random()*w.length)]).join('-')+'-42'}else r='quiet-'+w[Math.floor(Math.random()*w.length)]+Math.floor(Math.random()*90+10);document.getElementById('gout').textContent=r};
+ o.innerHTML=st.gen=='pw'?'<div class="kv"><div class="k">Length</div><div><input type="range" min="12" max="64" value="20"></div><div>20</div></div><div class="row"><label><input type="checkbox" checked> a-z</label><label><input type="checkbox" checked> A-Z</label><label><input type="checkbox" checked> 0-9</label><label><input type="checkbox" checked> Symbols</label><label><input type="checkbox" checked> Avoid look-alikes (0 O l 1)</label></div><div class="row"><label>Min digits <input type="number" value="2" style="width:60px"></label><label>Min symbols <input type="number" value="2" style="width:60px"></label></div>':st.gen=='pp'?'<div class="kv"><div class="k">Words</div><div><input type="range" min="4" max="10" value="5"></div><div>5</div></div><div class="row"><label>Separator <input type="text" value="-" style="width:50px"></label><label><input type="checkbox"> Capitals</label><label><input type="checkbox" checked> Add number</label></div><div class="mut">EFF large word list (7776 words).</div>':'<div class="mut">Random readable usernames. No personal data used.</div>';
+ mk();document.getElementById('gre').onclick=mk;
+ document.getElementById('gcp').onclick=()=>{startClip();document.getElementById('gst').textContent='Copied. Clears in '+st.clip+' s'}}
+function startClip(){st.clip=30}
+document.addEventListener('click',e=>{st.al=300;const t=e.target.closest('button,.it');if(!t)return;
+ if(t.dataset.go)go(t.dataset.go);else if(t.dataset.sel){st.sel=+t.dataset.sel;st.rev=false;render()}
+ else if(t.dataset.un){st.unl=t.dataset.un;render()}
+ else if(t.dataset.gm){st.gen=t.dataset.gm;render()}
+ else if(t.dataset.copy){startClip();render()}
+ else if(t.dataset.rev!==undefined){st.rev=!st.rev;render()}
+ else if(t.dataset.lockin!==undefined){st.al=10;const b=t;b.textContent='Locking in 10 s...'}
+ else if(t.dataset.show){const i=document.getElementById(t.dataset.show);const h=i.type=='password';i.type=h?'text':'password';t.textContent=h?'Hide':'Show'}
+});
+setInterval(()=>{st.al--;if(st.clip>0)st.clip--;
+ if(st.al<=0){st.al=300;if(['main','clip','edit','gen','trash'].includes(cur)){go('locked');return}}
+ const a=document.getElementById('al');if(a)a.textContent=fmt(st.al);
+ ['cc','cc2'].forEach(id=>{const c=document.getElementById(id);if(c){if(st.clip>0)c.textContent=id=='cc'?st.clip:'Clears in '+st.clip+' s';else if(cur=='main'||cur=='clip')render()}})},1000);
+(function(){let m=0;const b=document.getElementById('theme');b.onclick=()=>{m=(m+1)%3;const r=document.documentElement;if(m==0)r.removeAttribute('data-theme');else r.setAttribute('data-theme',m==1?'light':'dark');b.textContent='Theme: '+['auto','light','dark'][m]}})();
+render();
+</script>
