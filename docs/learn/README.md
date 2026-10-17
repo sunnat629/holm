@@ -10,8 +10,8 @@ security, three exercises, and what to read next in
 | Lesson | Topic |
 |---|---|
 | [00](00-setup-and-cargo.md) | Install Rust, Cargo workspaces, `fn main`, `let`, and `forbid(unsafe_code)`. |
-| 01 | Continuous integration and supply-chain gates: what a dependency is and why we count them. |
-| 02 | Secret types: ownership, `Drop`, and why a secret must not be `Clone`. |
+| [01](01-dependencies-and-supply-chain.md) | Continuous integration and supply-chain gates: what a dependency is and why we count them. |
+| [02](02-ownership-and-drop.md) | Secret types: ownership, `Drop`, and why a secret must not be `Clone`. |
 | 03 | Errors and randomness: `Result`, the `?` operator and asking the OS for random bytes. |
 | 04 | Argon2id: turning a password into a key, and checking costs before doing work. |
 | 05 | XChaCha20-Poly1305: encrypting with authentication, slices and byte arrays. |

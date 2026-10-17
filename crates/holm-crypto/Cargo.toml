@@ -11,3 +11,8 @@ description = "Holm cryptography: secret types, randomness, Argon2id, XChaCha20-
 workspace = true
 
 [dependencies]
+zeroize.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+static_assertions.workspace = true
