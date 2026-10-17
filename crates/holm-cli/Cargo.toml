@@ -1,0 +1,17 @@
+[package]
+name = "holm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Holm command-line app"
+
+[[bin]]
+name = "holm"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]

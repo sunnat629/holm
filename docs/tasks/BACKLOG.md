@@ -13,3 +13,20 @@ Source of truth: GitHub issues. This file mirrors them for offline reading.
 | [#7](https://github.com/sunnat629/holm/issues/7) | Vault header format v1 (strict parser) | 1 | `06-parsing-bytes-safely.md` | todo |
 | [#8](https://github.com/sunnat629/holm/issues/8) | Envelope: create, open, reseal, rekey | 1 | `07-modules-and-encapsulation.md` | todo |
 | [#9](https://github.com/sunnat629/holm/issues/9) | Property tests and fuzzing | 1 | `08-property-tests-and-fuzzing.md` | todo |
+
+## Deferred
+
+One line per deferral. Each names the phase or trigger that closes it. Reasons and accepted risks are in [DECISIONS.md](../DECISIONS.md).
+
+- Re-enable GitHub Actions (3-OS CI, scheduled fuzzing). Trigger: before the repo goes public. Until then `scripts/ci-local.sh` on macOS is the merge gate.
+- Enable GitHub private vulnerability reporting (needed by SECURITY.md). Trigger: before the repo goes public.
+- Add Actions jobs for `oracle/` and `fuzz/`. Trigger: when Actions is re-enabled.
+- Replace the cargo-deny-action download with a checksummed install. Trigger: when Actions is re-enabled.
+- Fixed-key full-open fuzz target. Closes in Phase 2, when the body decoder exists.
+- SBOM with `cargo-cyclonedx`. Closes in Phase 6 (release work).
+- `--all-features` release guard (`test-vectors` must not ship). Closes in Phase 6.
+- Linux and Windows are untested until Actions returns. Trigger: Actions re-enabled.
+- Upstream `chacha20` does not wipe its HChaCha20 subkey. Track an upstream issue or PR; revisit on each chacha20 bump.
+- `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.
+- Remove the oracle-only `cargo audit` ignores (RUSTSEC-2026-0367, -0368, -0369, zip 8.6.0). Trigger: `libsodium-sys-stable` moves to zip 9.
+- Replace the 12 remaining `cargo vet` exemptions (libc, syn 2 and 3 first). Closes in Phase 2 review.

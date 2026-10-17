@@ -1,0 +1,9 @@
+# Holm has no network code. Clippy (run with -D warnings in CI) rejects std::net.
+disallowed-types = [
+    { path = "std::net::TcpStream", reason = "Holm has no network code" },
+    { path = "std::net::TcpListener", reason = "Holm has no network code" },
+    { path = "std::net::UdpSocket", reason = "Holm has no network code" },
+]
+disallowed-methods = [
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "Holm has no network code" },
+]

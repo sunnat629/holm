@@ -1,0 +1,308 @@
+
+# cargo-vet audits file
+
+[[audits.aead]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.6.1"
+notes = "Full review of src/lib.rs (dev.rs is behind the unused dev feature and only loads test vectors with include_bytes). forbid(unsafe_code), no build script, no_std. Trait glue only: Aead::encrypt pre-reserves msg+tag capacity so no reallocation leaves plaintext copies; decrypt_in_place checks length with checked_sub and truncates the tag only after decrypt_inout_detached succeeds. No filesystem, network, env or process access; optional getrandom is reached only via crypto-common."
+
+[[audits.argon2]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.6.0"
+notes = """Full audit of argon2 0.6.0 (RustCrypto). No build.rs, no filesystem/network/process access, no logging of inputs. unsafe reviewed: (1) compress_avx2 is #[target_feature(enable="avx2")] and only called when the cpufeatures AVX2 token is set (x86 only; not compiled on Holm's aarch64 primary target); (2) SegmentView get_block/get_block_mut assert index bounds and lane/segment disjointness before raw pointer add, which makes the parallel-lane aliasing sound; (3) unsafe impl Send/Sync for the memory view is justified by that disjointness; (4) block::Blocks uses alloc_zeroed(Layout::array) and dealloc with the same layout. Zeroization: initial_hash (H0) and the finalize blockhash/blockhash_bytes are wiped when the zeroize feature is on (Holm enables it). FINDING: the crate-owned Blocks allocation used by hash_password_into is freed WITHOUT wiping the memory matrix. Holm avoids this on the production path by calling hash_password_into_with_memory with its own Zeroizing<Vec<Block>> work area (holm-crypto kdf.rs); the unwiped hash_password_into is only used by the cfg(test)/test-vectors argon2id_raw helper. Parameter validation (m >= 8*p, output/salt/secret length limits) checked. Safe to deploy as used by Holm."""
+
+[[audits.autocfg]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.5.0 -> 1.5.1"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: Cargo.toml test harness flag only. Probe logic unchanged. No new unsafe, filesystem, network or process access."
+
+[[audits.base64ct]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "1.8.3"
+notes = "Full review of src/ (2092 lines). no_std, no build script, constant-time base64 (branch-free alphabet arithmetic). Unsafe checked: decode_in_place reads 4-byte and writes 3-byte groups through raw pointers inside buf (write index 3k never passes read index 4k), copies a remainder of at most 2 bytes from a 3-byte temp and returns buf[..dlen] with dlen <= buf.len(); encode returns from_utf8_unchecked over a dst slice that was cut to the encoded length and fully written with ASCII alphabet bytes or '='; encode_string likewise. std is only used for io::Error conversions. No filesystem, network, env or process access."
+
+[[audits.bitflags]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "2.11.1 -> 2.13.2"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: macro_rules additions only (flag_name renaming attribute, attribute token munchers, IterEqualNames iterator, extra allow lints). No unsafe added, no build script, filesystem, network or process access."
+
+[[audits.blake2]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.11.0"
+notes = "Full review of src/ (824 lines). no_std, no build script, no filesystem, network, env or process access. One unsafe block: SIMD-style vector as_bytes() builds a byte slice over a #[repr(C)] struct of four u32/u64 words (no padding, size_of::<Self>() bytes, lifetime tied to &self), sound. Rest is safe BLAKE2b/BLAKE2s compression and MAC glue. State and buffers are zeroized on Drop only with the zeroize feature; Holm does not enable blake2/zeroize today (argon2's zeroize feature does not forward to it), noted in the Holm supply-chain report."
+
+[[audits.block-buffer]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.10.4 -> 0.12.1"
+notes = "Delta reviewed by reading the new src/lib.rs, sealed.rs and read.rs in full. Unsafe: buffer is now MaybeUninit with the eager position stored in the last byte; I checked every ptr::copy_nonoverlapping/write_bytes against the Eager (pos < BS) and Lazy (pos <= BS) invariants, the ResetGuard that restores the invariant if compress or gen_block panics, Lazy split_blocks keeping a full last block, (de)serialize bounds, and the unreachable_unchecked in get_pos, which only fires if those invariants are broken. Clone uses ptr::read although a Drop impl now exists; sound because the type owns only plain bytes (stale comment). BlockSizes is sealed to U1..U255, so the u8 position never truncates. No build script, no filesystem, network, env or process access. Secret handling: new optional zeroize feature wipes BlockBuffer and ReadBuffer on drop."
+
+[[audits.borsh]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.5.7 -> 1.8.1"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed: std::net address impls moved to core::net (serialization of address values only, no sockets), optional uuid impls, nostd_io Error::new/other, schema recursion check uses contains, license files added. No unsafe added, no build script, filesystem, network or process access."
+
+[[audits.bytes]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.11.1 -> 1.12.1"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: vtable into_vec/into_mut/drop now take the data pointer by value (*mut ()) read via with_mut on an owned or ManuallyDrop Bytes, so exclusive access replaces the old atomic loads; Shared boxes are allocated as MaybeUninit before rebuild_vec so a Box::new panic cannot double-free; new extend_from_within reserves first, then copies a bounds-checked range into spare capacity; sign_extend(0) no longer shifts by 64; range helper factored out; CI shell scripts dropped from the package. No build script, filesystem, network or process access."
+
+[[audits.cfg-if]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.0.4 -> 1.0.5"
+notes = "Delta reviewed in full: deprecation note in README and crate docs, CI action pins, version bump. Macro body unchanged. No unsafe, build script, dependency, filesystem, network or env change. Secret handling: not applicable (cfg macro only)."
+
+[[audits.chacha20]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.10.0 -> 0.10.2"
+notes = "Delta reviewed in full (src/, backends/neon.rs, backends/sse2.rs, Cargo.toml). Unsafe: NEON backend goes from 4 to 8 parallel blocks; I checked the 8 counter offsets (state, ctrs[0..7], then advance by 8) and that vst1q_u8 writes 4 x 16 bytes inside each 64-byte block (offset() changed to add() on usize). SSE2 load and store moved into Backend::new and save_ctr; save_ctr stores the whole row 3, which is equal to the old per-word stores because the counter adds only touch counter lanes. Other changes are re-exports and docs. Holm's KAT and Wycheproof tests pass on this version. No build script, no new dependencies, no filesystem, network, env or process access. Secret handling: key and state zeroize-on-drop unchanged; ParBlocks keystream temporaries on the stack are not wiped (unchanged pattern, now 512 bytes on aarch64)."
+
+[[audits.chacha20poly1305]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.11.0"
+notes = "Full review of src/lib.rs and src/cipher.rs (431 lines). No unsafe code, no build script, no_std with no filesystem, network, env or process access. Checked: Poly1305 key comes from keystream block 0 and is zeroized after use (zeroize feature), keystream then seeks to block 1; decrypt verifies the tag (poly1305 constant-time verify) before applying the keystream, so no plaintext is released on failure; AD and ciphertext lengths are bound in the final block; inputs >= 2^32 blocks are rejected. Key is zeroized on Drop when the zeroize feature is on (Holm enables it, which also enables chacha20/zeroize). Debug impl prints no key material."
+
+[[audits.cipher]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.4.4 -> 0.5.2"
+notes = "Delta reviewed: crate stays #![forbid(unsafe_code)], so no unsafe to reason about. Read the stream wrapper and core API in full: check_remaining now uses div_ceil over remaining blocks and runs before every non-unchecked apply/write, seek rejects a partial byte position on the last block, and try_apply_keystream_partial consumes the cipher. Block and tweak modules are new trait plumbing. include_bytes! appears only in the optional dev feature's test-vector macros. Dependencies are crypto-common 0.2, inout 0.2 and optional block-buffer 0.12, zeroize and blobby. No build script, no filesystem, network, env or process access. Secret handling: zeroize feature forwards to block-buffer and crypto-common; the wrapper Debug impl hides state."
+
+[[audits.cmov]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.5.4"
+notes = "Full review of src/ (1702 lines). no_std, no build script. Unsafe: register-only asm! (options pure, nomem, nostack) for x86 test+cmovz/cmovnz, aarch64 tst+csel and eor+cmp+csel (narrow inputs masked with tst 0xff/0xffff), ARM32/RISC-V mask generation; cast_slice/cast_slice_mut between same-size, same-align integer types guarded by const asserts (NonZero targets only receive values from other NonZero slices); split_at_unchecked at len/N*N and the vendored as_chunks; NonZero::new_unchecked and repr(i8) Ordering reconstruction from values that were valid on entry. Slice equality short-circuits to not-equal on length mismatch (length is public). No memory access in asm, no filesystem, network, env or process access."
+
+[[audits.cpufeatures]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.3.1"
+notes = "Full review of src/ (589 lines). no_std, no build script. Unsafe is CPU feature detection only: x86 cpuid/cpuid_count and _xgetbv (guarded by the OSXSAVE bit), Linux/Android getauxval(AT_HWCAP), Apple sysctlbyname on fixed NUL-terminated hw.optional.* names with a 4-byte u32 out-param and asserted size/rc, LoongArch cpucfg asm (pure, nomem). Result cached in a Relaxed AtomicU8. Reads no files, opens no network, spawns nothing, touches no secrets."
+
+[[audits.crypto-common]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.1.6 -> 0.2.2"
+notes = "Delta reviewed in full (src/lib.rs, generate.rs, hazmat.rs, Cargo.toml). Still #![forbid(unsafe_code)]. Moves from generic-array to hybrid-array; slice-to-key/IV conversions now use TryFrom with the same length checks. New Generate trait fills keys from a caller-supplied CryptoRng or, behind the optional getrandom feature, the OS RNG; no fallback RNG. hazmat SerializableState is plain le-byte (de)serialisation; note: the [u128; N] impl uses an 8-byte chunk size and would panic on use (correctness bug, not memory safety; Holm does not use it). No build script, no filesystem, network, env or process access. Secret handling: SerializableState is documented as possibly containing secrets; Holm does not call it."
+
+[[audits.ctutils]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.4.3"
+notes = "Full review of src/ (3414 lines). forbid(unsafe_code) (all unsafe lives in cmov), no build script, no_std. Choice/CtOption constant-time helpers built on cmov with core::hint::black_box as a best-effort barrier; slice ct_eq goes through cmov, which returns not-equal on length mismatch. Optional subtle interop only. No filesystem, network, env or process access."
+
+[[audits.digest]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.11.3"
+notes = "Full review of src/ (2857 lines; dev/ is behind the unused dev feature). forbid(unsafe_code), no build script, no_std. Hash/MAC trait glue and buffer wrapper macros over block-buffer. MAC verify paths compare via ctutils ct_eq (length checked first for slices); CtOutput Debug prints no bytes and is zeroized on Drop with the zeroize feature. No filesystem, network, env or process access."
+
+[[audits.equivalent]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.2 -> 1.0.3"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: doc comments on the Equivalent/Comparable contracts only. No unsafe, build script, filesystem, network or process change. No secrets handled."
+
+[[audits.fastrand]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "2.3.0 -> 2.5.0"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: new f32/f64_inclusive and rejection-loop f32/f64, getrandom 0.4 API on wasm only, const with_seed, docs. Non-cryptographic PRNG, used only by tempfile in tests. No unsafe added, no build script, filesystem, network or process access."
+
+[[audits.getrandom]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.4.3"
+notes = 'Full audit of getrandom 0.4.3, scoped to the backends Holm ships on (macOS, Linux gnu/musl, Windows) plus all shared code. build.rs only reads CARGO_CFG_SANITIZE and emits a getrandom_msan cfg: no file, network or process access. Holm uses only getrandom::fill (holm-crypto random.rs), with no features enabled and no getrandom_backend cfg override in the repo. macOS: getentropy(2) in 256-byte chunks, -1 maps errno, any other return is UNEXPECTED. Linux: dlsym(RTLD_DEFAULT, "getrandom") (a direct fn on musl), probed with a zero-length call; ENOSYS or EPERM (seccomp) falls back to /dev/urandom, opened O_CLOEXEC only after poll() on /dev/random shows the pool is initialized, with a single futex-guarded FD init. sys_fill_exact loops until the buffer is full, retries EINTR, bounds-checks the returned length with split_at_mut_checked, and treats 0 or other negative returns as errors, so a short read can never be returned as success. Windows: ProcessPrng from bcryptprimitives (raw-dylib), checked against TRUE. Shared unsafe reviewed: the MaybeUninit slice casts in util.rs (fill writes every byte before assume_init), the errno pointer read, the LazyPtr/LazyBool relaxed atomics (idempotent init), and NonZero new_unchecked on constants offset from a positive base. No logging of output; the crate stores no secrets. Exotic-platform backends (linux_raw asm, rdrand, rndr, efi_rng, wasm, wasi, etc.) were skimmed, not line-audited; they are not compiled for Holm targets.'
+
+[[audits.hashbrown]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "0.14.3 -> 0.14.5"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: data_end now uses NonNull::cast instead of new_unchecked (removes an unsafe), doc and test tweaks, ahash floor bump. No build script, filesystem, network or process access."
+
+[[audits.hybrid-array]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.4.15"
+notes = "Full audit of hybrid-array 0.4.15 (RustCrypto), focused on all unsafe in lib.rs, from_fn.rs, flatten.rs, traits.rs and sizes.rs. No build.rs, no I/O, no_std, no FFI. Holm builds only the default features (no alloc, serde, bytemuck, zerocopy, zeroize, subtle or ctutils). Every unsafe block relies on Array being repr(transparent) over U::ArrayType<T> = [T; N], with N == U::USIZE; that relies on the unsafe ArraySize trait, which is implemented only by this crate's impl_array_sizes macro (which also emits a USIZE == len test). Reviewed: as_slice/as_mut_slice, slice_as_array/TryFrom (length checked before the cast), slice_as_chunks (non-zero chunk assert, tail_pos <= len), slice_as_flattened (checked_mul), split/split_ref/split_ref_mut (N <= U is enforced at the type level by typenum Sub; ManuallyDrop avoids a double drop), concat (writes every slot before assume_init), uninit (MaybeUninit array), assume_init (transmute_copy of an owned MaybeUninit array), try_from_fn Guard (drops only the initialized prefix on error or panic; push bounded by the loop condition), and flatten/unflatten (Prod/Quot sizes with Rem == 0 enforced by the type). Send/Sync impls match [T; N]. Array has no Drop and no zeroize-on-drop; wiping secrets held in Arrays is the caller's responsibility (Holm and RustCrypto wrap them in zeroize types)."
+
+[[audits.indexmap]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "2.14.0 -> 2.14.2"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: still deny(unsafe_code) except a new disjoint module that moves the existing get_disjoint_mut unsafe into a helper; indices are bounds-checked and checked for duplicates before the pointer adds, same as 2.14.0. Explicit index assertions added, const-friendly macros. No build script, filesystem, network or process access."
+
+[[audits.inout]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.2.2 -> 0.2.4"
+notes = "Delta reviewed in full (src/inout.rs, inout_buf.rs, reserved.rs, lib.rs, Cargo.toml). Unsafe: pointer casts rewritten from 'as' to cast()/ptr::from_ref/from_mut with the same meaning. PaddedInOutBuf (block-padding feature, not enabled in Holm) now stores raw pointers; I checked the new output-length checks (Pad needs blocks+1 output blocks, NoPad needs blocks) before any raw slice is built, which is stricter than 0.2.2. Rest is must_use and doc lints. No build script, no new dependencies, no filesystem, network, env or process access. Secret handling: no new copies of buffers."
+
+[[audits.itoa]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.15 -> 1.0.18"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: formatting rewritten after current libcore. Unsafe is get_unchecked into the 200-byte DECIMAL_PAIRS table with indices pair*2+{0,1} where pair < 100 from divmod100 (input < 10000), and a str view from offset..len of bytes the function wrote itself (ASCII only). Buffer writes use checked indexing. u128 division uses a 1e16 Granlund-Montgomery constant. No build script, filesystem, network or process access."
+
+[[audits.memchr]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "2.7.5 -> 2.8.3"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full. Unsafe: packedpair now checks end.distance(cur) < needle.len() instead of end.sub(), which fixes the out-of-bounds pointer from memchr issue 225; x86_64 *_raw helpers are now marked unsafe fn; search_slice_with_raw adds an unreachable_unchecked bound hint that follows the find_raw contract; big-endian NEON movemask fix. New owned Finder builders are safe code. No build script, filesystem, network or process access."
+
+[[audits.password-hash]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.6.1"
+notes = "Full review of src/lib.rs and src/error.rs (344 lines). forbid(unsafe_code), no build script, no_std. Traits plus salt generation: try_generate_salt fills 16 bytes from getrandom::fill and propagates errors; the panicking generate_salt is opt-in. PasswordVerifier compares outputs through phc::Output PartialEq, which is constant-time (ctutils). No filesystem, network, env or process access. Note: Holm builds argon2 with default-features = false, so this crate is in Cargo.lock but not compiled into Holm today."
+
+[[audits.phc]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.6.1"
+notes = "Full review of src/ (2159 lines). forbid(unsafe_code), no build script, no_std. PHC string parser and fixed-size buffers: Output (10..=64 bytes) and Salt are length-checked before copy, Output equality is constant-time via ctutils CtEq, base64 via base64ct. Optional getrandom salt generation only. Panics are limited to documented invariant expects. No filesystem, network, env or process access. Not compiled into Holm today (pulled only by password-hash, which argon2 has disabled)."
+
+[[audits.poly1305]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "0.9.1"
+notes = """Full audit of poly1305 0.9.1 (RustCrypto). No build.rs, no I/O, no filesystem/network/process access, no_std. Soft backend (the only one compiled on Holm's aarch64 primary target) is 100% safe Rust: poly1305-donna 26-bit limb arithmetic, u64 products cannot overflow given clamped r and reduced h, final reduction mod 2^130-5 uses a branch-free mask select, so it is constant time; the only branch is on the public partial-block flag. Key clamping matches RFC 8439. x86/x86_64 only: the AVX2 backend is selected through a cpufeatures runtime token and a ManuallyDrop union; every union access is gated on that same token, and the #[target_feature(enable="avx2")] fns are only reachable after detection. AVX2 loads/stores reviewed: loadu_si256 on the 32-byte key and on 2x16-byte block halves, loadu_si128 on 16-byte blocks, storeu into 32-byte arrays or the 16-byte tag, all in bounds. Drop zeroizes the whole Poly1305 via zeroize_flat_type when the zeroize feature is on; Holm enables it (direct dependency purely to unify that feature), and State holds only plain integer arrays, so the flat-type precondition holds. Debug impl prints no key material."""
+
+[[audits.proc-macro-crate]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "2.0.1 -> 3.5.0"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: ported to toml_edit 0.25 (DocumentMut, TableLike), and workspace_manifest_path now returns None instead of an error when CARGO is unset or locate-project prints nothing. It still reads Cargo.toml files and runs $CARGO locate-project, as 2.0.1 did; nothing new. No unsafe, no network access."
+
+[[audits.proc-macro2]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.0.106 -> 1.0.107"
+notes = "Delta reviewed in full: doc links to syn 3, MSRV bump, map_or to is_some_and, and an else-branch flattened after a panic. build.rs unchanged. No new unsafe, dependencies, filesystem, network, env or process access. Secret handling: not applicable (build-time token handling only)."
+
+[[audits.rand]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "0.10.1 -> 0.10.3"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: removes two unsafe blocks (slice Choose get_unchecked and UniformChar from_u32_unchecked) in favour of checked versions; UniformChar deserialization now rejects out-of-range samplers; float uniform scale fix; WeightedIndex returns Overflow instead of unwrap; docs. No new unsafe, no build script, filesystem, network or process access."
+
+[[audits.rand_core]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.10.0 -> 0.10.1"
+notes = "Delta reviewed in full: doc comment link rename and version bump only. No code, unsafe, build script, dependency, filesystem, network or env change. Secret handling unchanged."
+
+[[audits.rand_xorshift]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "0.4.0 -> 0.5.0"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: ported to rand_core 0.10 (TryRng with Infallible, utils helpers), edition 2024. Still forbid(unsafe_code). Non-cryptographic RNG used only by proptest. No build script, filesystem, network or process access."
+
+[[audits.regex-syntax]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "0.8.5 -> 0.8.11"
+notes = 'Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: still forbid(unsafe_code); IntervalSet::push now merges in place with binary_search and splice instead of push-and-canonicalize; a \\P{gc!=..} double-negation fix; format-string and doc cleanups; a dev shell script was removed from the package. No build script, filesystem, network or process access.'
+
+[[audits.rusty-fork]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "0.3.0 -> 0.3.1"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: normalized Cargo.toml and three new libtest flags in the known-flags table (--fail-fast, --shuffle, --shuffle-seed dropped from child args). The crate re-runs the test binary as a child process by design; that logic is unchanged. No new unsafe, network or filesystem access."
+
+[[audits.serde]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.228 -> 1.0.229"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
+
+[[audits.serde_core]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.228 -> 1.0.229"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
+
+[[audits.serde_derive]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.228 -> 1.0.229"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
+
+[[audits.serde_json]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.145 -> 1.0.154"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: ryu replaced by zmij for float output, optional foldhash hasher for no_std preserve_order, -0 parsed as float, enum variant keys now go through MapKey, better UTF-8 error positions. New unsafe fn RawValue::from_string_unchecked only moves the caller's contract to the caller (debug_assert re-parses). build.rs change only adds riscv64 to the fast-arithmetic cfg list. No filesystem, network or process access."
+
+[[audits.thiserror]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.0.69 -> 2.0.21"
+notes = "Delta reviewed (src/, build.rs, build/probe.rs, Cargo.toml). No unsafe. Build script: writes a fixed private.rs module into OUT_DIR, runs $RUSTC --version and the existing nightly probe compile inside OUT_DIR/probe, then removes it; no network and no writes outside OUT_DIR. Runtime crate becomes no_std with an std feature, re-exports core::error::Error, and adds a Var Pointer wrapper. No network or process access at runtime. Secret handling: not applicable (error trait glue only)."
+
+[[audits.thiserror-impl]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.0.69 -> 2.0.21"
+notes = "Delta reviewed (src/ast.rs, attr.rs, expand.rs, fmt.rs, unraw.rs, fallback.rs, valid.rs, Cargo.toml). Proc macro with no unsafe and no filesystem, network, process or env access at expansion time; the only env! is CARGO_PKG_VERSION_PATCH to name the private module. Moves to syn 3. Generated code implements only Error, Display and From, with no unsafe. Secret handling: not applicable, but note that Display impls print whatever fields the error message format names."
+
+[[audits.tinyvec]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.9.0 -> 1.13.3"
+notes = "Delta reviewed for the safe-to-deploy criteria: the crate is still #![forbid(unsafe_code)] (checked lib.rs), so there is no unsafe to reason about. Most of the delta is a rustfmt change and removing the 9.6k-line generated array impl in favour of const generics. Read Cargo.toml, lib.rs and array.rs in full and skimmed arrayvec/tinyvec/slicevec; I did not do a full logic review of the reformatted collection code. New optional dependencies (borsh, schemars, bin-proto, defmt, serde_core, generic-array) are not enabled in Holm, which uses only alloc via unicode-normalization. fuzz/ is not built. No build script, no filesystem, network, env or process access. Secret handling: none."
+
+[[audits.toml_datetime]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.1.1+spec-1.1.0 -> 1.1.2+spec-1.1.0"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: Cargo.toml include paths anchored, release metadata, clippy lint list, licence boilerplate. No code change. No unsafe, build script, filesystem, network or process change."
+
+[[audits.typenum]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+version = "1.20.1"
+notes = "Audit of typenum 1.20.1. #![no_std] and #![forbid(unsafe_code)] at the crate root, no build.rs (the generated files under src/gen are checked in), no proc-macros, no extern/link/no_mangle/asm, no filesystem, network, process or env access. The only optional dependency is scale-info, which Holm does not enable; Holm gets only the const-generics feature through hybrid-array. The crate is type-level arithmetic: runtime code is limited to trivial to_u*/to_i* constant accessors and the operator impls on zero-sized marker types. Hand-written modules (bit, uint, int, type_operators, marker_traits, operator_aliases, array) were reviewed for logic. The 11k lines of generated consts.rs and generic_const_mappings.rs were checked by pattern (only type aliases, impl blocks and cfg(target_pointer_width) attributes), not line by line. It handles no secrets and does no I/O."
+
+[[audits.unicode-ident]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.0.18 -> 1.0.27"
+notes = "Delta reviewed: lib.rs read in full; tables.rs is regenerated Unicode 18 data. Unsafe: the two LEAF.get_unchecked lookups now add LEAF_START/LEAF_CONTINUE base offsets; I parsed the shipped tables and checked that the largest reachable offset (5215 and 8063) is below LEAF's length 8064 and that the ZERO_* fallback indices are in range. ASCII path now uses u128 bitmasks (shift < 128). No build script, no new runtime dependencies, no filesystem, network, env or process access. Secret handling: not applicable."
+
+[[audits.universal-hash]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.5.1 -> 0.6.1"
+notes = "Delta reviewed in full (src/lib.rs, Cargo.toml). Moves from deny to forbid(unsafe_code): the only unsafe block (to_blocks via slice::from_raw_parts) is replaced by the safe Array::slice_as_chunks. Tag verify now uses ctutils::CtEq instead of subtle::ConstantTimeEq, still constant time (ctutils is reviewed separately). Dependencies change to crypto-common 0.2 and ctutils 0.4, std feature dropped for core::error::Error. No build script, no filesystem, network, env or process access. Secret handling: no new copies of key or state."
+
+[[audits.zeroize]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.8.2 -> 1.9.1"
+notes = "Delta reviewed in full (src/lib.rs, barrier.rs, stack.rs, x86.rs, aarch64.rs, Cargo.toml). Unsafe: new optimization_barrier uses an empty asm! that only takes the pointer in a register (readonly, nostack) or a 1-byte read_volatile fallback; volatile_set unsafe blocks only re-wrapped for edition 2024; compiler_fence(SeqCst) after volatile writes removed, which does not let the compiler elide the volatile writes. Vec zeroize now wipes spare capacity before the elements, same coverage. Zeroizing Debug no longer prints the inner secret. No build script, no new dependencies, no filesystem, network, env or process access. Secret handling: no copies or logging of zeroized data introduced."
+
+[[audits.zeroize_derive]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "1.4.2 -> 1.5.0"
+notes = "Delta reviewed in full (src/lib.rs, Cargo.toml). Still #![forbid(unsafe_code)]; changes are edition 2024 migration, panic format strings, panic-to-assert rewrites and one extra allow(unused_assignments) on generated match arms. Generated Zeroize and Drop code is unchanged, so every field is still wiped. No build script, no new dependencies, no filesystem, network, env or process access at expansion time. Secret handling: the macro never sees runtime data."
+
+[[audits.zmij]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-run"
+delta = "1.0.21 -> 1.0.23"
+notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed for safe-to-run: float formatting rewrite with new NEON/SSE paths and table lookups using pointer adds and get_unchecked; empty asm! comments used as optimisation barriers only. build.rs now also reads OPT_LEVEL and prints a cfg, nothing else. No filesystem, network or process access. The SIMD and table-index unsafe was skimmed, not proven in bounds; not suitable as a safe-to-deploy basis."
