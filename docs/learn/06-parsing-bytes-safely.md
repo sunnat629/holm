@@ -113,7 +113,7 @@ In Kotlin you'd write: `when (err) { is FormatError.TooLarge, is FormatError.Too
 pub enum FormatError {
     #[error("unsupported vault format version {0}")]
     UnsupportedVersion(u16),
-    #[error("key-derivation costs refused: {0}")]
+    #[error("this vault's key-derivation settings are outside Holm's policy: {0}")]
     KdfPolicy(KdfParamsError),
     // ...
 }
@@ -142,16 +142,16 @@ In Kotlin you'd write: `fun parse(file: ByteArray): Pair<Header, ByteArray>` wit
 
 ## Why this matters for security
 
-- Check order: cheap checks first (size, magic, version, flags, KDF id, reserved), then the KDF cost caps, and only later would a caller derive a key. A forged header cannot demand 64 GiB of RAM.
-- Reserved bytes must be zero. A future format might give them a meaning, and requiring zero means one header has exactly one byte string.
-- A parser that panics is a denial of service. Tests parse a truncated file at every length to prove it does not.
+- Cheap checks run first (size, magic, version, flags, KDF id, reserved), then the KDF cost caps. A forged header cannot demand 64 GiB of RAM before a key is derived.
+- Reserved bytes must be zero, so one header has exactly one byte string.
+- A parser that panics is a denial of service. A test parses a truncated file at every length to prove it does not.
 
 ## Try it
 
 Run each one from the repo root. Undo after each: `git checkout crates/holm-core/src/format.rs`
 
 1. In `format.rs`, change `FORMAT_VERSION` to `2` and run `cargo test -p holm-core format`.
-   Check: `unsupported_version_rejected` fails, because version 2 is now valid. The round trip still passes, since encode and parse share the constant. Tests catch what the constant alone hides.
+   Check: 3 tests fail: `golden_bytes_encode`, `golden_bytes_parse` and `unsupported_version_rejected`. The round trip still passes, since encode and parse share the constant. Only the fixed golden bytes and the "version 2 is invalid" test catch the change.
 2. Replace `let head = file.get(..HEADER_LEN).ok_or(FormatError::TooShort)?;` in `parse` with `let head = &file[..HEADER_LEN];` and run `cargo test -p holm-core truncated_header`.
    Check: the test panics with `range end index 164 out of range for slice of length 0`. This one guard is what makes every later read in `parse` safe, so removing it turns hostile input into a crash.
 3. Add this test at the end of `mod tests` and run `cargo test -p holm-core reserved_byte_14`:
@@ -163,7 +163,7 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
    }
    ```
 
-   Check: it passes. Now delete the `if reserved != [0; 3] { ... }` block in `parse` and run it again. It fails with `left: Ok(...)`, because the file is accepted. Undo as above.
+   Check: it passes. Now delete the `if reserved != [0; 3] { ... }` block in `parse` and run it again. It now fails with `must be rejected: (Header { kdf: KdfParams { ... }, ... }, [9, 9, ...])`: `parse` returned `Ok` where the test expected an error, so the file was accepted. Undo as above.
 
 ## Read next
 
@@ -171,4 +171,4 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
 - [Chapter 9.2, Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html)
 - [Chapter 10.3, Validating References with Lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html)
 
-Next lesson (written when its task lands): sealing and opening the body with the header as AAD.
+Next: [Lesson 07, modules and encapsulation](07-modules-and-encapsulation.md).
