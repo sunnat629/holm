@@ -13,20 +13,80 @@ url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
+[[exemptions.argon2]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.base64ct]]
+version = "1.8.3"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.blake2]]
+version = "0.11.0"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.block-buffer]]
+version = "0.12.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.cfg-if]]
 version = "1.0.5"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
+
+[[exemptions.cmov]]
+version = "0.5.4"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.cpufeatures]]
+version = "0.3.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.crypto-common]]
+version = "0.2.2"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.ctutils]]
+version = "0.4.3"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.digest]]
+version = "0.11.3"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.getrandom]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
 
+[[exemptions.hybrid-array]]
+version = "0.4.15"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
+
 [[exemptions.libc]]
 version = "0.2.191"
 criteria = "safe-to-deploy"
 notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace with a real audit or an imported one before Phase 1 closes."
+
+[[exemptions.password-hash]]
+version = "0.6.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5. In Cargo.lock only as an optional dependency of argon2; not built, because holm-crypto turns off argon2 default features (no password-hash). Audit or drop it in the Opus supply-chain audit before Phase 1 closes."
+
+[[exemptions.phc]]
+version = "0.6.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5. In Cargo.lock only as an optional dependency of argon2; not built, because holm-crypto turns off argon2 default features (no password-hash). Audit or drop it in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.proc-macro2]]
 version = "1.0.107"
@@ -59,6 +119,11 @@ notes = "Added in Task 4 (getrandom, thiserror and their dependencies). Replace 
 [[exemptions.tinyvec]]
 version = "1.13.3"
 criteria = "safe-to-deploy"
+
+[[exemptions.typenum]]
+version = "1.20.1"
+criteria = "safe-to-deploy"
+notes = "Added in Task 5 (argon2 and its RustCrypto dependencies). Replace with a real audit or an imported one in the Opus supply-chain audit before Phase 1 closes."
 
 [[exemptions.unicode-ident]]
 version = "1.0.27"

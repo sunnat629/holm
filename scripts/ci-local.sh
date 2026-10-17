@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the same gates as .github/workflows/ci.yml, in order. Stops at the first failure.
+# Runs the gates from .github/workflows/ci.yml plus local-only gates (the libsodium
+# oracle in oracle/), in order. Stops at the first failure.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -41,4 +42,29 @@ gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit
 gate vet cargo vet --locked
+
+# The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
+# cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable
+# build-depends on ureq, and that is why the oracle is kept out of the product graph.
+oracle_gate() {
+  cargo fmt --manifest-path oracle/Cargo.toml --check &&
+    cargo clippy --manifest-path oracle/Cargo.toml --all-targets --locked -- -D warnings &&
+    cargo test --manifest-path oracle/Cargo.toml --locked &&
+    cargo audit --file oracle/Cargo.lock \
+      --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369
+}
+# Those three advisories are for zip 8.6.0 (fixed in 9.0), ignored for the oracle only.
+# zip is a build-dependency of libsodium-sys-stable 1.24.3, the latest release, which
+# requires zip 8.x. Its build script uses zip only for *-windows-msvc targets, where this
+# gate is skipped, and only on an archive it has minisign-verified first. Remove the
+# ignores once libsodium-sys-stable moves to zip 9.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # On Windows libsodium-sys-stable downloads a prebuilt zip over HTTP.
+    echo "SKIP oracle (Windows shell: libsodium-sys-stable would download a prebuilt library)"
+    ;;
+  *)
+    gate oracle oracle_gate
+    ;;
+esac
 echo "ALL GATES PASSED"

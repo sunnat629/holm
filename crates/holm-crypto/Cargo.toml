@@ -15,6 +15,12 @@ zeroize.workspace = true
 unicode-normalization.workspace = true
 getrandom.workspace = true
 thiserror.workspace = true
+argon2.workspace = true
+
+[features]
+# Exposes `kdf::argon2id_raw`, which skips the cost policy. Only the test-only
+# `oracle/` workspace turns this on. Never enable it in a shipping build.
+test-vectors = []
 
 [dev-dependencies]
 static_assertions.workspace = true

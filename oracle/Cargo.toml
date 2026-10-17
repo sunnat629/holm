@@ -1,0 +1,25 @@
+# Test-only libsodium cross-check for holm-crypto's Argon2id. Never shipped.
+#
+# This is its own workspace (the root Cargo.toml excludes it) for two reasons:
+# Cargo has no optional dev-dependencies, and libsodium-sys-stable build-depends
+# on ureq, a network crate that the root cargo-deny ban list rejects. Keeping it
+# here keeps that crate out of the product's dependency graph.
+[workspace]
+
+[package]
+name = "holm-oracle"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.99.1"
+publish = false
+description = "Test-only libsodium cross-check for Holm's Argon2id (never shipped)"
+
+[dependencies]
+holm-crypto = { path = "../crates/holm-crypto", features = ["test-vectors"] }
+libsodium-sys-stable = "1.24"
+
+# Argon2 at 64 MiB is slow in unoptimised builds. Optimise dependencies
+# (including holm-crypto) even in dev so the cross-check stays quick.
+[profile.dev.package."*"]
+opt-level = 3
