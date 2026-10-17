@@ -6,7 +6,7 @@
 
 **Architecture:** Cargo workspace. `holm-crypto` wraps RustCrypto primitives behind a tiny API with wipe-on-drop secret types and forbids `unsafe`. `holm-core::format` parses and encodes the fixed 164-byte header; `holm-core::envelope` does the key hierarchy (password → Argon2id KEK → wraps random DEK → DEK seals padded body). No disk I/O yet: everything works on byte slices.
 
-**Tech Stack:** Rust 1.93.1, edition 2024; `argon2` 0.6, `chacha20poly1305` 0.11, `zeroize` 1.9, `getrandom` 0.4, `unicode-normalization` 0.1, `thiserror` 2, `subtle` 2.6; dev: `proptest` 1.12, `hex` 0.4, `serde_json`, `static_assertions`, `libsodium-sys-stable` 1.24 (test-only oracle); `cargo-deny`, `cargo-audit`, `cargo-vet`, `cargo-fuzz`.
+**Tech Stack:** Rust 1.99.1, edition 2024; `argon2` 0.6, `chacha20poly1305` 0.11, `zeroize` 1.9, `getrandom` 0.4, `unicode-normalization` 0.1, `thiserror` 2, `subtle` 2.6; dev: `proptest` 1.12, `hex` 0.4, `serde_json`, `static_assertions`, `libsodium-sys-stable` 1.24 (test-only oracle); `cargo-deny`, `cargo-audit`, `cargo-vet`, `cargo-fuzz`.
 
 **Spec:** `docs/superpowers/specs/2026-10-17-holm-v1-design.md`
 
@@ -59,7 +59,7 @@ Keep each lesson under 250 lines. Never paste secrets or real passwords in examp
 **Interfaces:**
 - Produces: workspace members `crates/holm-crypto`, `crates/holm-core`, `crates/holm-cli`; `holm-core` depends on `holm-crypto` by path.
 
-- [ ] **Step 1:** Workspace `Cargo.toml` with `resolver = "3"`, `[workspace.package]` (edition 2024, licence, `rust-version = "1.93.1"`, repository `https://github.com/sunnat629/holm`), `[workspace.dependencies]` for every crate in Tech Stack, and `[profile.dev.package."*"] opt-level = 3` so Argon2 tests are not painfully slow in debug builds. `rust-toolchain.toml`: channel `1.93.1`, components `rustfmt`, `clippy`.
+- [ ] **Step 1:** Workspace `Cargo.toml` with `resolver = "3"`, `[workspace.package]` (edition 2024, licence, `rust-version = "1.99.1"`, repository `https://github.com/sunnat629/holm`), `[workspace.dependencies]` for every crate in Tech Stack, and `[profile.dev.package."*"] opt-level = 3` so Argon2 tests are not painfully slow in debug builds. `rust-toolchain.toml`: channel `1.99.1`, components `rustfmt`, `clippy`.
 - [ ] **Step 2:** Each crate's `lib.rs`/`main.rs` starts with `#![forbid(unsafe_code)]` and `#![deny(missing_docs)]` (libraries only). `holm-cli` main prints `holm 0.0.0`.
 - [ ] **Step 3:** Add a smoke test in `crates/holm-cli/tests/version.rs` that runs the binary (`env!("CARGO_BIN_EXE_holm")`) and asserts stdout starts with `holm `.
 - [ ] **Step 4:** Run `cargo test --workspace`. Expected: 1 passed.

@@ -7,4 +7,7 @@ rust-version.workspace = true
 repository.workspace = true
 description = "Holm cryptography: secret types, randomness, Argon2id, XChaCha20-Poly1305"
 
+[lints]
+workspace = true
+
 [dependencies]

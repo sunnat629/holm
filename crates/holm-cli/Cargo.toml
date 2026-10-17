@@ -11,4 +11,7 @@ description = "Holm command-line app"
 name = "holm"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]

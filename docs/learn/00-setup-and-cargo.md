@@ -24,7 +24,7 @@ Our `rust-toolchain.toml` pins the exact compiler, so everyone builds with the s
 
 ```toml
 [toolchain]
-channel = "1.93.1"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
 ```
 
