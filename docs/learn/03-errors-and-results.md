@@ -92,7 +92,7 @@ Line by line:
 Nothing here is thrown. A function that can fail says so in its return type, and the caller
 must handle it: the compiler warns about an ignored `Result`.
 
-In Kotlin you'd write: `fun fillRandom(buf: ByteArray) { try { SecureRandom().nextBytes(buf) } catch (e: Exception) { throw CryptoException.Rng() } }`.
+In Kotlin you'd write: `fun fillRandom(buf: ByteArray) { try { SecureRandom().nextBytes(buf) } catch (e: Exception) { throw CryptoError.Rng() } }`.
 Kotlin signatures do not show that a function throws, and exceptions are not checked, so a
 caller can forget the `try`. The closest Kotlin analogue to Rust's approach is the standard
 library's `Result<T>` or a sealed class you return, but few libraries use them.
@@ -171,46 +171,44 @@ failure). We derived both on `CryptoError`, so a test can say exactly which erro
 instead of just "some error". `unwrap_err()` takes the `Err` out of a `Result` and panics if
 it was `Ok`. Panicking in a test is fine; in library code we return errors instead.
 
+`unwrap_err()` needs the `Ok` type to implement `Debug`, because on failure it prints the
+`Ok` value. Here that value would be a `SecretKey`, and that is safe only because lesson 02
+made its `Debug` print `[REDACTED]`.
+
 Note that `SecretKey` has no `PartialEq`, so we cannot write `assert_eq!` on a
 `Result<SecretKey, _>` directly. That is why the test calls `unwrap_err()` first.
 
-In Kotlin you'd write: `assertEquals(CryptoError.InvalidKeyLength, assertFailsWith<CryptoException> { ... }.error)`.
+In Kotlin you'd write: `assertEquals(CryptoError.InvalidKeyLength, assertFailsWith<CryptoError> { ... })`.
 With exceptions you must catch first and then inspect.
 
 ([Derivable Traits](https://doc.rust-lang.org/book/appendix-03-derivable-traits.html))
 
 ## Why this matters for security
 
-**Errors must not carry secrets.** Error messages end up in logs, crash reports and bug
-tickets. Every `CryptoError` message is a fixed string. None of them has a place to put key
-or password bytes, and a test checks the one that matters most.
-
-**Decryption errors must not say why.** Our test pins the message exactly:
-
-```rust
-assert_eq!(CryptoError::Aead.to_string(), "decryption failed");
-```
-
-If a decrypt function said "wrong key" in one case and "data was changed" in another, an
-attacker who can try many inputs and see which message comes back learns something from each
-try. That kind of leak is called an oracle. Padding-oracle attacks on CBC mode worked
-this way. One message for every failure gives the attacker no such signal. (Timing could still
-leak, which is a separate topic.)
-
-**Randomness has no fallback.** `getrandom` asks the operating system's random generator
-(for example `getentropy` on macOS and `getrandom(2)` on Linux). If it fails, we return
-`CryptoError::Rng` and the caller stops. We never fall back to a weaker source such as the
-clock, because a key made from a guessable source is a key an attacker can guess.
-
-**Honest limits.** `generate` avoids a stack copy of the key in our own code, but we cannot see
-every register or spill the compiler may use. And `random_array` can be called by mistake for
-a key; only the doc comment and code review prevent that.
+Error messages end up in logs and bug tickets, so every `CryptoError` message is a fixed string with no place to put key or password bytes. Decryption has one error, `"decryption failed"`, which a test pins exactly: if we said "wrong key" in one case and "data was changed" in another, an attacker who can try many inputs would learn something from each answer (a padding oracle). Randomness has no fallback in Holm's code: if the OS generator fails we return `CryptoError::Rng` and stop, and the `getrandom` crate only ever uses the operating system's generator, never the clock. The limits are that `generate` avoids a stack copy only in our own code, and nothing but the doc comment and code review stops someone calling `random_array` for a key.
 
 ## Try it
 
-1. Run `cargo test -p holm-crypto` and find the three tests added in `secret.rs`. Check: the summary line reads `14 passed`.
-2. In `random.rs`, change `random_array::<24>()` in the test to `random_array::<1>()` and run the test. With one byte, two random values collide about 1 time in 256, so it will usually still pass; the exercise is to explain why 24 bytes make a collision practically impossible. Undo with `git checkout crates/holm-crypto/src/random.rs`. Check: write your answer in one sentence.
-3. Add a variant `Truncated` to `CryptoError` with `#[error("data is too short")]` and write a test `assert_eq!(CryptoError::Truncated.to_string(), "data is too short")`. Check: `cargo test -p holm-crypto truncated` shows `1 passed`. Then remove it again.
+1. Run `cargo test -p holm-crypto from_slice`. Check: both `from_slice` tests show `ok` and the summary line reads `2 passed`.
+2. In `random.rs`, replace the body of `fill_random` with `Ok(())` (a "random" function that does nothing) and run `cargo test -p holm-crypto differ`. Check: the summary line reads `2 failed` (`random_nonces_differ` and `two_generated_keys_differ`). Explain in one sentence why a broken generator that leaves zeros is caught. Undo with `git checkout crates/holm-crypto/src/random.rs`.
+3. In `error.rs`, add a variant to `CryptoError`, with a doc line because the crate uses `deny(missing_docs)`:
+
+   ```rust
+   /// The input was too short.
+   #[error("data is too short")]
+   Truncated,
+   ```
+
+   Then add this test inside the existing `mod tests` block in the same file:
+
+   ```rust
+   #[test]
+   fn truncated_message() {
+       assert_eq!(CryptoError::Truncated.to_string(), "data is too short");
+   }
+   ```
+
+   Run `cargo test -p holm-crypto truncated`. Check: `1 passed`. (If you leave out the `///` line, the compiler stops with `missing documentation for a variant`; that is the `deny(missing_docs)` lint at work.) Then undo with `git checkout crates/holm-crypto/src/error.rs`.
 
 ## Read next
 
