@@ -4,21 +4,32 @@ Thanks for helping. Holm is a security tool, so a few rules are strict.
 
 ## Before you send a change
 
-Run `scripts/ci-local.sh` before every push. It runs the same gates as the CI
-workflow (fmt, clippy, tests, cargo-deny, cargo-audit, cargo-vet) and tells you how
-to install any missing tool. GitHub Actions is manual-only for now. The gates are:
+Run `scripts/ci-local.sh` before every push. Until the repo is public it is the merge
+gate (GitHub Actions is manual-only for now; see spec section 12 and
+[docs/DECISIONS.md](docs/DECISIONS.md)). It runs 8 gates and tells you how to install
+any missing tool:
 
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-```
+1. `cargo fmt --all --check`
+2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
+3. `cargo test --workspace --locked`
+4. `cargo deny` (licences, bans, sources)
+5. `cargo audit` (known advisories)
+6. `cargo vet --locked` (supply-chain audits)
+7. the oracle (`oracle/`): Argon2id cross-checked against libsodium
+8. the fuzz workspace (`fuzz/`): build and a short run on the pinned nightly
+
+The oracle and fuzz gates are skipped on Windows. The script needs a clean tree, unsets
+`RUSTFLAGS`-style environment overrides, refuses a `.cargo/config` that changes how
+tests run, and checks `CARGO_TARGET_*_RUNNER` cannot hide a failing test. Run
+`scripts/ci-local.sh --preflight` to self-test those checks.
 
 ## Rules
 
-- No `unsafe` code outside `holm-platform` (when it exists). Each crate has
-  `#![forbid(unsafe_code)]`.
-- No networking crates, anywhere in the dependency graph.
+- No `unsafe` code outside `holm-platform` (when it exists). `unsafe_code = "forbid"` is
+  set through `[workspace.lints]` and in `fuzz/Cargo.toml`. The one exception is the
+  test-only FFI in `oracle/`, which never ships.
+- No networking crates in the product's dependency graph (see spec section 12 for the
+  oracle exception).
 - Keep dependencies few. Every new one needs a reason in the pull request.
 - Secrets must never appear in logs, errors, panic messages or `Debug` output.
 - Every security claim needs a test, or must be written down as a limit.
