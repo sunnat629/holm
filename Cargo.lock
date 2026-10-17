@@ -161,6 +161,7 @@ name = "holm-core"
 version = "0.0.0"
 dependencies = [
  "holm-crypto",
+ "thiserror",
 ]
 
 [[package]]

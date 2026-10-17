@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 holm-crypto.workspace = true
+thiserror.workspace = true
