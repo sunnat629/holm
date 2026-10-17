@@ -41,5 +41,8 @@ test = false
 doc = false
 bench = false
 
+[lints.rust]
+unsafe_code = "forbid"
+
 [profile.dev.package."*"]
 opt-level = 3
