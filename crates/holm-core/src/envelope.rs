@@ -139,6 +139,7 @@ pub fn create(
     };
     let wrap_aad = header.encode();
     let wrapped = aead::seal(&kek, wrap_nonce, &wrap_aad[..WRAP_AAD_LEN], dek.expose())?;
+    // Unreachable: sealing 32 bytes always gives 32 + 16 = 48.
     header.wrapped_dek =
         <[u8; 48]>::try_from(wrapped.as_slice()).map_err(|_| VaultError::Crypto)?;
     drop(kek);
@@ -168,30 +169,24 @@ pub fn open(file: &[u8], password: &MasterPassword) -> Result<(VaultKeys, Secret
 /// the body, remove the padding. Separate so tests can flip every byte of a
 /// file without one Argon2 run per flip.
 ///
-/// If the DEK unwrap fails, the body is still decrypted, with a throwaway
-/// all-zero key, so a wrong password and a damaged body do the same work
-/// before returning the same error. The result of that decryption is never
-/// used.
+/// A failed DEK unwrap returns at once, before the body is decrypted, so a
+/// wrong password can return sooner than a damaged body. Both give the same
+/// error. See `docs/CRYPTO.md` for why the timing difference is accepted.
 pub(crate) fn open_with_kek(
     file: &[u8],
     kek: &SecretKey,
 ) -> Result<(VaultKeys, SecretBuf), VaultError> {
     let (header, body) = Header::parse(file)?;
     // Authenticate the bytes as they are in the file, not a re-encoding.
+    // Unreachable errors: `parse` succeeded, so the file has all 164 bytes.
     let head = file.get(..HEADER_LEN).ok_or(FormatError::TooShort)?;
     let wrap_aad = head.get(..WRAP_AAD_LEN).ok_or(FormatError::TooShort)?;
 
-    let (dek, unwrapped) = match aead::open(kek, &header.wrap_nonce, wrap_aad, &header.wrapped_dek)
-    {
-        // Straight from the wiped buffer into the key's heap box: no stack copy.
-        Ok(raw) => (SecretKey::from_slice(raw.expose())?, true),
-        Err(_) => (SecretKey::from_slice(&[0u8; 32])?, false),
-    };
-    let opened = aead::open(&dek, &header.body_nonce, head, body);
-    if !unwrapped {
-        return Err(VaultError::WrongPasswordOrCorrupt);
-    }
-    let padded = opened?;
+    let raw = aead::open(kek, &header.wrap_nonce, wrap_aad, &header.wrapped_dek)?;
+    // Straight from the wiped buffer into the key's heap box: no stack copy.
+    let dek = dek_from_unwrapped(&raw)?;
+    drop(raw);
+    let padded = aead::open(&dek, &header.body_nonce, head, body)?;
     let plaintext = unpad(padded.expose())?;
     Ok((VaultKeys { dek, header }, plaintext))
 }
@@ -213,7 +208,11 @@ pub fn reseal(keys: &mut VaultKeys, body: &[u8]) -> Result<Vec<u8>, VaultError> 
 }
 
 /// Changes the master password: a new salt, new KDF costs, a **new DEK** and
-/// new nonces. The old keys are consumed, so they cannot be used afterwards.
+/// new nonces, and returns the new file.
+///
+/// Everything new is built first. `keys` is replaced only if the whole call
+/// succeeds, and the replacement drops (and so wipes) the old DEK. On error,
+/// `keys` is unchanged and still works with the old password.
 ///
 /// The DEK is rotated, not just re-wrapped. Otherwise anyone with an old copy
 /// of the file and the old password could recover the DEK and read every later
@@ -222,14 +221,14 @@ pub fn reseal(keys: &mut VaultKeys, body: &[u8]) -> Result<Vec<u8>, VaultError> 
 /// # Errors
 /// As for [`create`].
 pub fn rekey(
-    keys: VaultKeys,
+    keys: &mut VaultKeys,
     new_password: &MasterPassword,
     params: &KdfParams,
     body: &[u8],
-) -> Result<(VaultKeys, Vec<u8>), VaultError> {
-    // The old DEK is wiped here, whatever the outcome.
-    drop(keys);
-    create(new_password, params, body)
+) -> Result<Vec<u8>, VaultError> {
+    let (new_keys, file) = create(new_password, params, body)?;
+    *keys = new_keys;
+    Ok(file)
 }
 
 /// Checks `password` against an open vault, for example before revealing a
@@ -251,7 +250,7 @@ pub fn verify_password(keys: &VaultKeys, password: &MasterPassword) -> Result<()
         &encoded[..WRAP_AAD_LEN],
         &header.wrapped_dek,
     )?;
-    let candidate = SecretKey::from_slice(raw.expose())?;
+    let candidate = dek_from_unwrapped(&raw)?;
     if bool::from(
         candidate
             .expose()
@@ -264,6 +263,13 @@ pub fn verify_password(keys: &VaultKeys, password: &MasterPassword) -> Result<()
     }
 }
 
+/// Moves an unwrapped DEK into a key. A length error is unreachable (the
+/// wrapped DEK is 48 bytes, so a successful unwrap gives exactly 32), but if
+/// it ever happened it would come out as the one opaque error.
+fn dek_from_unwrapped(raw: &SecretBuf) -> Result<SecretKey, VaultError> {
+    SecretKey::from_slice(raw.expose()).map_err(|_| VaultError::WrongPasswordOrCorrupt)
+}
+
 /// Seals `padded` under `dek` with a fresh body nonce. Returns the new header
 /// (a copy of `base` with the body nonce and length set) and the whole file.
 fn seal_body(
@@ -273,7 +279,8 @@ fn seal_body(
 ) -> Result<(Header, Vec<u8>), VaultError> {
     let body_nonce = Nonce::random()?;
     // body_len is part of the AAD, so it is set before encoding, from the
-    // length the ciphertext will have.
+    // length the ciphertext will have. Both errors below are unreachable:
+    // `pad` caps the length far below usize::MAX and u64::MAX.
     let ct_len = padded
         .len()
         .checked_add(TAG_LEN)
@@ -284,6 +291,7 @@ fn seal_body(
     let encoded = header.encode();
 
     let ct = aead::seal(dek, body_nonce, &encoded, padded.expose())?;
+    // Unreachable: the AEAD output is always plaintext length plus the tag.
     if ct.len() != ct_len {
         return Err(VaultError::Crypto);
     }
@@ -433,6 +441,28 @@ mod tests {
         );
     }
 
+    /// A committed v1 vault, so a future change cannot silently strand
+    /// existing files. Made once with
+    /// `create(&pw("caf\u{e9} golden"), &KdfParams::FLOOR, GOLDEN_BODY)`;
+    /// the salt, DEK and nonces were random, so it cannot be regenerated
+    /// byte for byte. Opening it with the decomposed form of the password also
+    /// pins NFC normalisation.
+    #[test]
+    fn golden_vault_opens() {
+        const GOLDEN_BODY: &[u8] = b"Holm golden vault v1\n";
+        let file = include_bytes!("../tests/vectors/golden-v1.vault");
+        assert_eq!(file.len(), HEADER_LEN + PAD_BLOCK + TAG_LEN);
+        let (h, _) = Header::parse(file).unwrap();
+        assert_eq!(h.kdf, KdfParams::FLOOR);
+        let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
+        assert_eq!(body.expose(), GOLDEN_BODY);
+        assert_eq!(keys.header, h);
+        assert_eq!(
+            open(file, &pw("cafe golden")).unwrap_err(),
+            VaultError::WrongPasswordOrCorrupt
+        );
+    }
+
     #[test]
     fn every_header_byte_flip_fails_fast() {
         let (_, mut file) = new_vault(b"some body");
@@ -442,7 +472,15 @@ mod tests {
             file[i] ^= 0x01;
             let err = open_with_kek(&file, &kek).expect_err("flipped header must fail");
             file[i] ^= 0x01;
-            assert_ne!(err, VaultError::BadPadding, "byte {i}");
+            assert!(
+                matches!(
+                    err,
+                    VaultError::Format(_)
+                        | VaultError::KdfPolicy(_)
+                        | VaultError::WrongPasswordOrCorrupt
+                ),
+                "byte {i}: {err:?}"
+            );
             // Salt, nonces and the wrapped DEK are not checked by the parser:
             // only authentication catches them, with the one opaque error.
             if (28..156).contains(&i) {
@@ -492,18 +530,19 @@ mod tests {
         });
     }
 
+    /// The body AAD covers the wrap nonce and wrapped DEK (bytes 60..132).
+    /// A fresh, valid wrap of the same DEK under the same KEK passes the
+    /// unwrap, so only the body AAD can catch the swap.
     #[test]
-    fn decoy_key_never_opens_a_vault() {
-        // A file whose wrap is broken but whose body is sealed under the
-        // all-zero key used after a failed unwrap must still be refused.
-        let (keys, file) = new_vault(b"x");
+    fn substituted_wrap_fails_body_authentication() {
+        let (keys, mut file) = new_vault(b"x");
         let kek = kek_for(&file, "correct horse");
-        let mut header = keys.header.clone();
-        header.wrapped_dek[0] ^= 0x01;
-        let zero = SecretKey::from_slice(&[0u8; 32]).unwrap();
-        let (_, forged) = seal_body(&zero, &header, &pad(b"forged").unwrap()).unwrap();
+        let nonce = Nonce::random().unwrap();
+        file[60..84].copy_from_slice(nonce.as_bytes());
+        let wrapped = aead::seal(&kek, nonce, &file[..60], keys.dek().expose()).unwrap();
+        file[84..132].copy_from_slice(&wrapped);
         assert_eq!(
-            open_with_kek(&forged, &kek).unwrap_err(),
+            open_with_kek(&file, &kek).unwrap_err(),
             VaultError::WrongPasswordOrCorrupt
         );
     }
@@ -562,8 +601,8 @@ mod tests {
 
     #[test]
     fn rekey_old_password_fails_new_password_opens() {
-        let (keys, _) = new_vault(b"data");
-        let (_, file) = rekey(keys, &pw("new password"), &FLOOR, b"data").unwrap();
+        let (mut keys, _) = new_vault(b"data");
+        let file = rekey(&mut keys, &pw("new password"), &FLOOR, b"data").unwrap();
         assert_eq!(
             open(&file, &pw("correct horse")).unwrap_err(),
             VaultError::WrongPasswordOrCorrupt
@@ -574,10 +613,11 @@ mod tests {
 
     #[test]
     fn rekey_rotates_dek() {
-        let (keys, old_file) = new_vault(b"data");
+        let (mut keys, old_file) = new_vault(b"data");
         let old_dek = SecretKey::from_slice(keys.dek().expose()).unwrap();
-        let (new_keys, file) = rekey(keys, &pw("new password"), &FLOOR, b"data").unwrap();
-        assert_ne!(new_keys.dek().expose(), old_dek.expose());
+        let file = rekey(&mut keys, &pw("new password"), &FLOOR, b"data").unwrap();
+        assert_ne!(keys.dek().expose(), old_dek.expose());
+        assert_eq!(Header::parse(&file).unwrap().0, keys.header);
         assert_ne!(old_file[28..60], file[28..60], "salt");
         let (h, body) = Header::parse(&file).unwrap();
         assert_eq!(
@@ -621,9 +661,34 @@ mod tests {
         );
         assert_eq!(keys.header, before);
         assert_eq!(
-            rekey(keys, &pw("p"), &FLOOR, &big).unwrap_err(),
+            rekey(&mut keys, &pw("p"), &FLOOR, &big).unwrap_err(),
             VaultError::TooLargeToSave
         );
+    }
+
+    #[test]
+    fn failed_rekey_leaves_old_keys_working() {
+        let (mut keys, _) = new_vault(b"v1");
+        let old_dek = SecretKey::from_slice(keys.dek().expose()).unwrap();
+        let before = keys.header.clone();
+        let big = vec![0u8; MAX_BODY_LEN + 1];
+        assert_eq!(
+            rekey(&mut keys, &pw("new password"), &FLOOR, &big).unwrap_err(),
+            VaultError::TooLargeToSave
+        );
+        let below = KdfParams {
+            iterations: 2,
+            ..FLOOR
+        };
+        assert_eq!(
+            rekey(&mut keys, &pw("new password"), &below, b"v2").unwrap_err(),
+            VaultError::KdfPolicy(KdfParamsError::BelowFloor)
+        );
+        assert_eq!(keys.header, before);
+        assert_eq!(keys.dek().expose(), old_dek.expose());
+        let file = reseal(&mut keys, b"v2").unwrap();
+        let (_, body) = open(&file, &pw("correct horse")).unwrap();
+        assert_eq!(body.expose(), b"v2");
     }
 
     #[test]

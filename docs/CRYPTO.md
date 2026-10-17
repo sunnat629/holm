@@ -95,10 +95,12 @@ All integers are little-endian.
 Steps 3 to 5 are `open_with_kek`, which is `pub(crate)` so tests can flip every byte of a
 file without running Argon2 once per flip.
 
-If step 3 fails, step 4 still runs, with a throwaway all-zero key, and its result is
-thrown away. A wrong password and a damaged body then do the same AEAD work before they
-return the same error. This removes one avoidable timing difference. It is not a claim
-that the whole open is constant-time.
+**Timing.** A wrong password fails at step 3, before the body is decrypted, so it can
+return sooner than a damaged body, which fails at step 4. Both give the same error. We
+accept this difference for two reasons. First, Argon2 in step 2 takes far longer than
+either AEAD step. Second, anyone holding the file can already tell the two cases apart
+offline: with a candidate password they can run the unwrap themselves. Holm makes no
+claim of equal timing.
 
 ## Saving
 
@@ -107,8 +109,9 @@ that the whole open is constant-time.
 - `reseal(keys, body)`: a normal save. Same salt, KEK wrap and DEK; a new body nonce on
   every call. `keys` is updated to the new header only if the call succeeds.
 - `rekey(keys, new_password, params, body)`: a password change. New salt, new costs, a
-  **new DEK** and new nonces. It takes the old `VaultKeys` by value, so the compiler stops
-  any later use of the old keys, and the old DEK is wiped.
+  **new DEK** and new nonces. Everything new is built first; `keys` is replaced only if
+  the call succeeds, and the replacement wipes the old DEK. On error, `keys` is unchanged
+  and still works with the old password.
 
 **Why re-key rotates the DEK.** If a password change only re-wrapped the same DEK,
 anyone holding an old copy of the file and the old password could unwrap the DEK from
@@ -129,8 +132,10 @@ The plaintext is padded before encryption:
 This hides small size differences: a 1-byte body and a 16000-byte body give files of the
 same length. The file size still shows how many 16 KiB blocks the body needs.
 
-`unpad` returns `BadPadding` if the length is zero or not a multiple of 16384, if the
-length prefix is larger than the bytes after it, or if any padding byte is not zero.
+Padding is canonical: each body has exactly one padded form. `unpad` returns
+`BadPadding` if the length is zero or not a multiple of 16384, if the length prefix is
+larger than the bytes after it, if the buffer has more blocks than the body needs, or if
+any padding byte is not zero.
 
 **Why `BadPadding` comes only after authentication.** `unpad` runs only on plaintext that
 the body AEAD has already authenticated under the DEK. An attacker without the DEK cannot
@@ -155,7 +160,7 @@ produced the file. It reveals nothing about the password, and it is not a paddin
 |---|---|---|
 | `Format(..)` | The public bytes are not a valid v1 file. | No |
 | `KdfPolicy(..)` | Costs outside the policy, from the header or from the caller. Message: "this vault needs more resources than allowed". | No |
-| `WrongPasswordOrCorrupt` | The DEK unwrap failed (wrong password, or a changed salt, cost, wrap nonce or wrapped DEK) or the body failed to open (any other change). | It is the only error a wrong password can cause. |
+| `WrongPasswordOrCorrupt` | The DEK unwrap failed (wrong password, or a changed salt, in-policy cost, wrap nonce or wrapped DEK) or the body failed to open (any other change). | It is the only error a wrong password can cause. |
 | `BadPadding` | The body authenticated but its padding is malformed. | No |
 | `TooLargeToSave` | The body is over the write cap. | No |
 | `Crypto` | The OS random source failed, or Argon2 failed (for example, it could not allocate its memory). | No |
@@ -199,6 +204,7 @@ Known gaps:
 - No rollback protection. An older copy of the vault, with its old password, still opens.
 - No forward secrecy between normal saves. `reseal` keeps the DEK, so the current
   password opens every copy saved since the last password change.
-- No claim that opening a vault is constant-time overall. Format and policy errors are
-  decided on public bytes and are returned early by design.
+- No equal timing. A wrong password returns before the body is decrypted, so it can be
+  faster than a damaged body (see "Opening a vault"). Format and policy errors are decided
+  on public bytes and are returned early by design.
 - Argon2id makes guessing expensive. It does not make a weak password safe.

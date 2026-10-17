@@ -51,6 +51,7 @@ pub fn pad(plaintext: &[u8]) -> Result<SecretBuf, VaultError> {
     if plaintext.len() > MAX_BODY_LEN {
         return Err(VaultError::TooLargeToSave);
     }
+    // Unreachable errors: the cap above keeps both the u32 and the sum in range.
     let len = u32::try_from(plaintext.len()).map_err(|_| VaultError::TooLargeToSave)?;
     let padded_len = plaintext
         .len()
@@ -68,13 +69,16 @@ pub fn pad(plaintext: &[u8]) -> Result<SecretBuf, VaultError> {
 
 /// Removes the padding that [`pad`] added and returns the plaintext.
 ///
-/// Call it only on authenticated plaintext. It checks every byte of the
-/// padding, without stopping at the first non-zero one.
+/// Call it only on authenticated plaintext. Padding must be canonical: the
+/// buffer must be exactly the length [`pad`] would produce for that body, so
+/// each body has one padded form. Every padding byte is checked, without
+/// stopping at the first non-zero one.
 ///
 /// # Errors
 /// Returns [`VaultError::BadPadding`] if `padded` is empty or not a multiple
 /// of [`PAD_BLOCK`], if the length prefix is larger than the bytes after it,
-/// or if any padding byte is not zero.
+/// if the buffer has more blocks than the body needs, or if any padding byte
+/// is not zero.
 pub fn unpad(padded: &[u8]) -> Result<SecretBuf, VaultError> {
     if padded.is_empty() || !padded.len().is_multiple_of(PAD_BLOCK) {
         return Err(VaultError::BadPadding);
@@ -83,6 +87,13 @@ pub fn unpad(padded: &[u8]) -> Result<SecretBuf, VaultError> {
         .split_first_chunk::<LEN_PREFIX>()
         .ok_or(VaultError::BadPadding)?;
     let len = usize::try_from(u32::from_le_bytes(*prefix)).map_err(|_| VaultError::BadPadding)?;
+    let minimal = len
+        .checked_add(LEN_PREFIX)
+        .and_then(|n| n.checked_next_multiple_of(PAD_BLOCK))
+        .ok_or(VaultError::BadPadding)?;
+    if minimal != padded.len() {
+        return Err(VaultError::BadPadding);
+    }
     let (body, tail) = rest.split_at_checked(len).ok_or(VaultError::BadPadding)?;
     if tail.iter().fold(0u8, |acc, &b| acc | b) != 0 {
         return Err(VaultError::BadPadding);
@@ -163,6 +174,17 @@ mod tests {
             v.resize(len, 0);
             assert_eq!(unpad(&v).unwrap_err(), VaultError::BadPadding, "len {len}");
         }
+    }
+
+    #[test]
+    fn unpad_rejects_non_minimal_padding() {
+        // A 3-byte body needs one block; two blocks are not canonical.
+        let mut v = pad(b"abc").unwrap().expose().to_vec();
+        v.resize(2 * PAD_BLOCK, 0);
+        assert_eq!(unpad(&v).unwrap_err(), VaultError::BadPadding);
+        // A 16381-byte body needs exactly two blocks, so this length is fine.
+        v[..4].copy_from_slice(&16_381u32.to_le_bytes());
+        assert_eq!(unpad(&v).unwrap().len(), 16_381);
     }
 
     #[test]
