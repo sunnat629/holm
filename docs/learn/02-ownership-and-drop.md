@@ -173,9 +173,8 @@ returns a new immutable `String` that you can never wipe.
 
 ## Why this matters for security
 
-On the JVM, passwords often end up in `String` objects. Strings are immutable, so you cannot
-overwrite them; they sit in memory until the garbage collector reuses the space, and the
-collector may have copied them around. That is why Java guidance says to use `char[]`. In Rust
+On the JVM a password is often held in a `String`, which is immutable, so it cannot be
+wiped and stays in the heap until the garbage collector reuses that memory. That is why Java guidance says to use `char[]`. In Rust
 we can say precisely where a secret lives, who owns it, and when we try to wipe it.
 
 Be honest about the limits. We wipe the memory our types own, and nothing more:
@@ -191,7 +190,7 @@ So never say "the password is fully wiped". Say "the buffers Holm owns are wiped
 
 ## Try it
 
-1. Run `cargo test -p holm-crypto secret` and read the nine test names. Which one proves the caller's array is wiped? Check: `cargo test -p holm-crypto from_bytes_wipes_source` shows `1 passed`.
+1. Run `cargo test -p holm-crypto secret` and read the 12 test names. Which one proves the caller's array is wiped? Check: `cargo test -p holm-crypto from_bytes_wipes_source` shows `1 passed`.
 2. In `secret.rs`, temporarily add `Clone` to a derive list on `SecretKey` (for example `#[derive(ZeroizeOnDrop, Clone)]`) and run `cargo test -p holm-crypto`. Read the error from the build, then undo it with `git checkout crates/holm-crypto/src/secret.rs`. Check: the test run must fail before you undo and pass after.
 3. Write a test that builds `SecretBuf::from_vec(vec![1, 2, 3])` and asserts `len()` is 3 and `is_empty()` is false. Check: `cargo test -p holm-crypto <your test name>` shows `1 passed`.
 

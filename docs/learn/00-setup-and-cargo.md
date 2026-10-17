@@ -82,13 +82,16 @@ This is the whole program, `crates/holm-cli/src/main.rs`:
 
 ```rust
 fn main() {
-    println!("holm 0.0.0");
+    println!("holm {}", env!("CARGO_PKG_VERSION"));
 }
 ```
 
 `fn` declares a function. `main` is where every Rust program starts. The `!` in `println!`
-means it is a **macro**, not a plain function. It prints a line. In Kotlin you'd write:
-`fun main() { println("holm 0.0.0") }`. They look alike on purpose.
+means it is a **macro**, not a plain function. It prints a line, and `{}` is where the
+next argument goes. `env!("CARGO_PKG_VERSION")` reads a value at compile time: Cargo sets
+it from the `version` field in `Cargo.toml`, so the program prints the version it was built
+with and the text can never drift from the manifest. In Kotlin you'd write:
+`fun main() { println("holm ${BuildConfig.VERSION}") }`. They look alike on purpose.
 
 ### `let` versus `let mut`
 
@@ -147,7 +150,7 @@ every dependency), makes builds repeatable. That is the first step toward builds
 verify. `forbid(unsafe_code)` means that, in our own crates, the compiler proves a whole class
 of memory bugs (buffer overflows, use after free) cannot happen. It does not cover our
 dependencies, which do use `unsafe` internally; that is why we keep the dependency list short
-and reviewed.
+and checked by the local gates in `scripts/ci-local.sh`.
 
 ## Try it
 
