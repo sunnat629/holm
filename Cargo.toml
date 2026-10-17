@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-cli"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.93.1"
+repository = "https://github.com/sunnat629/holm"
+
+[workspace.dependencies]
+# Internal crates
+holm-crypto = { path = "crates/holm-crypto" }
+holm-core = { path = "crates/holm-core" }
+
+# Runtime
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
+zeroize = "1.9"
+getrandom = "0.4"
+unicode-normalization = "0.1"
+thiserror = "2"
+subtle = "2.6"
+
+# Dev and test only
+proptest = "1.12"
+hex = "0.4"
+serde_json = "1"
+static_assertions = "1.1"
+libsodium-sys-stable = "1.24"
+
+# Argon2 is slow in unoptimised builds. Optimise dependencies even in dev
+# so tests that derive keys stay fast. Our own code stays easy to debug.
+[profile.dev.package."*"]
+opt-level = 3

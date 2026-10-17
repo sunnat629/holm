@@ -1,0 +1,10 @@
+[package]
+name = "holm-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Holm cryptography: secret types, randomness, Argon2id, XChaCha20-Poly1305"
+
+[dependencies]

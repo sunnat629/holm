@@ -1,0 +1,11 @@
+[package]
+name = "holm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Holm core: vault file format and key hierarchy"
+
+[dependencies]
+holm-crypto.workspace = true
