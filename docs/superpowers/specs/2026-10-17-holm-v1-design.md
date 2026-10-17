@@ -1,7 +1,7 @@
 # Holm v1 design (Rust)
 
 Date: 2026-10-17
-Status: draft for owner review
+Status: accepted for planning. Security decisions are owned by the security COS (Claude) by owner delegation on 2026-10-17; the owner can override any of them.
 Repo: `~/IdeaProjects/holm`, licence MIT OR Apache-2.0
 
 ## 1. Intent
@@ -106,7 +106,7 @@ body:          XChaCha20-Poly1305(DEK, body_nonce, padded plaintext, aad = whole
 | Floor (refuse to create or open below) | 64 MiB | 3 | 1 |
 | Ceiling (refuse to open above, checked before any work) | 1 GiB | 16 | 1, and memory × iterations ≤ 4 GiB |
 
-Parallelism is fixed at 1 in v1 (my call): every value Holm accepts can then be cross-checked against libsodium, and the header field leaves room to allow more later.
+Parallelism is fixed at 1 in v1 (security decision): every value Holm accepts can then be cross-checked against libsodium, and the header field leaves room to allow more later.
 
 The builder measures the default on a slow reference machine. Target: unlock under about 1.5 s on that machine. The default must also be openable on a mid-range phone later; if not, lower it, but never below the floor. Costs are stored in the header, so later versions can raise them. A cost rejection is its own error ("this vault needs more resources than allowed"), never reported as "wrong password".
 
@@ -162,9 +162,9 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 5. Generator: passwords (length, character sets, avoid look-alikes, minimum digits and symbols), passphrases (EFF large word list, separator, capitals, number), usernames. Uniform sampling by rejection, OS randomness only.
 6. Change master password (rotates DEK; section 5.2).
 7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards.
-8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (my call: people should never be locked in to an open-source tool).
-9. Settings: auto-lock time, clipboard time, lock on sleep, generator defaults. These security settings live **inside the encrypted body** (my call), so nobody can weaken them by editing a file; making any of them weaker needs the master password again. A separate plain config file holds only harmless UI preferences (window size, theme, last vault path).
-10. CLI: `holm init`, `list`, `get`, `add`, `edit`, `rm`, `gen`, `import`, `export`, `passwd`, `shell`. Passwords are read from the terminal with no echo, never from flags. There is **no background agent** (my call): each one-shot command asks for the password and opens the vault, and `holm shell` keeps one unlocked session inside a single interactive process, with the same throttle and auto-lock as the GUI. An agent would add IPC and client-authentication surface for little gain in v1.
+8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool).
+9. Settings: auto-lock time, clipboard time, lock on sleep, generator defaults. These security settings live **inside the encrypted body** (security decision), so nobody can weaken them by editing a file; making any of them weaker needs the master password again. A separate plain config file holds only harmless UI preferences (window size, theme, last vault path).
+10. CLI: `holm init`, `list`, `get`, `add`, `edit`, `rm`, `gen`, `import`, `export`, `passwd`, `shell`. Passwords are read from the terminal with no echo, never from flags. There is **no background agent** (security decision): each one-shot command asks for the password and opens the vault, and `holm shell` keeps one unlocked session inside a single interactive process, with the same throttle and auto-lock as the GUI. An agent would add IPC and client-authentication surface for little gain in v1.
 
 ## 9. Desktop security controls
 
@@ -178,17 +178,17 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 | Core dumps off | `setrlimit(RLIMIT_CORE, 0)` | best effort | `prctl(PR_SET_DUMPABLE, 0)` and rlimit |
 | Key memory kept out of swap | `mlock` on key pages | `VirtualLock` | `mlock` |
 
-Only the KEK and DEK are locked in memory (my call). `holm-platform` provides the locked allocation and `holm-crypto` uses it through a small trait, so `holm-crypto` stays free of `unsafe`. The decrypted vault body, item secrets and GUI buffers are wiped on drop but **not** locked, so swap or hibernation files may hold them. The docs say so and recommend full-disk encryption (FileVault, BitLocker, LUKS).
+Only the KEK and DEK are locked in memory (security decision). `holm-platform` provides the locked allocation and `holm-crypto` uses it through a small trait, so `holm-crypto` stays free of `unsafe`. The decrypted vault body, item secrets and GUI buffers are wiped on drop but **not** locked, so swap or hibernation files may hold them. The docs say so and recommend full-disk encryption (FileVault, BitLocker, LUKS).
 
 Leftover temp files from a crash are deleted on the next open. There is no backup-file juggling: the old project's bugs came from that, and atomic rename works on all three targets.
 
-The vault is not excluded from Time Machine or other backups (my call). An encrypted copy in a backup is covered by the threat model, and losing your only copy of every password is the bigger risk.
+The vault is not excluded from Time Machine or other backups (security decision). An encrypted copy in a backup is covered by the threat model, and losing your only copy of every password is the bigger risk.
 
 ## 10. GUI (egui)
 
 - Three panes: menu (Vault, Generator, Settings, Lock), list (search, category chips, sort, New), detail (view or edit). Locked state shows only the unlock screen.
 - Plain look, system-like font, light and dark themes, keyboard shortcuts. Accessibility through egui's AccessKit support.
-- Secret entry uses Holm's own small password widget, not egui's `TextEdit` (my call). `TextEdit` keeps its own copies through undo history, the layout cache and the accessibility tree. The Holm widget has no undo, lays out only mask characters, exposes no value to accessibility tools, and keeps text in a pre-allocated buffer that wipes itself. A revealed secret is shown read-only, straight from the wiping buffer. This **reduces** copies; it can't promise there are none (font and GPU layers may still hold rendered glyphs).
+- Secret entry uses Holm's own small password widget, not egui's `TextEdit` (security decision). `TextEdit` keeps its own copies through undo history, the layout cache and the accessibility tree. The Holm widget has no undo, lays out only mask characters, exposes no value to accessibility tools, and keeps text in a pre-allocated buffer that wipes itself. A revealed secret is shown read-only, straight from the wiping buffer. This **reduces** copies; it can't promise there are none (font and GPU layers may still hold rendered glyphs).
 - egui's built-in state saving (`persistence` feature) is **off**, so titles and search text never land on disk.
 - The secrets never appear in the window title, notifications or OS recent-items lists.
 - Unlock and password-change run on a worker thread with a progress state. The UI stays responsive and the session handle is the only route to the core.
@@ -196,7 +196,7 @@ The vault is not excluded from Time Machine or other backups (my call). An encry
 ## 11. Unlock limits
 
 - The real protection against a stolen file is Argon2 plus a strong password. The doc says so.
-- In-app throttle: after 3 failures in a row, wait 2, 4, 8 … seconds, capped at 60 s, before the next try. It resets on success. It's kept in memory only (my call): the old project's on-disk lockout record was tamperable and caused many edge cases, and a restart only saves a person at the keyboard a little time when every guess already costs a full Argon2 run.
+- In-app throttle: after 3 failures in a row, wait 2, 4, 8 … seconds, capped at 60 s, before the next try. It resets on success. It's kept in memory only (security decision): the old project's on-disk lockout record was tamperable and caused many edge cases, and a restart only saves a person at the keyboard a little time when every guess already costs a full Argon2 run.
 - The same throttle covers recovery-phrase reveal and password change, so an unattended unlocked session can't be used to guess the password quickly.
 
 ## 12. Supply chain and open source
@@ -221,7 +221,7 @@ The vault is not excluded from Time Machine or other backups (my call). An encry
 - macOS: Developer ID signing and notarisation, `.dmg`. The owner already has an Apple Developer account.
 - Windows: Authenticode signing, `.msi`. No certificate yet; Phase 6 includes getting one (a paid certificate, or Azure Trusted Signing).
 - Linux: AppImage and Flatpak.
-- Every release: checksums, a signature (minisign or Sigstore), GitHub build provenance attestation, and documented steps to reproduce the build. "Reproducible" means the **unsigned binaries** rebuild bit-for-bit (my call). Signed installers can't be identical, so anyone can strip the signature and compare the binary inside.
+- Every release: checksums, a signature (minisign or Sigstore), GitHub build provenance attestation, and documented steps to reproduce the build. "Reproducible" means the **unsigned binaries** rebuild bit-for-bit (security decision). Signed installers can't be identical, so anyone can strip the signature and compare the binary inside.
 - No auto-updater in v1 (it would need network code). Users download signed releases.
 
 **Open source pack** (what "going open source" needs): `LICENSE-MIT`, `LICENSE-APACHE`, `README.md`, `SECURITY.md` (private reporting address and response promise), `THREAT-MODEL.md`, `CRYPTO.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, public CI, and an outside security audit before the release is called 1.0.
