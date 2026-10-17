@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 zeroize.workspace = true
 unicode-normalization.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 static_assertions.workspace = true

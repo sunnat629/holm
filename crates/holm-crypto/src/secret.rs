@@ -1,5 +1,7 @@
 //! Secret types: wiped on drop, never printed, never cloned by accident.
 
+use crate::error::CryptoError;
+use crate::random::fill_random;
 use core::fmt;
 use unicode_normalization::UnicodeNormalization;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -24,6 +26,32 @@ impl SecretKey {
         key
     }
 
+    /// A fresh random key from the OS, written straight into the heap box so no
+    /// stack copy of the key exists.
+    ///
+    /// # Errors
+    /// Returns [`CryptoError::Rng`] if the OS cannot provide randomness.
+    pub fn generate() -> Result<SecretKey, CryptoError> {
+        let mut k = SecretKey::zeroed();
+        fill_random(k.expose_mut())?;
+        Ok(k)
+    }
+
+    /// Copies exactly 32 bytes straight into a new key's box. No temporary
+    /// buffer is made, so there is nothing extra to wipe. The caller still owns
+    /// `bytes` and is responsible for wiping it.
+    ///
+    /// # Errors
+    /// Returns [`CryptoError::InvalidKeyLength`] unless `bytes.len() == 32`.
+    pub fn from_slice(bytes: &[u8]) -> Result<SecretKey, CryptoError> {
+        if bytes.len() != 32 {
+            return Err(CryptoError::InvalidKeyLength);
+        }
+        let mut key = SecretKey::zeroed();
+        key.0.copy_from_slice(bytes);
+        Ok(key)
+    }
+
     /// An all-zero key, to be filled in place through [`SecretKey::expose_mut`].
     #[must_use]
     pub(crate) fn zeroed() -> SecretKey {
@@ -32,13 +60,6 @@ impl SecretKey {
     }
 
     /// Mutable access to the key bytes, for writing them straight into the box.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "first used by key generation and derivation in Tasks 4 and 5; remove this then"
-        )
-    )]
     pub(crate) fn expose_mut(&mut self) -> &mut [u8; 32] {
         &mut self.0
     }
@@ -189,6 +210,29 @@ mod tests {
         assert_eq!(
             format!("{:?}", SecretBuf::from_vec(Vec::new())),
             "SecretBuf([REDACTED], len = 0)"
+        );
+    }
+    #[test]
+    fn two_generated_keys_differ() {
+        let a = SecretKey::generate().unwrap();
+        let b = SecretKey::generate().unwrap();
+        assert_ne!(a.expose(), b.expose());
+    }
+    #[test]
+    fn from_slice_accepts_32_bytes() {
+        let src: Vec<u8> = (0..32).collect();
+        let k = SecretKey::from_slice(&src).unwrap();
+        assert_eq!(k.expose().as_slice(), src.as_slice());
+    }
+    #[test]
+    fn from_slice_rejects_wrong_length() {
+        assert_eq!(
+            SecretKey::from_slice(&[0u8; 31]).unwrap_err(),
+            CryptoError::InvalidKeyLength
+        );
+        assert_eq!(
+            SecretKey::from_slice(&[0u8; 33]).unwrap_err(),
+            CryptoError::InvalidKeyLength
         );
     }
     static_assertions::assert_not_impl_any!(SecretKey: Clone, Copy);
