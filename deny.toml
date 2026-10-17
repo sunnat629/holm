@@ -45,6 +45,18 @@ deny = [
     { crate = "tokio-rustls" },
     { crate = "tungstenite" },
     { crate = "async-tungstenite" },
+    { crate = "minreq" },
+    { crate = "ehttp" },
+    { crate = "http_req" },
+    { crate = "chttp" },
+    { crate = "awc" },
+    { crate = "actix-web" },
+    { crate = "warp" },
+    { crate = "axum" },
+    { crate = "tiny_http" },
+    { crate = "rouille" },
+    { crate = "mio" },
+    { crate = "socket2" },
 ]
 
 [sources]

@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -26,11 +27,11 @@ jobs:
       - name: Install pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
 
   supply-chain:
-    name: supply chain (deny, audit, vet)
+    name: cargo-deny and cargo-vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,21 +40,18 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
+          arguments: --all-features --locked
       - name: Install cargo-vet
         run: cargo install --locked cargo-vet --version 0.10.2
       - run: cargo vet --locked
 
   audit:
-    name: cargo audit
+    name: cargo-audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # rustsec/audit-check publishes its result as a check run.
-      checks: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit --version 0.22.2
+      - run: cargo audit

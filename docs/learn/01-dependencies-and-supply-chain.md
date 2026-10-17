@@ -4,10 +4,12 @@
 
 We added the gates that keep bad code out of Holm. A GitHub Actions workflow builds and
 tests on Linux, macOS and Windows, then runs three checks on our dependencies:
-`cargo deny`, `cargo audit` and `cargo vet`. `deny.toml` bans every networking crate, so a
-password vault can never quietly start talking to the internet. The workflow's actions are
-pinned to exact commits. There is still no cryptography; this lesson is about trusting code
-you did not write.
+`cargo deny`, `cargo audit` and `cargo vet`. `deny.toml` bans a long list of well-known
+networking crates, and a clippy rule rejects the `std::net` socket types, which makes
+accidental network code in Holm loud. It is a tripwire, not a proof (see below). The
+workflow's actions are pinned to exact commits. CI reports results on the pull request;
+it does not block merges yet, because a private repo on the free plan has no branch
+protection. There is still no cryptography; this lesson is about trusting code you did not write.
 
 ## Rust ideas in this task
 
@@ -31,8 +33,8 @@ Gradle version catalog.
 `"0.6"` is shorthand for `^0.6`, meaning "0.6.0 or newer, but below 0.7.0". Rust uses
 semantic versioning: `MAJOR.MINOR.PATCH`. For `0.x` versions the minor number acts like a
 major one, so `0.6` to `0.7` may break things. For `1.x` and up, `"1.9"` allows `1.9.0` up to
-(not including) `2.0.0`. In Kotlin you'd write: `"1.9.+"` or a Gradle version range, though
-Cargo's default is safer and more common.
+(not including) `2.0.0`. In Kotlin you'd write: `"1.9.+"` in Gradle, which allows any 1.9.x patch; Cargo's `"1.9"` is
+wider, since it also allows 1.10 and later 1.x releases, but never 2.0.
 
 ### `Cargo.lock` and why we commit it
 
@@ -44,14 +46,11 @@ Gradle dependency locking (`gradle.lockfile`).
 
 ### Features
 
-Crates can have optional parts called features, switched on in `Cargo.toml`:
-
-```toml
-serde_json = { version = "1", features = ["std"] }
-```
-
-Features add code, and code adds risk, so we turn on only what we need. In Kotlin you'd
-write: optional modules or Gradle capabilities, but Cargo features compile code in or out.
+A crate can have optional parts called features, switched on per dependency with a
+`features = [...]` list. Features add code, and code adds risk, so we turn on only what we
+need. Holm's `Cargo.toml` uses none yet. In Kotlin you'd write: optional modules or Gradle
+capabilities, but Cargo features compile code in or out. `cargo deny` runs with
+`all-features = true` so it sees the biggest possible dependency tree.
 
 ### Workspace lints
 
@@ -80,19 +79,27 @@ has the same problem. Three tools check different parts of it:
   has audited needs an exemption in `supply-chain/config.toml`, with a reason, and we
   review that list again in Phase 6.
 
-Here is the ban list, shortened:
+Here is part of the ban list from `deny.toml`:
 
 ```toml
-[bans]
 deny = [
     { crate = "reqwest" },
     { crate = "ureq" },
     { crate = "openssl" },
+    { crate = "minreq" },
 ]
 ```
 
-Each entry names a crate that must never appear anywhere in the dependency tree, even
-deep inside another dependency.
+Each entry names a crate that must never appear anywhere in the dependency tree, even deep
+inside another dependency. The matching rule in `clippy.toml` lists `std::net::TcpStream`,
+`TcpListener` and `UdpSocket` under `disallowed-types`, so CI's `clippy -D warnings` fails if
+Holm's own code opens a socket. Together they catch the common ways to reach the network:
+an HTTP, TLS or async-runtime crate on the list, or the standard library's socket types.
+
+They cannot catch everything. A network crate that is not on the list passes. A call into C
+through FFI can open a socket with no Rust crate involved. The `std::net` rule only sees
+the types and methods we named. Treat the lists as tripwires; the real defence is reading
+every new dependency in review, which is what `cargo vet` records.
 
 ### Why actions are pinned by SHA
 
@@ -112,7 +119,8 @@ version plus checksum verification, instead of `latest`.
 Most real attacks on software now come through dependencies and build systems, not through
 the program's own code. A vault that depends on a hijacked crate is a vault that leaks.
 These gates make the risky moves loud: a new crate, a banned crate, an unreviewed licence or
-a known vulnerability all turn the build red before anything is merged.
+a known vulnerability all turn the build red on the pull request. Today CI reports and does
+not block, so a human must still look at the result before merging.
 
 ## Try it
 
@@ -120,8 +128,8 @@ a known vulnerability all turn the build red before anything is merged.
    It should fail and name `ureq`. Undo with `git checkout Cargo.toml Cargo.lock crates/holm-cli/Cargo.toml`
    and check `git status` is clean.
 2. Look at the lock file: `grep -c '^name' Cargo.lock` counts the crates in the build.
-   Today it is only our three. Say why that is a good place to start.
-3. Run `cargo vet --locked` and read the one-line answer. Then open
+   Today it is only our three, since no third-party crate is used yet. Say why that is a good place to start.
+3. Install it with `cargo install --locked cargo-vet`, then run `cargo vet --locked` and read the one-line answer. Then open
    `supply-chain/config.toml` and find the three audit sources we import.
 
 ## Read next
