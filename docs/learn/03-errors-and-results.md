@@ -93,9 +93,7 @@ Nothing here is thrown. A function that can fail says so in its return type, and
 must handle it: the compiler warns about an ignored `Result`.
 
 In Kotlin you'd write: `fun fillRandom(buf: ByteArray) { try { SecureRandom().nextBytes(buf) } catch (e: Exception) { throw CryptoError.Rng() } }`.
-Kotlin signatures do not show that a function throws, and exceptions are not checked, so a
-caller can forget the `try`. The closest Kotlin analogue to Rust's approach is the standard
-library's `Result<T>` or a sealed class you return, but few libraries use them.
+Kotlin signatures do not show that a function throws, so a caller can forget the `try`. The closest Kotlin equivalent of Rust's approach is the standard library's `Result<T>` or a sealed class you return.
 
 ([Recoverable Errors with Result](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html))
 
@@ -190,7 +188,7 @@ Error messages end up in logs and bug tickets, so every `CryptoError` message is
 ## Try it
 
 1. Run `cargo test -p holm-crypto from_slice`. Check: both `from_slice` tests show `ok` and the summary line reads `2 passed`.
-2. In `random.rs`, replace the body of `fill_random` with `Ok(())` (a "random" function that does nothing) and run `cargo test -p holm-crypto differ`. Check: the summary line reads `2 failed` (`random_nonces_differ` and `two_generated_keys_differ`). Explain in one sentence why a broken generator that leaves zeros is caught. Undo with `git checkout crates/holm-crypto/src/random.rs`.
+2. In `random.rs`, replace the body of `fill_random` with `let _ = buf; Ok(())` (a "random" function that does nothing) and run `cargo test -p holm-crypto differ`. Check: the summary line reads `3 failed` (`random::random_nonces_differ`, `aead::random_nonces_differ` and `secret::two_generated_keys_differ`). Explain in one sentence why a broken generator that leaves zeros is caught. Undo with `git checkout crates/holm-crypto/src/random.rs`.
 3. In `error.rs`, add a variant to `CryptoError`, with a doc line because the crate uses `deny(missing_docs)`:
 
    ```rust
