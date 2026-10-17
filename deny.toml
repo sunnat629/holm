@@ -9,16 +9,15 @@ version = 2
 
 [licenses]
 version = 2
+# Only licences that a dependency in the graph actually uses. When a new dependency needs
+# another one (ISC, BSD-2-Clause, CC0-1.0, Apache-2.0 WITH LLVM-exception ...), add it back
+# with the reason in the same commit.
 allow = [
     "MIT",
     "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
     "BSD-3-Clause",
-    "ISC",
     "Unicode-3.0",
     "Zlib",
-    "CC0-1.0",
 ]
 
 [bans]
@@ -61,6 +60,17 @@ deny = [
     { crate = "socket2" },
     { crate = "smol" },
     { crate = "async-net" },
+    # No telemetry, self-update, extra async runtimes, DNS/QUIC stacks or git transport.
+    { crate = "sentry" },
+    { crate = "self_update" },
+    { crate = "opentelemetry" },
+    { crate = "opentelemetry-otlp" },
+    { crate = "opentelemetry_sdk" },
+    { crate = "async-std" },
+    { crate = "hickory-resolver" },
+    { crate = "hickory-proto" },
+    { crate = "quinn" },
+    { crate = "git2" },
 ]
 
 [sources]
