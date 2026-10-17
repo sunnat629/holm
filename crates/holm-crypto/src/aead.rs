@@ -53,6 +53,24 @@ pub const KEY_LEN: usize = 32;
 /// ```compile_fail,E0599
 /// let _nonce = holm_crypto::aead::Nonce::default();
 /// ```
+///
+/// Each `compile_fail` block above has a plain sibling below that compiles,
+/// so the failure is caused by the property under test and not by a typo or
+/// a wrong path.
+///
+/// ```
+/// let nonce = holm_crypto::aead::Nonce::random().unwrap();
+/// let _bytes = nonce.as_bytes(); // borrowing works; only `clone` does not
+/// ```
+///
+/// ```
+/// let nonce = holm_crypto::aead::Nonce::random().unwrap();
+/// let _moved = nonce; // a single move compiles
+/// ```
+///
+/// ```
+/// let _nonce = holm_crypto::aead::Nonce::random().unwrap(); // the only constructor
+/// ```
 #[derive(Debug)]
 pub struct Nonce([u8; NONCE_LEN]);
 
