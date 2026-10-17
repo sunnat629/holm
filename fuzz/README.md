@@ -6,7 +6,7 @@ workspace with its own `Cargo.lock`, so libFuzzer stays out of the product graph
 Needs nightly Rust and cargo-fuzz:
 
 ```sh
-rustup toolchain install nightly
+rustup toolchain install nightly-2026-10-12 --profile minimal
 cargo install --locked cargo-fuzz --version 0.13.2
 ```
 
@@ -23,9 +23,9 @@ cargo install --locked cargo-fuzz --version 0.13.2
 `scripts/ci-local.sh` runs each target for 30 s. By hand, from the repo root:
 
 ```sh
-cargo +nightly fuzz run parse_header fuzz/corpus/parse_header fuzz/seeds/parse_header -- -max_total_time=30
-cargo +nightly fuzz run parse_header_structured fuzz/corpus/parse_header_structured -- -max_total_time=30
-cargo +nightly fuzz run unpad fuzz/corpus/unpad -- -max_total_time=30
+cargo +nightly-2026-10-12 fuzz run parse_header fuzz/corpus/parse_header fuzz/seeds/parse_header -- -max_total_time=30
+cargo +nightly-2026-10-12 fuzz run parse_header_structured fuzz/corpus/parse_header_structured -- -max_total_time=30
+cargo +nightly-2026-10-12 fuzz run unpad fuzz/corpus/unpad -- -max_total_time=30
 ```
 
 ## Long run
@@ -39,11 +39,11 @@ run does not prove there are none.
 
 A crash writes its input to `fuzz/artifacts/<target>/crash-<hash>`.
 
-1. Reproduce: `cargo +nightly fuzz run <target> fuzz/artifacts/<target>/crash-<hash>`
-2. Minimise: `cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/crash-<hash>`
+1. Reproduce: `cargo +nightly-2026-10-12 fuzz run <target> fuzz/artifacts/<target>/crash-<hash>`
+2. Minimise: `cargo +nightly-2026-10-12 fuzz tmin <target> fuzz/artifacts/<target>/crash-<hash>`
 3. Copy the minimised file to `fuzz/seeds/<target>/regression_<short-name>` and commit it.
 4. For `parse_header` the bytes can go straight into a unit test with `Header::parse`.
-   For the structured targets, print the decoded input with `cargo +nightly fuzz fmt <target> <file>`
+   For the structured targets, print the decoded input with `cargo +nightly-2026-10-12 fuzz fmt <target> <file>`
    and write a unit test that builds the same bytes.
 5. Fix the bug. The unit test must fail before the fix and pass after it.
 

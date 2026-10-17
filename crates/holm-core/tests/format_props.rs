@@ -60,9 +60,20 @@ fn valid_file() -> impl Strategy<Value = ValidFile> {
 /// One damaging step applied to a byte buffer.
 #[derive(Clone, Debug)]
 enum Edit {
-    Overwrite { offset: usize, value: u8 },
-    Truncate { len: usize },
-    Extend { extra: Vec<u8> },
+    Overwrite {
+        offset: usize,
+        value: u8,
+    },
+    Truncate {
+        len: usize,
+    },
+    Extend {
+        extra: Vec<u8>,
+    },
+    /// Whole zero blocks, so `unpad` sees a buffer longer than the body needs.
+    AppendBlocks {
+        n: usize,
+    },
 }
 
 fn edit() -> impl Strategy<Value = Edit> {
@@ -70,6 +81,7 @@ fn edit() -> impl Strategy<Value = Edit> {
         (any::<usize>(), any::<u8>()).prop_map(|(offset, value)| Edit::Overwrite { offset, value }),
         any::<usize>().prop_map(|len| Edit::Truncate { len }),
         prop::collection::vec(any::<u8>(), 1..32).prop_map(|extra| Edit::Extend { extra }),
+        (1usize..=3).prop_map(|n| Edit::AppendBlocks { n }),
     ]
 }
 
@@ -84,8 +96,26 @@ fn apply(bytes: &mut Vec<u8>, edits: &[Edit]) {
             }
             Edit::Truncate { len } => bytes.truncate(len % (bytes.len() + 1)),
             Edit::Extend { extra } => bytes.extend_from_slice(extra),
+            Edit::AppendBlocks { n } => bytes.extend(std::iter::repeat_n(0u8, n * PAD_BLOCK)),
         }
     }
+}
+
+/// Plaintext lengths: mostly random, often right at a block boundary.
+fn plaintext_near_blocks() -> impl Strategy<Value = Vec<u8>> {
+    let edge = prop_oneof![
+        Just(0usize),
+        Just(PAD_BLOCK - 5),
+        Just(PAD_BLOCK - 4),
+        Just(PAD_BLOCK - 3),
+        Just(2 * PAD_BLOCK - 5),
+        Just(2 * PAD_BLOCK - 4),
+        Just(2 * PAD_BLOCK - 3),
+    ];
+    prop_oneof![
+        prop::collection::vec(any::<u8>(), 0..40_000),
+        edge.prop_flat_map(|n| prop::collection::vec(any::<u8>(), n..=n)),
+    ]
 }
 
 /// Parse must not panic. If it accepts, the header must re-encode to the input.
@@ -129,7 +159,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
     #[test]
-    fn pad_unpad_roundtrip(plaintext in prop::collection::vec(any::<u8>(), 0..40_000)) {
+    fn pad_unpad_roundtrip(plaintext in plaintext_near_blocks()) {
         let padded = pad(&plaintext).expect("small input");
         prop_assert_eq!(padded.len() % PAD_BLOCK, 0);
         let back = unpad(padded.expose()).expect("pad output is canonical");
@@ -138,7 +168,7 @@ proptest! {
 
     #[test]
     fn unpad_never_panics(
-        plaintext in prop::collection::vec(any::<u8>(), 0..40_000),
+        plaintext in plaintext_near_blocks(),
         edits in prop::collection::vec(edit(), 0..=4),
         random in prop::collection::vec(any::<u8>(), 0..64),
     ) {
@@ -151,6 +181,38 @@ proptest! {
             prop_assert_eq!(again.expose(), &bytes[..]);
         }
         let _ = unpad(&random);
+    }
+}
+
+/// A canonical buffer plus extra whole zero blocks is a second padded form of the same
+/// body. `unpad` must refuse it, and must refuse a canonical buffer minus a block.
+#[test]
+fn extra_or_missing_blocks_are_rejected() {
+    for len in (0..40_000usize).step_by(997).chain([
+        0,
+        PAD_BLOCK - 5,
+        PAD_BLOCK - 4,
+        PAD_BLOCK - 3,
+        2 * PAD_BLOCK - 4,
+    ]) {
+        let plaintext = vec![0xAB; len];
+        let padded = pad(&plaintext).expect("small input").expose().to_vec();
+        assert!(unpad(&padded).is_ok(), "len {len}: canonical form accepted");
+        for k in 1..=3 {
+            let mut longer = padded.clone();
+            longer.extend(std::iter::repeat_n(0u8, k * PAD_BLOCK));
+            assert!(
+                unpad(&longer).is_err(),
+                "len {len}: {k} extra blocks accepted"
+            );
+        }
+        if padded.len() > PAD_BLOCK {
+            let shorter = &padded[..padded.len() - PAD_BLOCK];
+            assert!(
+                unpad(shorter).is_err(),
+                "len {len}: one block fewer accepted"
+            );
+        }
     }
 }
 

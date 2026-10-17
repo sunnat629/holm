@@ -4,7 +4,7 @@
 
 use arbitrary::Arbitrary;
 use holm_core::format::{HEADER_LEN, Header};
-use holm_crypto::kdf::KdfParams;
+use holm_crypto::kdf::{KdfParams, MAX_M_KIB, MAX_WORK};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -16,9 +16,11 @@ enum Edit {
 
 #[derive(Arbitrary, Debug)]
 struct Input {
+    /// Mapped into the valid KDF range unless `bad_kdf` asks for raw values.
     memory_kib: u32,
     iterations: u32,
     parallelism: u32,
+    bad_kdf: bool,
     salt: [u8; 32],
     wrap_nonce: [u8; 24],
     wrapped_dek: [u8; 48],
@@ -31,12 +33,25 @@ struct Input {
 fuzz_target!(|input: Input| {
     let mut body = input.body.to_vec();
     body.extend(input.more_body.iter().take(48));
-    let header = Header {
-        kdf: KdfParams {
+    // Valid parameters most of the time, so inputs reach the length and body checks.
+    let kdf = if input.bad_kdf {
+        KdfParams {
             memory_kib: input.memory_kib,
             iterations: input.iterations,
             parallelism: input.parallelism,
-        },
+        }
+    } else {
+        let iterations = 3 + input.iterations % 14;
+        let max_m = u64::from(MAX_M_KIB).min(MAX_WORK / u64::from(iterations));
+        let max_m = u32::try_from(max_m).expect("capped by MAX_M_KIB");
+        KdfParams {
+            memory_kib: 65_536 + input.memory_kib % (max_m - 65_536 + 1),
+            iterations,
+            parallelism: 1,
+        }
+    };
+    let header = Header {
+        kdf,
         salt: input.salt,
         wrap_nonce: input.wrap_nonce,
         wrapped_dek: input.wrapped_dek,
@@ -59,7 +74,8 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    if let Ok((parsed, _body)) = Header::parse(&bytes) {
+    if let Ok((parsed, body)) = Header::parse(&bytes) {
         assert_eq!(&parsed.encode()[..], &bytes[..HEADER_LEN]);
+        assert_eq!(body, &bytes[HEADER_LEN..]);
     }
 });

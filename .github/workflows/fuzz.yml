@@ -26,7 +26,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal
+        run: rustup toolchain install nightly-2026-10-12 --profile minimal
       - name: Install cargo-fuzz
         run: cargo install --locked cargo-fuzz --version 0.13.2
       - name: Fuzz ${{ matrix.target }} for 600 s
@@ -34,7 +34,7 @@ jobs:
           seeds=""
           if [ -d "fuzz/seeds/${{ matrix.target }}" ]; then seeds="fuzz/seeds/${{ matrix.target }}"; fi
           mkdir -p "fuzz/corpus/${{ matrix.target }}"
-          cargo +nightly fuzz run "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" $seeds -- -max_total_time=600
+          cargo +nightly-2026-10-12 fuzz run "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" $seeds -- -max_total_time=600
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

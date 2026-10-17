@@ -67,9 +67,11 @@ oracle_gate() {
 # The fuzz targets are their own workspace (fuzz/Cargo.toml) and need nightly Rust and
 # cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target;
 # new corpus entries land in the git-ignored fuzz/corpus/, so the tree stays clean.
+# Dated nightly, so a gate result does not drift with the day. Bump it on purpose.
+FUZZ_NIGHTLY="nightly-2026-10-12"
 fuzz_gate() {
-  if ! cargo +nightly --version >/dev/null 2>&1; then
-    echo "MISSING nightly toolchain. Install: rustup toolchain install nightly" >&2
+  if ! cargo "+$FUZZ_NIGHTLY" --version >/dev/null 2>&1; then
+    echo "MISSING nightly toolchain. Install: rustup toolchain install $FUZZ_NIGHTLY --profile minimal" >&2
     return 1
   fi
   if ! cargo fuzz --version >/dev/null 2>&1; then
@@ -84,7 +86,7 @@ fuzz_gate() {
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi
     # shellcheck disable=SC2086 # $seeds is empty or one path without spaces
-    cargo +nightly fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 || return 1
+    cargo "+$FUZZ_NIGHTLY" fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 || return 1
   done
 }
 case "$(uname -s)" in

@@ -3,8 +3,7 @@
 ## What we built
 
 `crates/holm-core/tests/format_props.rs` holds property tests for the header parser and the
-padding. `fuzz/` holds three cargo-fuzz targets (`parse_header`, `parse_header_structured`,
-`unpad`) and `fuzz/README.md` says how to run them. `scripts/ci-local.sh` runs a short
+padding. `fuzz/` holds the cargo-fuzz targets (in `fuzz/fuzz_targets/`) and `fuzz/README.md` says how to run them. `scripts/ci-local.sh` runs a short
 fuzz pass as a gate. The goal: the code that reads untrusted bytes returns an error for bad
 input and never panics.
 
@@ -144,8 +143,8 @@ If a target crashes, libFuzzer prints a panic message and writes the input to
 `fuzz/artifacts/<target>/crash-<hash>`. The steps, as in `fuzz/README.md`:
 
 ```sh
-cargo +nightly fuzz run parse_header fuzz/artifacts/parse_header/crash-<hash>
-cargo +nightly fuzz tmin parse_header fuzz/artifacts/parse_header/crash-<hash>
+cargo +nightly-2026-10-12 fuzz run parse_header fuzz/artifacts/parse_header/crash-<hash>
+cargo +nightly-2026-10-12 fuzz tmin parse_header fuzz/artifacts/parse_header/crash-<hash>
 ```
 
 Line by line:
