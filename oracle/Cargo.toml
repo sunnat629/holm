@@ -15,6 +15,11 @@ rust-version = "1.99.1"
 publish = false
 description = "Test-only libsodium cross-check for Holm's Argon2id (never shipped)"
 
+# Package-level, so it covers tests/ as well as src/. The single
+# #[allow(unsafe_code)] on `mod ffi` in src/lib.rs overrides it there only.
+[lints.rust]
+unsafe_code = "deny"
+
 [dependencies]
 holm-crypto = { path = "../crates/holm-crypto", features = ["test-vectors"] }
 libsodium-sys-stable = "1.24"

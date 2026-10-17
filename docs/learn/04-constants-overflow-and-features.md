@@ -64,8 +64,11 @@ Line by line:
   default costs with only the lane count changed, which isolates the rule being tested.
 - `.validate()` is then called on that new value.
 
-`KdfParams` derives `Copy` (it holds three numbers and no secret), so `DEFAULT` is copied, not
-moved. Secret types never derive `Copy`, as lesson 02 explained.
+Each use of a `const` makes a fresh value, so `..KdfParams::DEFAULT` never moves anything out
+of `DEFAULT`; it would compile even without `Copy`. `Copy` matters when you write
+`..some_variable`: the fields you did not name are moved out of that variable, unless they are
+`Copy`. Ours are all `u32`, and `KdfParams` derives `Copy` (it holds three numbers and no
+secret). Secret types never derive `Copy`, as lesson 02 explained.
 
 In Kotlin you'd write: `KdfParams.DEFAULT.copy(parallelism = 2)`, using the `copy` method that
 every `data class` gets.
@@ -195,7 +198,9 @@ setting that would make password guessing fast and an expensive one that would h
 the machine, and we decide before allocating anything. Overflow checks matter because a
 wrapped number can turn "too big" into "tiny" and get past a limit. We wipe Argon2's work
 memory (64 MiB to 1 GiB of password-derived data) before freeing it, but we do not lock it in
-RAM, so the operating system can still write it to swap while the derivation runs.
+RAM, so the operating system can still write it to swap while the derivation runs, and the
+argon2 crate's own small temporaries (such as its hash state and a 1 KiB stack buffer) are not
+wiped.
 
 ## Try it
 

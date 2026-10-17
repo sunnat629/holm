@@ -66,7 +66,7 @@ One Cargo workspace. Security code sits in the smallest crates, with the fewest 
 
 Rules:
 - `holm-core` reaches the disk and the OS only through traits, so tests can inject faults and mobile can plug in its own storage later.
-- Security decision: the test-only `oracle/` workspace (libsodium cross-check, never shipped) may call libsodium through FFI, but only inside one `#[allow(unsafe_code)] mod ffi` with a `// SAFETY:` comment on every block; the rest of that crate keeps `deny(unsafe_code)`.
+- Security decision: the test-only `oracle/` workspace (libsodium cross-check, never shipped) may call libsodium through FFI, but only inside one `#[allow(unsafe_code)] mod ffi` with a `// SAFETY:` comment on every block; the rest of that package (library and tests) keeps `deny(unsafe_code)`.
 - Core API is synchronous and single-owner. The GUI runs slow work (Argon2) on a worker thread and talks to the core through one session handle.
 - Mobile UIs will be native (Jetpack Compose on Android, SwiftUI on iOS) over `holm-ffi`. egui is for desktop only.
 
@@ -83,7 +83,7 @@ Rules:
 | Unicode cleanup | NFC normalisation | `unicode-normalization` |
 | Password strength | zxcvbn estimate | `zxcvbn` |
 
-The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in CI. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
+The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in the local CI gate (`scripts/ci-local.sh`). GitHub Actions is manual-only for now (owner ruling); the cross-check moves back into Actions when Actions is re-enabled for the public repo. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
 
 ### 5.2 Keys
 
@@ -204,9 +204,9 @@ The vault is not excluded from Time Machine or other backups (security decision)
 
 **Code rules**
 - `#![forbid(unsafe_code)]` in every crate except `holm-platform`.
-- Security decision: the only exception is the test-only `oracle/` workspace (never shipped), whose libsodium FFI sits in one `#[allow(unsafe_code)] mod ffi` with a `// SAFETY:` comment on every block while the rest of that crate keeps `deny(unsafe_code)`; as a separate workspace it also keeps libsodium-sys-stable's `ureq` build-dependency out of the product graph.
+- Security decision: the one other exception is the test-only `oracle/` workspace (never shipped), whose libsodium FFI sits in one `#[allow(unsafe_code)] mod ffi` with a `// SAFETY:` comment on every block while the rest of that package (library and tests) keeps `deny(unsafe_code)`; as a separate workspace it also keeps libsodium-sys-stable's `ureq` build-dependency out of the product graph.
 - `clippy -D warnings`, `rustfmt`, pinned toolchain in `rust-toolchain.toml`, `Cargo.lock` committed.
-- No networking crates anywhere in the dependency graph. `cargo-deny` bans them (`reqwest`, `hyper`, `ureq` and similar) and fails CI if one appears.
+- No networking crates anywhere in the product's dependency graph (the test-only oracle's build-only `ureq` is the documented exception above). `cargo-deny` bans them (`reqwest`, `hyper`, `ureq` and similar) and fails CI if one appears.
 
 **Dependency gates**: `cargo-deny` (licences, advisories, bans, sources), `cargo-audit`, `cargo-vet` (reusing published audits from Mozilla, Google and others), SBOM via `cargo-cyclonedx`.
 

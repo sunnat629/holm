@@ -77,7 +77,9 @@ impl KdfParams {
 ///
 /// The Argon2 work area (64 MiB to 1 GiB of password-derived data) is wiped
 /// before it is freed. It is not locked in RAM, so the OS may still swap it
-/// out while the derivation runs.
+/// out while the derivation runs. The argon2 crate's own small temporaries
+/// (its BLAKE2b state and a 1 KiB stack buffer) are outside our control and
+/// are not wiped.
 ///
 /// # Errors
 /// Returns [`CryptoError::KdfParams`] if `params` break the policy, and
@@ -270,15 +272,34 @@ mod tests {
     }
     #[test]
     fn max_u32_does_not_overflow() {
-        assert!(
+        assert_eq!(
             KdfParams {
                 memory_kib: u32::MAX,
                 iterations: u32::MAX,
                 parallelism: 1
             }
-            .validate()
-            .is_err()
+            .validate(),
+            Err(KdfParamsError::AboveCeiling)
         );
+    }
+    #[test]
+    fn hostile_zero_and_max_values_rejected() {
+        // Values a hostile header could carry, each with the exact error it must get.
+        let cases = [
+            (0, 3, 1, KdfParamsError::BelowFloor),
+            (65536, 0, 1, KdfParamsError::BelowFloor),
+            (65536, 3, 0, KdfParamsError::UnsupportedParallelism),
+            (65536, 3, u32::MAX, KdfParamsError::UnsupportedParallelism),
+            (0, 0, 0, KdfParamsError::UnsupportedParallelism),
+        ];
+        for (memory_kib, iterations, parallelism, want) in cases {
+            let p = KdfParams {
+                memory_kib,
+                iterations,
+                parallelism,
+            };
+            assert_eq!(p.validate(), Err(want), "{p:?}");
+        }
     }
     #[test]
     fn parallelism_must_be_one() {

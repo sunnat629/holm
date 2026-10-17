@@ -7,6 +7,12 @@ cd "$(dirname "$0")/.."
 # Build flags from the environment could weaken or skip checks. Start from a clean slate.
 unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
 echo "NOTE  unset RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, RUSTC_WRAPPER, RUSTC_WORKSPACE_WRAPPER"
+# SODIUM_* variables make libsodium-sys-stable link a system libsodium or use another
+# source archive instead of the vendored, signature-checked one pinned by oracle/Cargo.lock.
+sodium_vars="$(env | sed -n 's/^\(SODIUM_[A-Za-z0-9_]*\)=.*/\1/p' | sort -u | tr '\n' ' ')"
+# shellcheck disable=SC2086 # word splitting is intended: one name per word
+unset SODIUM_LIB_DIR SODIUM_USE_PKG_CONFIG SODIUM_SHARED SODIUM_DIST_DIR SODIUM_DISABLE_PIE $sodium_vars
+echo "NOTE  unset SODIUM_LIB_DIR, SODIUM_USE_PKG_CONFIG, SODIUM_SHARED, SODIUM_DIST_DIR, SODIUM_DISABLE_PIE and any other SODIUM_* variables"
 
 # Only a clean tree counts, so a pass always describes the commit that gets pushed.
 if [ -n "$(git status --porcelain)" ]; then
@@ -62,9 +68,10 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
     # On Windows libsodium-sys-stable downloads a prebuilt zip over HTTP.
     echo "SKIP oracle (Windows shell: libsodium-sys-stable would download a prebuilt library)"
+    echo "ALL GATES PASSED (oracle skipped)"
     ;;
   *)
     gate oracle oracle_gate
+    echo "ALL GATES PASSED"
     ;;
 esac
-echo "ALL GATES PASSED"
