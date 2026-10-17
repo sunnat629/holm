@@ -59,9 +59,8 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement by using GitHub
-private vulnerability reporting on this repository, or by contacting the
-repository owner through their GitHub profile. All complaints will be reviewed
+reported to the community leaders responsible for enforcement by emailing
+me@sunnat629.dev. All complaints will be reviewed
 and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

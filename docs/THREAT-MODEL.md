@@ -17,11 +17,11 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Attacker | In scope? | What Holm does |
 |---|---|---|
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
-| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The parser is fuzzed. |
+| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. Planned: fuzz the parser. |
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on sleep and screen lock, password re-entry for recovery phrases and settings changes. |
 | Clipboard snooping and clipboard history | Partly | Auto-clear, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
-| Malicious or fake Holm build, poisoned dependency | Yes, via process | Signed releases, reproducible builds, dependency audit gates. |
+| Malicious or fake Holm build, poisoned dependency | Yes, via process | Planned: signed releases, reproducible builds, dependency audit gates. |
 | Malware running as the same user while unlocked | No | Cannot be defended against. Documented plainly. |
 | Rollback (swapping in an older copy of the file) | No | Documented. Needs outside state Holm does not have. |
 
