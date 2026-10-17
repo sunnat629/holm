@@ -234,6 +234,10 @@ mod tests {
             SecretKey::from_slice(&[0u8; 33]).unwrap_err(),
             CryptoError::InvalidKeyLength
         );
+        assert_eq!(
+            SecretKey::from_slice(&[]).unwrap_err(),
+            CryptoError::InvalidKeyLength
+        );
     }
     static_assertions::assert_not_impl_any!(SecretKey: Clone, Copy);
     static_assertions::assert_not_impl_any!(SecretBuf: Clone, Copy);
