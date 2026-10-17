@@ -1,7 +1,6 @@
 # Holm v1 desktop design: notes
 
-Artifact: https://claude.ai/artifact/PuwbLxe2FjZQWu2D8wLTFh ("Holm Desktop Design", private)
-Source file: holm-ui-final.html (same folder). The earlier mock (X5btgaNhcGGeMqak2ATgd7) was not changed.
+Source file: `ui-final.html` (same folder). The earlier mock, `ui-mock.html`, was not changed.
 Binding spec: holm/docs/superpowers/specs/2026-10-17-holm-v1-design.md (§7–§11). All data in the design is fake (example.com, "EXAMPLE-not-real" passwords, a made-up phrase).
 
 ## 1. UX audit of the first mock (prioritised)
@@ -41,7 +40,7 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 |---|---|---|---|
 | bg | panel_fill (centred screens) | #F4F6F8 | #14171B |
 | surface | window_fill, CentralPanel | #FFFFFF | #1B1F24 |
-| side | SidePanel/status Frame fill, faint_bg_color | #E9EDF1 | #202429 |
+| side | Panel (side and status) Frame fill, faint_bg_color | #E9EDF1 | #202429 |
 | field | extreme_bg_color | #FFFFFF | #111418 |
 | btn / btn-hover | widgets.inactive / hovered weak_bg_fill | #E2E7ED / #D5DCE4 | #2A3038 / #343B45 |
 | fg | override_text_color | #18212C | #E7EAEE |
@@ -57,7 +56,7 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 | warn-bg / warn / warn-line | warn_fg_color = warn | #FFF3D9 / #8A5100 / #B97A12 | #32260E / #F0B44C / #B58222 |
 | ok-bg / ok | custom | #E5F3EA / #1C6B3A | #15301F / #72D29B |
 
-**Type.** Atkinson Hyperlegible Next for the UI and Atkinson Hyperlegible Mono for secrets, both OFL and subset to Latin. egui's default fonts stay as the fallback.
+**Type.** Atkinson Hyperlegible Next for the UI and Atkinson Hyperlegible Mono for secrets, both OFL-1.1 and subset to Latin. They are the only fonts: egui's `default_fonts` feature is off (it pulls in OFL-1.1 and Ubuntu-font-1.0 files that `deny.toml` does not allow), and `deny.toml` gets OFL-1.1 when the GUI crate lands.
 
 | Style | Size and weight | Used for |
 |---|---|---|
@@ -116,7 +115,7 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 **SecretField / SecretTextArea** (custom)
 - Looks like a TextEdit: 30 px tall, line-strong border, mono mask.
 - No undo history, and only the mask glyphs are laid out.
-- Uses a pre-allocated buffer that is wiped on drop and on lock. No IME preedit cache.
+- Uses a pre-allocated buffer that is wiped on drop and on lock. Holm keeps no preedit text of its own (the IME is still processed by the OS and egui).
 - The eye toggle hides itself again after 30 s.
 - AccessKit role PasswordInput, with no value.
 
@@ -144,14 +143,14 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 - Esc means Cancel, except while working.
 - Clicking the backdrop does nothing.
 
-**Status bar** (stock TopBottomPanel::bottom)
+**Status bar** (stock Panel::bottom)
 - 28 px tall.
 - Left: lock state and auto-lock countdown. In the last 30 s it turns amber, and adds "Unsaved changes will be discarded" when you're editing.
 - Middle: the clipboard countdown with Clear now, shown only while Holm's copy is pending.
 - Right: save state (Saved, Unsaved changes, Saving…, Not saved) and the file name.
 - It repaints once a second with request_repaint_after, only while a countdown is visible.
 
-**Chip** (stock SelectableLabel)
+**Chip** (stock Button::selectable)
 - A 24 px pill.
 - Selected means accent-weak fill, accent border, a check icon and SemiBold.
 
@@ -226,7 +225,7 @@ Modifiers::COMMAND maps to ⌘ on macOS and Ctrl elsewhere.
 
 Also check whether egui::Modal traps Tab focus, and add a wrap if it doesn't. Everything else is stock egui, with rfd for file dialogs.
 
-## 8. Security calls settled per the spec
+## 8. Security calls (see the "Security decision" lines in the spec)
 
 - **Reveal timeouts:** passwords 30 s, phrases 60 s. Note bodies stay shown until you leave the item. Everything hides on blur and on lock.
 - **Copying:** shown secrets can't be selected, so copying goes only through Copy and auto-clear always applies.
@@ -244,8 +243,8 @@ Also check whether egui::Modal traps Tab focus, and add a wrap if it doesn't. Ev
 - **CSV export:** excludes Trash.
 - **Open another vault:** locks the current one first.
 
-## 9. Owner questions
+## 9. Owner answers
 
-1. Bundle the Atkinson Hyperlegible fonts (about 150 KB) or ship with egui's default fonts?
-2. Should imported items keep their source categories (unmatched ones go to Uncategorised, as now), or all go into one "Imported" category for review?
-3. Keep the "I understand Holm can't recover my vault" checkbox on first run, or rely on the copy alone?
+1. Fonts: bundle Atkinson Hyperlegible (about 150 KB, OFL-1.1). It is the only font.
+2. Imports: items keep their source categories. Unmatched ones go to Uncategorised.
+3. First run: keep the "I understand Holm can't recover my vault" checkbox.

@@ -113,7 +113,7 @@ In Kotlin you'd write: `when (err) { is FormatError.TooLarge, is FormatError.Too
 pub enum FormatError {
     #[error("unsupported vault format version {0}")]
     UnsupportedVersion(u16),
-    #[error("this vault's key-derivation settings are outside Holm's policy: {0}")]
+    #[error("key-derivation costs refused: {0}")]
     KdfPolicy(KdfParamsError),
     // ...
 }

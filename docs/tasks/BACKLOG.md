@@ -30,3 +30,7 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 - `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.
 - Remove the oracle-only `cargo audit` ignores (RUSTSEC-2026-0367, -0368, -0369, zip 8.6.0). Trigger: `libsodium-sys-stable` moves to zip 9.
 - Replace the 12 remaining `cargo vet` exemptions (libc, syn 2 and 3 first). Closes in Phase 2 review.
+- Lesson 01 (`docs/learn/01-dependencies-and-supply-chain.md`): fix done in the GUI-guide round (features are used; there are 9 audit sources, not 3). Trigger: re-read when the lessons are next reviewed.
+- Lesson 06 line ~116 misquoted the `FormatError::KdfPolicy` message; corrected in the GUI-guide round. Trigger: recheck whenever the error text changes.
+- Enable `blake2` and `zeroize` with a direct dependency early in Phase 2. Trigger: start of Phase 2.
+- Optional: a separate `deny.toml` for `fuzz/` and `oracle/`. Trigger: if their dependency graphs drift from the product's.

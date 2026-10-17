@@ -1,8 +1,4 @@
 <title>Holm Desktop Design</title>
-<meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Atkinson+Hyperlegible+Next:wght@400;600;700&display=swap">
 <style>
 /* Layout: a plain doc header with four views. "Screens" = switcher rail + one desktop window (tuned egui 3-pane shell) + build notes under it.
    Type: Atkinson Hyperlegible Next for UI, Atkinson Hyperlegible Mono for secrets (0/O, 1/l/I stay distinct). One calm steel-blue accent; semantic colours are separate. */
@@ -371,7 +367,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 
   <div class="blk">
     <h3>Type</h3>
-    <p>Bundle two OFL fonts, Atkinson Hyperlegible Next for UI and Atkinson Hyperlegible Mono for secrets, with egui's default fonts as fallback. The Braille Institute drew them so that 0/O and 1/l/I are distinct, which matters when someone types a password from the screen. Each is about 60 to 90 KB after subsetting to Latin. egui has no line-height setting, so the row height comes from <code>interact_size.y</code>.</p>
+    <p>Bundle two OFL fonts, Atkinson Hyperlegible Next for UI and Atkinson Hyperlegible Mono for secrets, and no other font (egui's <code>default_fonts</code> feature is off). The Braille Institute drew them so that 0/O and 1/l/I are distinct, which matters when someone types a password from the screen. Each is about 60 to 90 KB after subsetting to Latin. egui has no line-height setting, so the row height comes from <code>interact_size.y</code>.</p>
     <div class="tw"><table>
       <thead><tr><th>egui TextStyle</th><th>Size</th><th>Weight</th><th>Use</th><th>Sample</th></tr></thead>
       <tbody>
@@ -486,7 +482,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
         </div>
         <div class="txt"><h3>Password field <span class="cw">Custom</span> <code>SecretField</code></h3>
           <ul><li>Looks like a <code>TextEdit</code>: 30 px, <code>line-strong</code> border, <code>field</code> fill, Monospace mask.</li>
-          <li>No undo history, lays out mask glyphs only, pre-allocated buffer wiped on drop and on lock, no IME preedit cache (spec §10).</li>
+          <li>No undo history, lays out mask glyphs only, pre-allocated buffer wiped on drop and on lock, Holm keeps no preedit text of its own (spec §10).</li>
           <li>Eye button: toggles, gets the amber frame when shown, auto-hides after 30 s. AccessKit role PasswordInput, no value.</li>
           <li>Enter submits the form it's in, unless the form is destructive. Esc clears an unsaved entry on the unlock screen.</li>
           <li>The strength meter under it is a 4-segment <code>Painter</code> bar plus a word label. <span class="cw">Custom</span> <code>StrengthMeter</code></li></ul></div>
@@ -544,7 +540,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
             <span class="seg2 dngt"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M12 8v5M12 16v.01"/></svg>Not saved</span>
           </div>
         </div>
-        <div class="txt"><h3>Status bar (stock <code>TopBottomPanel::bottom</code>)</h3>
+        <div class="txt"><h3>Status bar (stock <code>Panel::bottom</code>)</h3>
           <ul><li>28 px, Small text, tabular digits, <code>side</code> fill. Left: lock state and auto-lock. Middle: clipboard (only while Holm's copy is pending). Right: save state and file name (full path on hover).</li>
           <li>Repaint once a second with <code>request_repaint_after</code>, and only while a countdown is visible.</li>
           <li>Last 30 s before lock: amber text plus clock icon, plus "Unsaved changes will be discarded" when editing.</li>
@@ -554,7 +550,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
         <div class="live">
           <div class="chips"><button class="chip" aria-pressed="true"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>All</button><button class="chip" aria-pressed="false">Personal</button><button class="chip" aria-pressed="false">Work</button><button class="chip" aria-pressed="false">Community</button></div>
         </div>
-        <div class="txt"><h3>Category chip (stock <code>SelectableLabel</code>, styled)</h3>
+        <div class="txt"><h3>Category chip (stock <code>Button::selectable</code>, styled)</h3>
           <ul><li>24 px pill. When selected: <code>accent-weak</code> fill, accent border, check icon and SemiBold (three cues, not colour alone).</li>
           <li>Single select. Arrow keys move between chips; Space selects.</li></ul></div>
       </div>
@@ -594,7 +590,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
         <li><b>ItemRow</b>: two-line selectable row with type tile and star, own AccessKit node.</li>
         <li><b>StrengthMeter</b>: 4-segment painter bar plus label (small).</li>
       </ol>
-      <p class="hint">Everything else is stock: SidePanel, CentralPanel, TopBottomPanel, ScrollArea, Button, SelectableLabel, ComboBox, Checkbox, RadioButton, Slider, DragValue, TextEdit (non-secret fields only), Frame, Modal, Spinner. Native file dialogs through <code>rfd</code>.</p>
+      <p class="hint">Everything else is stock: Panel, CentralPanel, ScrollArea, Button (with <code>selectable</code>), ComboBox, Checkbox, RadioButton, Slider, DragValue, TextEdit (non-secret fields only), Frame, Modal, Spinner. Native file dialogs through <code>rfd</code>.</p>
     </div>
     <div class="card"><h3>Keyboard map</h3>
       <div class="tw" style="border:0"><table><tbody>
@@ -614,7 +610,7 @@ td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
     </div>
   </div>
 
-  <div class="card dec"><h3>Security calls settled here (per spec)</h3>
+  <div class="card dec"><h3>Security calls (see the "Security decision" lines in the spec)</h3>
     <ul>
       <li><b>Reveal timeouts:</b> passwords 30 s, recovery phrases 60 s. Secure-note bodies stay shown until you leave the item, the window loses focus, or Holm locks. All of them hide on window blur.</li>
       <li><b>Shown secrets are not selectable</b>; copying goes only through Copy, so auto-clear and the clipboard-history hints always apply.</li>
@@ -1060,7 +1056,7 @@ function settingsBody(){
   <div><h3>Vault file</h3><div class="path">${ic("folder")}<code>${esc(PATH)}</code></div>
    <div class="bwrap" style="margin-top:8px">${btn(ic("download")+"Save a backup copy…","backup")}${btn(ic("key")+"Change master password…","go-chpw")}${btn(ic("upload")+"Import…","go-import")}${btn(ic("download")+"Export plaintext CSV…","go-export")}${btn(ic("tag")+"Categories…","go-cats")}${btn(ic("folder")+"Open another vault file…","go-openfile")}</div></div>
   <div><h3>What Holm can and can't protect on this computer</h3><ul class="hint" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
-   <li>Screen capture: Windows blocks it. macOS asks capture tools to skip this window, but newer tools may ignore that. Linux has no way to block it.</li>
+   <li>Screen capture: Windows and macOS ask capture tools to leave this window out; most do, but some do not. Linux has no way to ask.</li>
    <li>Memory: only the keys are kept out of swap. Shown or copied secrets can reach swap or hibernation files. Use FileVault, BitLocker or LUKS.</li>
    <li>Clipboard: copies are marked so clipboard history tools skip them, if those tools respect the mark.</li>
    <li>Holm never connects to the internet.</li></ul></div></div>`;
@@ -1157,8 +1153,8 @@ function unlockBody(){
   manual:ban("info","Locked.",""),
   discarded:ban("warn","Locked after 5 minutes without activity.","Your unsaved edits to “Example Mail” were discarded. The saved version is safe."),
   throttled:ban("warn","Too many wrong tries.",`Try again in <span data-t="thr">${A.thr}</span> s. The wait doubles after each wrong try, up to 60 s.`),
-  costhigh:ban("warn","This vault file asks for more memory or time than Holm allows.","Holm didn't try your password. The file asks for 4 GiB of memory and 24 passes; Holm allows up to 1 GiB and 16 passes. If a newer Holm on a bigger computer made this file, open it there. If not, the file may have been changed.",btn(ic("folder")+"Open another vault file…","go-openpick")),
-  costlow:ban("dng","This vault file's protection is below Holm's minimum.","Holm didn't try your password. The file asks for 8 MiB of memory; Holm needs at least 64 MiB. Holm never writes a file like this, so it may have been changed. Use a backup copy.",btn(ic("folder")+"Open a backup…","go-openpick")),
+  costhigh:ban("warn","This vault's key-derivation settings are outside Holm's policy.","Holm didn't try your password. The file asks for 4 GiB of memory and 24 passes; Holm allows up to 1 GiB and 16 passes. If a newer Holm on a bigger computer made this file, open it there. If not, the file may have been changed.",btn(ic("folder")+"Open another vault file…","go-openpick")),
+  costlow:ban("dng","This vault's key-derivation settings are outside Holm's policy.","Holm didn't try your password. The file asks for 8 MiB of memory; Holm needs at least 64 MiB. Holm never writes a file like this, so it may have been changed. Use a backup copy.",btn(ic("folder")+"Open a backup…","go-openpick")),
   nomem:ban("warn","Not enough free memory to unlock.","This vault needs 256 MiB for a moment. Close some apps and try again. Your password wasn't checked.",btn("Try again","noop")),
   inuse:ban("warn","This vault is open in another Holm window.","Only one Holm can use a vault file at a time, so saves can't overwrite each other. Switch to the other window, or quit it and try again.",btn("Try again","noop")+btn(ic("folder")+"Open another vault file…","go-openpick")),
   notvault:ban("dng","This file isn't a Holm vault.","notes.txt doesn't start with a Holm header. Choose a .vault file.",btn(ic("folder")+"Choose another file…","go-openpick")),
@@ -1177,14 +1173,14 @@ function unlockBody(){
  return h;
 }
 function openpickBody(){
- return `<div class="ctr">${brandBig}<h2>Open a vault file</h2>${ban("info","holm.vault is locked.","Only one vault is open at a time.")}${btn(ic("folder")+"Choose file…","noop","pri wide")}<span class="hint">Opens your system's file dialog. Holm remembers the last vault you opened, and nothing else.</span>${btn(ic("back")+"Back to unlock","go-unlock","gh")}</div>`;
+ return `<div class="ctr">${brandBig}<h2>Open a vault file</h2>${ban("info","holm.vault is locked.","Only one vault is open at a time.")}${btn(ic("folder")+"Choose file…","noop","pri wide")}<span class="hint">Opens your system's file dialog. Holm remembers the last vault you opened, plus window size and theme, and nothing else.</span>${btn(ic("back")+"Back to unlock","go-unlock","gh")}</div>`;
 }
 function errorsTable(){
  const R=[
   ["Unlock","Wrong password or tampered file","That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.","Retry; throttle notice after 1st failure"],
   ["Unlock","3+ failures","Too many wrong tries. Try again in 8 s. The wait doubles after each wrong try, up to 60 s.","Countdown on button; field stays editable"],
-  ["Unlock","KDF cost above ceiling","This vault file asks for more memory or time than Holm allows. Holm didn't try your password.","Open another file. No password field"],
-  ["Unlock","KDF cost below floor","This vault file's protection is below Holm's minimum. Holm didn't try your password.","Open a backup"],
+  ["Unlock","KDF cost above ceiling","This vault's key-derivation settings are outside Holm's policy. Holm didn't try your password.","Open another file. No password field"],
+  ["Unlock","KDF cost below floor","This vault's key-derivation settings are outside Holm's policy. Holm didn't try your password.","Open a backup"],
   ["Unlock","Allocation failed","Not enough free memory to unlock. Your password wasn't checked.","Try again"],
   ["Unlock","Lock file held","This vault is open in another Holm window.","Try again; open another"],
   ["Unlock","Bad magic","This file isn't a Holm vault.","Choose another file"],
@@ -1499,7 +1495,7 @@ var BN={
  created:[["egui build",["Same centred column. Success `Frame` banner, three full-width actions."]],["Behaviour",["Backup is offered on day one: losing the only copy is the bigger risk (spec §9).","\"Go to my vault\" opens the empty vault state."]]],
  unlock:[["egui build",["Centred column. {SecretField} gets focus on show (`request_focus`). Unlock runs on a worker thread; the session handle is the only route to the core.","Throttle countdown: `request_repaint_after(1 s)` only while the wait runs.","Cost, memory, lock-file, format and missing-file errors come from distinct core error variants; wrong password and tampered file are one variant."]],["Behaviour",["Demo: any password unlocks; a password containing \"wrong\" fails. Three failures start the wait.","Wait: 2, 4, 8 … up to 60 s, kept in memory only. The field stays editable while the button counts down.","Cost errors hide the password field: Holm didn't try it, so asking again would mislead.","Esc clears the field. The window title stays \"Holm\"."]]],
  openfile:[["egui build",["Confirm uses `egui::Modal`. File choice via `rfd`; the lock happens before the dialog opens."]],["Behaviour",["One vault at a time (spec §8.0). No vault list or switcher in v1.","After choosing, the unlock screen shows the new path; the UI config stores only that path."]]],
- items:[["egui build",["`SidePanel::left` (184 px), `SidePanel::left` list (296 px, resizable 260–400), `CentralPanel` detail, `TopBottomPanel::bottom` status bar.","Rows are {ItemRow}. Detail secrets use {SecretDisplay}; other fields are `Label`s.","Search is a plain `TextEdit` (not secret). Chips are `SelectableLabel`s, sort is a `ComboBox`."]],["Behaviour",["No copy on rows (fixed decision). Copy lives next to each detail field.","Show: amber frame, \"Visible · hides in N s\", 12-dot mask when hidden. Hides on timeout, item change, lock or window blur.","Copy starts the status-bar countdown; Clear now clears only if Holm's value is still on the clipboard.","Move to Trash is reversible: toast with Undo for 10 s, no modal.","Try it: arrows move through rows, Enter jumps to the detail, Esc hides a shown value, Delete moves to Trash."]]],
+ items:[["egui build",["`Panel::left` (184 px), `Panel::left` list (296 px, resizable 260–400), `CentralPanel` detail, `Panel::bottom` status bar.","Rows are {ItemRow}. Detail secrets use {SecretDisplay}; other fields are `Label`s.","Search is a plain `TextEdit` (not secret). Chips are `Button::selectable`s, sort is a `ComboBox`."]],["Behaviour",["No copy on rows (fixed decision). Copy lives next to each detail field.","Show: amber frame, \"Visible · hides in N s\", 12-dot mask when hidden. Hides on timeout, item change, lock or window blur.","Copy starts the status-bar countdown; Clear now clears only if Holm's value is still on the clipboard.","Move to Trash is reversible: toast with Undo for 10 s, no modal.","Try it: arrows move through rows, Enter jumps to the detail, Esc hides a shown value, Delete moves to Trash."]]],
  phrase:[["egui build",["Gate uses `egui::Modal` with a {SecretField}. The grid is {SecretDisplay} in PhraseGrid mode (3 × 4, 2 × 6 when narrow).","The phrase countdown repaints once a second only while shown."]],["Behaviour",["The master password is asked every time. The same throttle as unlock applies (spec §11).","Shown for 60 s, then hidden. Hide now is the focused button. Leaving the item, locking or window blur hides it.","Copy phrase exists only while shown, clears like any copy, and warns about clipboard managers.","Demo: any password shows it; \"wrong\" fails."]]],
  edit:[["egui build",["Edit form replaces the detail pane; list and sidebar stay. Secrets use {SecretField} or {SecretTextArea}.","Save runs the atomic write on a worker thread; the form disables during it.","The discard guard is an `egui::Modal` with Keep editing focused."]],["Behaviour",["Type is fixed after creation, so fields can't silently drop.","Save failure keeps every field, says the file on disk is unchanged, and offers Save a copy elsewhere.","Auto-lock discards unsaved edits (security first). The status bar warns 30 s ahead.","Shortcuts: save, Esc to cancel (asks first if there are changes)."]]],
  trash:[["egui build",["Tool layout: sidebar plus a `CentralPanel` list. Confirms use `egui::Modal`."]],["Behaviour",["Delete forever and Empty trash need a confirm. Cancel is focused; Enter never confirms.","Copy is honest: old copies and backups of the file still hold deleted items.","Trash is excluded from CSV export."]]],

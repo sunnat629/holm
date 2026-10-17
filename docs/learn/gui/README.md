@@ -89,7 +89,7 @@ impl eframe::App for HolmApp {
 ```
 
 - `ui` is required. It is called every frame with a root `Ui` that covers the window.
-- `logic(&mut self, ctx, frame)` is optional. It runs before `ui` and is for work that is not drawing (timers, polling channels). Holm may use it for the auto-lock check.
+- `logic(&mut self, ctx, frame)` is optional. It runs before `ui` and is for work that is not drawing (timers, polling channels). Holm uses it for the auto-lock check, because while the window is minimised or covered eframe calls `logic` but skips `ui`.
 - Treat it like a trait in Kotlin: an `interface` that your class promises to implement. (Rust Book chapter 10.2 below.)
 
 ### Names that moved
@@ -194,12 +194,12 @@ From the mock and the screen map, the plan is roughly:
 | Open or create file | `Screen::Start` |
 | Create vault | `Screen::Create { .. }` |
 | Unlock plus errors, working state | `Screen::Unlock { error }`, `Screen::Working { .. }` |
-| Locked | `Screen::Locked` (all data dropped) |
+| Locked | no variant of its own: lock assigns `Screen::Unlock { .. }` (or `Start`), which drops the vault data; a separate locked view is optional |
 | Vault list and detail, Add/edit, Trash | `Screen::Vault(VaultView)` with a sub-state for the open item |
 | Generator, Settings, Import, Export | modals or sub-views over the vault |
 | Error state | an `error: Option<..>` field, drawn inline |
 
-The vault data (the decrypted items) lives **inside** the `Vault` variant. When you assign `self.screen = Screen::Locked`, the old value is dropped and its `Drop` code runs. That is how "lock" wipes memory: leaving the variant frees and zeroizes what it held. (This is why secrets must implement `Drop`, lesson 02.)
+The vault data (the decrypted items) lives **inside** the `Vault` variant. When you lock by assigning `self.screen = Screen::Unlock { .. }`, the old value is dropped and its `Drop` code runs. That is how "lock" wipes memory: leaving the variant frees what it held, and zeroizes it **if** the type has a zeroizing `Drop`. (This is why secrets must implement `Drop`, lesson 02.) That covers only our own secret types. It does not cover egui text layouts or the font atlas, the allocator's freed blocks, or swap and hibernation files. Never claim memory is fully wiped.
 
 ### Messages and events
 
@@ -224,15 +224,12 @@ This is the part that matters most. A normal egui app is happy to keep text in a
 
 ### 4.1 Why `egui::TextEdit` is not for secrets
 
-`TextEdit::singleline(&mut string).password(true)` looks right. It is not enough:
+`TextEdit::singleline(&mut string).password(true)` looks right, and in 0.37 it already does a lot: it masks the text layout, publishes masked values to AccessKit and blocks copy and cut. It is still not enough:
 
-- **It needs a `String`.** A `String` that grows reallocates. The old block of memory is freed **without being wiped**, so copies of the password stay in RAM.
-- **Undo history.** `TextEdit` keeps an undo stack of earlier text. That is more copies of the secret.
-- **Text layout.** It builds a text layout (a galley) of the content, even when masked. More copies, in places we do not control.
-- **Accessibility.** With the default `accesskit` feature on, widgets publish their value to the operating system's accessibility tree. We must make sure a password is never published.
-- **Selection and clipboard.** Copy and cut shortcuts on the field could put the secret on the clipboard.
-
-(You can read `widgets/text_edit/builder.rs` in the egui source to confirm each of these.)
+- **It needs a `String`.** A `String` that grows reallocates. The old block of memory is freed **without being wiped**, so stale copies of the password stay in RAM.
+- **Undo history.** `TextEdit` keeps an undoer that stores earlier text in plaintext. More copies of the secret.
+- **Accessibility actions.** AccessKit `SetValue` and `ReplaceSelectedText` requests from assistive tools can reach the field and write into or replace its content.
+- **IME.** Input-method events are processed by the field, so the OS text services see the content as it is typed.
 
 ### 4.2 What a custom password widget must do
 
@@ -243,7 +240,7 @@ The tutorial builds a small version. A real one must:
 3. **Wipe on drop and on clear**, using the `zeroize` crate (`bytes.zeroize()`). A plain `clear()` does not overwrite the memory.
 4. **Read raw key events** (`egui::Event::Text`, Backspace, Enter) from `ui.input(..)` only while the widget has focus. No undo, no redo, no selection.
 5. **Paint dots only.** Draw one circle per character with the painter. Never create a text layout from the secret.
-6. **Publish no value** to AccessKit. Do not set a text value on the widget. Expose only "password field, N characters" if at all.
+6. **Publish no value** to AccessKit, but give the widget a role and a label (`response.widget_info(..)` with `WidgetInfo::labeled(.., "Master password")`) so screen-reader users can find it. Do not expose the length: the design shows 12 dots and the length never leaks.
 7. **Ignore copy and cut** shortcuts for this widget.
 8. **Implement `Debug` by hand** so it prints `SecretBuf(<N chars hidden>)`. Never `#[derive(Debug)]` on anything that holds a secret. This also covers `{:?}` in logs and panic messages.
 9. Cap the length. It is also a denial-of-service guard.
@@ -267,18 +264,19 @@ eframe can save window size, positions and your app state to disk (the `persiste
 
 - Copy with `ctx.copy_text(string)`. That passes through eframe's clipboard support.
 - A secret copied there is visible to **every** program that reads the clipboard, and to clipboard history tools. Mitigations:
-  - **Platform hints** tell clipboard managers to skip the item: Windows `ExcludeClipboardContentFromMonitorProcessing` and `CanIncludeInClipboardHistory = 0`, macOS `org.nspasteboard.ConcealedType`, Linux Wayland/X11 managers vary. These are best effort and are `holm-platform` work. egui's own `copy_text` cannot set them, so Holm will write to the clipboard itself for secrets.
-  - **Auto-clear after 30 s**, but **only if the clipboard still holds what we put there**. Otherwise we would wipe something the user copied later. To check, remember a hash of what we copied (not the secret) and compare before clearing.
+  - **Platform hints** tell clipboard managers to skip the item: Windows `ExcludeClipboardContentFromMonitorProcessing` and `CanIncludeInClipboardHistory = 0`, macOS `org.nspasteboard.ConcealedType`, Linux `x-kde-passwordManagerHint: secret` (honoured by KDE Klipper and some others; other managers vary). These are best effort and are `holm-platform` work. egui's own `copy_text` cannot set them, so Holm will write to the clipboard itself for secrets.
+  - **Auto-clear after 30 s**, but **only if the clipboard still holds what we put there**. Otherwise we would wipe something the user copied later. To check, use the OS change counter (macOS `NSPasteboard.changeCount`, Windows `GetClipboardSequenceNumber`) and clear only if it is unchanged since our write. Where there is no counter, compare a keyed hash (a MAC with a random per-run key) of the contents, never a plain hash of the secret.
   - Clear on lock and on quit.
 - The countdown needs `request_repaint_after` so the timer runs even if the user is idle (section 1).
 
 ### 4.5 Auto-lock, minimise, sleep
 
-- **Idle timer**: remember `last_activity: Instant`, update it whenever input arrives, and lock when `elapsed() >= 5 min`. The tutorial does this with 20 seconds so you can watch it.
-- **Minimise**: `ui.input(|i| i.viewport().minimized)` is `Option<bool>`. Lock when it is `Some(true)`. The same `viewport()` info has `focused` and `occluded`.
+- **Where the check lives**: put it in `App::logic`, not in `App::ui`. While the window is minimised or fully covered, eframe calls only `logic` and skips `ui` (`ViewportInfo::visible()` is `Some(false)` then). Input seen in that state is stale, so do not count it as activity.
+- **Idle timer**: remember `last_activity: Instant`. Check `elapsed() >= 5 min` **first**, and only then record this frame's input as activity. The other order lets the first key press after a long sleep reset the timer. The tutorial uses 20 seconds so you can watch it. Count user input only, not repaints or timers.
+- **Minimise**: `ctx.input(|i| i.viewport().minimized)` is `Option<bool>`. Lock when it is `Some(true)`. The same `viewport()` info has `focused` and `occluded`.
 - **Sleep, screen lock, logout**: egui does not give you these. They are OS events and belong to `holm-platform` (macOS notifications, Windows `WM_POWERBROADCAST` and session change, Linux logind signals). The platform crate sends a message over a channel, and the app locks on it. Remember to call `request_repaint()` from that thread.
 - **Quit**: wipe in `Drop` and on a `ViewportCommand::Close` path. A hard kill cannot run code. That is a known limit.
-- **Lock means drop**: assign `self.screen = Screen::Locked` so the vault data is dropped (section 3), and clear any password buffer and the clipboard.
+- **Lock means drop**: assign `self.screen = Screen::Unlock { .. }` so the vault data is dropped (section 3), and clear any password buffer and the clipboard.
 
 ### 4.6 No secrets in `Debug` or logs
 
@@ -291,7 +289,7 @@ eframe can save window size, positions and your app state to disk (the `persiste
 
 Goal: other programs and screen recorders should not capture the Holm window.
 
-- `egui::ViewportCommand::ContentProtected(bool)` exists in 0.37. It asks winit to mark the window as protected. winit documents it as supported on Windows and macOS. Whether it covers every capture tool is **unverified**. Do not promise it to users.
+- `egui::ViewportCommand::ContentProtected(bool)` exists in 0.37. It asks winit to mark the window as protected. winit 0.30.13 implements `ContentProtected` on Windows and macOS. Holm should set `ViewportBuilder::with_content_protected(true)` from the first frame, as best effort. Whether it covers every capture tool is **unverified**. Do not promise it to users.
 - Windows has `SetWindowDisplayAffinity` with `WDA_EXCLUDEFROMCAPTURE`. macOS has `NSWindow.sharingType = .none` (and macOS 15 and later screen capture can bypass it in some cases, **unverified**). Wayland has no general mechanism. X11 has none.
 - Why `holm-platform`: these calls need `unsafe` (FFI to OS libraries). The project rule is `forbid(unsafe_code)` everywhere except one crate. Putting all of them in `holm-platform` keeps the dangerous code small and auditable. The GUI crate calls a safe function such as `holm_platform::protect_window(&window_handle)` and nothing else.
 - Tell the user honestly: this is a speed bump, not a wall.
@@ -351,7 +349,7 @@ Notes:
 
 ### Snapshot tests
 
-With the `snapshot` feature, `harness.snapshot("name")` renders the UI to an image and compares it to a stored PNG (it fails when pixels differ beyond a threshold). The first run creates the file. In 0.37 the snapshot API (`snapshot`, `try_snapshot`, `SnapshotOptions`) exists. I did **not** run a snapshot in the throwaway crate, so the exact setup (GPU renderer feature `wgpu`, platform thresholds) is **unverified**. Check the egui_kittest README first.
+With the `snapshot` feature, `harness.snapshot("name")` renders the UI to an image and compares it to a stored PNG (it fails when pixels differ beyond a threshold). The first run creates the file. In 0.37 the snapshot API (`snapshot`, `try_snapshot`, `SnapshotOptions`) exists. I did **not** run a snapshot in the throwaway crate, so the exact setup (platform thresholds) is **unverified**. Note that `snapshot` without the `wgpu` feature has no renderer, so it cannot render images: either add the `wgpu` feature to the dev-dependency or do not use snapshots. Check the egui_kittest README first.
 
 Two cautions from the Holm spec:
 
@@ -368,7 +366,7 @@ Rendering tests need a GPU or software renderer and differ a little per OS. Plan
 
 You will build a window with: a custom masked password field, an Unlock button that is disabled until you type, a spinner while a worker thread "checks" the password, an error line, a vault screen with an auto-lock countdown, and a lock on minimise.
 
-Pinned and checked: **eframe 0.37.0, egui 0.37.0, zeroize 1.x, egui_kittest 0.37.0, Rust 1.99.1** (it needs at least 1.95; it did **not** build on 1.93.1). The code below was copied from a crate that ran `cargo check` with no warnings and `cargo test` with 2 tests passing. The "password" is the fake string `correct horse`, so you can try it. I did not run the window by hand (this was done without a display), so look at the real behaviour yourself.
+Pinned and checked: **eframe 0.37.0, egui 0.37.0, zeroize 1.x, egui_kittest 0.37.0, Rust 1.99.1** (it needs at least 1.95; it did **not** build on 1.93.1). The code below was copied from a crate that ran `cargo check` with no warnings and `cargo test` with 2 tests passing. The "password" is the fake string `correct horse`, so you can try it. **I did not test the window behaviour by hand** (this was done without a display): minimise-lock and idle-lock are checked only against the eframe source and by reasoning, not by watching a real window. Try them yourself on your OS before trusting them.
 
 ### Step 0: create the crate
 
@@ -380,7 +378,7 @@ cargo add eframe@=0.37.0 --no-default-features --features default_fonts,glow,way
 cargo add --dev egui_kittest@=0.37.0 --features snapshot
 ```
 
-Why `--no-default-features`: the defaults pull in `wgpu`, `accesskit`, clipboard and more. We pick features on purpose (section 4.3). `glow` is the OpenGL backend. On Windows and macOS you may add nothing else. If the window does not open on your machine, try adding the default `wgpu` feature back.
+Why `--no-default-features`: this is for the throwaway tutorial crate only. Holm itself must keep the eframe `accesskit` and `clipboard` features (accessibility and copy support are required; egui core always builds the accessibility tree anyway). The defaults pull in `wgpu`, `accesskit`, clipboard and more. We pick features on purpose (section 4.3). `glow` is the OpenGL backend. On Windows and macOS you may add nothing else. If the window does not open on your machine, try adding the default `wgpu` feature back.
 
 `Cargo.toml` after that:
 
@@ -433,11 +431,14 @@ impl SecretBuf {
             }
             let mut tmp = [0u8; 4];
             let enc = ch.encode_utf8(&mut tmp);
-            if self.bytes.len() + enc.len() > Self::CAP {
+            let fits = self.bytes.len() + enc.len() <= Self::CAP;
+            if fits {
+                self.bytes.extend_from_slice(enc.as_bytes());
+            }
+            tmp.zeroize(); // wipe on every path, including the full-buffer one
+            if !fits {
                 break;
             }
-            self.bytes.extend_from_slice(enc.as_bytes());
-            tmp.zeroize();
         }
     }
 
@@ -496,6 +497,9 @@ fn password_field(ui: &mut egui::Ui, buf: &mut SecretBuf) -> bool {
     if response.clicked() {
         response.request_focus();
     }
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::Role::PasswordInput, true, "Master password")
+    });
     let focused = response.has_focus();
     let mut submitted = false;
 
@@ -569,6 +573,7 @@ impl HolmApp {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         // Pretend work. Real Holm would send the password to the core here.
+        // Fake check. A real check must compare in constant time (the `subtle` crate).
         let ok = self.password.bytes == b"correct horse";
         self.password.clear();
         std::thread::spawn(move || {
@@ -582,6 +587,39 @@ impl HolmApp {
     fn lock(&mut self) {
         self.password.clear();
         self.screen = Screen::Unlock { error: None };
+    }
+
+    /// Auto-lock and lock-on-minimise. Called from `App::logic`, NOT from `ui`.
+    /// While the window is minimised or hidden, eframe calls `logic` but never `ui`.
+    fn tick(&mut self, ctx: &egui::Context) {
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        let vault_open = matches!(self.screen, Screen::Vault);
+
+        // 1. Minimised: lock now. Input in this state is stale, so it is not activity.
+        if minimized {
+            if vault_open {
+                self.lock();
+            }
+            return;
+        }
+
+        // 2. Idle check FIRST, before recording this frame's input. If the window
+        //    slept for an hour and the first thing we see is a key press, the key
+        //    must not reset the timer before we compare.
+        let idle = self.last_activity.elapsed();
+        if vault_open && idle >= AUTO_LOCK {
+            self.lock();
+        }
+
+        // 3. Only now record activity (user input only).
+        if ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
+            self.last_activity = Instant::now();
+        }
+
+        // 4. Wake up exactly when the lock is due, even with no input.
+        if matches!(self.screen, Screen::Vault) {
+            ctx.request_repaint_after(AUTO_LOCK.saturating_sub(self.last_activity.elapsed()));
+        }
     }
 }
 ```
@@ -598,21 +636,8 @@ impl HolmApp {
     fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // Any input counts as activity.
-        if ui.input(|i| !i.events.is_empty() || i.pointer.is_moving()) {
-            self.last_activity = Instant::now();
-        }
-
-        // Lock on minimise, or after the idle time.
-        let minimized = ui.input(|i| i.viewport().minimized.unwrap_or(false));
+        // Display only. The locking itself happens in `tick`, called from `App::logic`.
         let idle = self.last_activity.elapsed();
-        if matches!(self.screen, Screen::Vault) {
-            if minimized || idle >= AUTO_LOCK {
-                self.lock();
-            } else {
-                ctx.request_repaint_after(AUTO_LOCK - idle);
-            }
-        }
 
         egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
             Screen::Unlock { error } => {
@@ -628,10 +653,8 @@ impl HolmApp {
                     }
                     ui.add_space(8.0);
                     let can_try = !self.password.is_empty();
-                    if (ui.add_enabled(can_try, egui::Button::new("Unlock")).clicked()
-                        || (enter && can_try))
-                        && can_try
-                    {
+                    let clicked = ui.add_enabled(can_try, egui::Button::new("Unlock")).clicked();
+                    if can_try && (clicked || enter) {
                         self.start_unlock(&ctx);
                     }
                 });
@@ -656,7 +679,7 @@ impl HolmApp {
             }
             Screen::Vault => {
                 ui.heading("Vault is open");
-                ui.label(format!("Auto-lock in {} s", (AUTO_LOCK - idle).as_secs()));
+                ui.label(format!("Auto-lock in {} s", AUTO_LOCK.saturating_sub(idle).as_secs()));
                 if ui.button("Lock now").clicked() {
                     self.lock();
                 }
@@ -668,17 +691,23 @@ impl HolmApp {
 
 Things to notice:
 
-- The first block sets `last_activity` on any input. The idle check then compares `elapsed()` with `AUTO_LOCK`.
-- `ctx.request_repaint_after(AUTO_LOCK - idle)` wakes the app exactly when it should lock, even with no input. This is the answer to "no recomposition, so how do timers work".
+- `show` only draws. The locking lives in `tick` (shown under Step 3), which Step 5 calls from `App::logic`. Reason: while a window is minimised or fully covered, eframe stops calling `App::ui` but still calls `App::logic`. A lock check inside `ui` would never run in exactly the case it exists for.
+- In `tick` the idle check comes **before** the activity reset. The other order is a bug: after a long sleep the first key press would reset the timer and the vault would stay open.
+- `ctx.request_repaint_after(..)` in `tick` wakes the app when it should lock, even with no input. This is the answer to "no recomposition, so how do timers work".
 - `match &mut self.screen { .. }` handles every variant. Delete one arm and the compiler complains.
 - In `Working`, `rx.try_recv().ok()` never blocks. If the result is not there yet, we ask for another frame in 100 ms.
-- `i.viewport().minimized` is `Option<bool>`, so `unwrap_or(false)` supplies a default.
+- `viewport().minimized` is `Option<bool>`, so `unwrap_or(false)` supplies a default.
 - The password is checked against a fake string. Replace that line with a call into `holm-core` later.
 
 ### Step 5: wire it to eframe
 
 ```rust
 impl eframe::App for HolmApp {
+    // Runs every frame, including while the window is minimised or hidden.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.tick(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
     }
@@ -695,7 +724,7 @@ fn main() -> eframe::Result {
 }
 ```
 
-Why `show` is separate: the test in step 6 can call `app.show(ui)` without building a real `eframe::Frame`.
+Why `show` is separate: the test in step 6 can call `app.show(ui)` without building a real `eframe::Frame`. Why `tick` is in `logic`: see the notes under Step 4.
 
 Run it with `cargo run`. Type `correct horse` and press Enter. Try a wrong password. Unlock, then leave the mouse alone for 20 seconds, or minimise the window. It should lock.
 
@@ -741,7 +770,7 @@ Run `cargo test`.
 
 1. Add a "Show length" label that says how many characters you typed. Use `char_count()`. Do not show the characters.
 2. Add the throttle: after 3 wrong passwords, disable the button for 2 seconds, then 4, then 8. Keep the failure count in the `Unlock` variant. Use `request_repaint_after` so the button re-enables itself.
-3. Add a `Screen::Locked` variant that shows "Locked" and a button to go back to `Unlock`. Handle it in `match`. What does the compiler tell you before you handle it?
+3. Add a separate `Screen::Locked` view (the design does not need one; this is practice) that shows "Locked" and a button to go back to `Unlock`. Handle it in `match`. What does the compiler tell you before you handle it?
 4. (Harder) Make `start_unlock` move a copy of the bytes into the worker thread and zeroize them there when finished. Think about who owns the bytes at each step.
 
 ---

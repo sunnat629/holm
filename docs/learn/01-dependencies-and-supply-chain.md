@@ -51,7 +51,7 @@ Gradle dependency locking (`gradle.lockfile`).
 
 A crate can have optional parts called features, switched on per dependency with a
 `features = [...]` list. Features add code, and code adds risk, so we turn on only what we
-need. Holm's `Cargo.toml` uses none yet. In Kotlin you'd write: optional modules or Gradle
+need. Holm's `Cargo.toml` already uses them: for example `argon2 = { ..., default-features = false, features = ["alloc", "zeroize"] }` turns the default features off and picks only what we need. In Kotlin you'd write: optional modules or Gradle
 capabilities, but Cargo features compile code in or out. `cargo deny` runs with
 `all-features = true` so it sees the biggest possible dependency tree.
 
@@ -78,7 +78,7 @@ has the same problem. Three tools check different parts of it:
 - **`cargo audit`** compares `Cargo.lock` with the RustSec advisory database of known
   vulnerable or unmaintained crates. It tells you "this version is known bad".
 - **`cargo vet`** asks "has a trusted human actually read this code?". We import audit
-  results published by Mozilla, Google and the Bytecode Alliance. Any crate nobody we trust
+  results published by nine organisations (Mozilla, Google, the Bytecode Alliance and six others; see `[imports.*]` in `supply-chain/config.toml`). Any crate nobody we trust
   has audited needs an exemption in `supply-chain/config.toml`, with a reason, and we
   review that list again in Phase 2.
 
