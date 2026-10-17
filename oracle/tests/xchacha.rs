@@ -2,7 +2,7 @@
 //! pseudo-random inputs.
 
 use holm_crypto::SecretKey;
-use holm_crypto::aead::{NONCE_LEN, open, seal};
+use holm_crypto::aead::{Nonce, open, seal};
 use holm_oracle::{sodium_init, xchacha_encrypt};
 
 /// SplitMix64: a tiny, fixed pseudo-random generator, so every run tests the
@@ -34,7 +34,9 @@ fn libsodium_matches_for_random_inputs() {
 
     for case in 0..100 {
         let key_bytes: [u8; 32] = rng.bytes(32).try_into().expect("32 bytes");
-        let nonce: [u8; NONCE_LEN] = rng.bytes(NONCE_LEN).try_into().expect("24 bytes");
+        // Nonces come from the OS RNG: `Nonce` has no other public constructor.
+        let nonce = Nonce::random().expect("OS RNG");
+        let nonce_bytes = *nonce.as_bytes();
         // Pin both ends of each range, the rest are random.
         let (aad_len, msg_len) = match case {
             0 => (0, 0),
@@ -45,14 +47,14 @@ fn libsodium_matches_for_random_inputs() {
         let msg = rng.bytes(msg_len);
 
         let key = SecretKey::from_slice(&key_bytes).expect("32-byte key");
-        let ours = seal(&key, &nonce, &aad, &msg).expect("seal");
-        let theirs = xchacha_encrypt(&key_bytes, &nonce, &aad, &msg);
+        let ours = seal(&key, nonce, &aad, &msg).expect("seal");
+        let theirs = xchacha_encrypt(&key_bytes, &nonce_bytes, &aad, &msg);
         assert_eq!(
             ours, theirs,
             "case {case}: holm-crypto and libsodium disagree"
         );
 
-        let opened = open(&key, &nonce, &aad, &theirs).expect("open libsodium output");
+        let opened = open(&key, &nonce_bytes, &aad, &theirs).expect("open libsodium output");
         assert_eq!(
             opened.expose(),
             msg.as_slice(),

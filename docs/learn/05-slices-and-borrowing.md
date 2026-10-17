@@ -6,7 +6,7 @@
 *authenticated* cipher (AEAD): the output is the encrypted bytes plus a 16-byte tag, and
 decryption checks the tag first. If anything was changed, decryption fails and returns no
 plaintext at all. `seal` encrypts, `open` decrypts. Tests check it against the official
-Wycheproof vectors and the IETF draft's example (`crates/holm-crypto/tests/`), and against
+Wycheproof vectors and the IETF draft's example (`mod kat` in `aead.rs`), and against
 libsodium on random inputs (`oracle/tests/xchacha.rs`).
 
 ## Rust ideas in this task
@@ -18,7 +18,7 @@ From the signature of `seal`:
 ```rust
 pub fn seal(
     key: &SecretKey,
-    nonce: &[u8; NONCE_LEN],
+    nonce: Nonce,
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError>
@@ -26,8 +26,9 @@ pub fn seal(
 
 Line by line:
 
-- `&[u8; NONCE_LEN]` is a reference to an *array*: exactly `NONCE_LEN` (24) bytes, and the
-  length is part of the type. It lives on the stack or inside another value.
+- `Nonce` wraps an *array*, `[u8; NONCE_LEN]`: exactly 24 bytes, and the length is part of the
+  type. `open` takes the bare form, `&[u8; NONCE_LEN]`, a reference to such an array. Arrays
+  live on the stack or inside another value.
 - `&[u8]` is a *slice*: a reference to some bytes in memory plus a length that is known only
   at run time. It can point into an array, a `Vec`, or part of either.
 - `Vec<u8>` (the return type) is an owned, growable buffer on the heap. `seal` creates new
@@ -43,12 +44,13 @@ until the code runs.
 
 ### Why a fixed-size nonce turns a bug into a compile error
 
-XChaCha20 needs a nonce of exactly 24 bytes. Because `seal` asks for `&[u8; 24]`, the
-compiler rejects any other length. From `tests/xchacha_kat.rs`:
+XChaCha20 needs a nonce of exactly 24 bytes. Because `Nonce` and `open` use `[u8; 24]`, the
+compiler rejects any other length. From `mod kat` in `aead.rs`:
 
 ```rust
 let Ok(nonce) = <[u8; NONCE_LEN]>::try_from(iv.as_slice()) else {
     // Not 24 bytes: the API cannot even be called with it.
+    // (abridged: the real block also checks the case is `invalid` and flagged)
     skipped += 1;
     continue;
 };
@@ -67,6 +69,9 @@ Line by line:
   *skipped* and asserts that every skipped case is one that must fail anyway. The exact
   number is recorded in `crates/holm-crypto/tests/vectors/README.md`.
 
+The test above can pass a fixed nonce only because `Nonce::from_bytes` exists under
+`#[cfg(test)]`: it is compiled out of the real library, so no shipped code can call it.
+
 The cost: a caller holding a `&[u8]` or `Vec<u8>` must convert it once, with `try_from`, and
 handle the length error there. After that, no later code needs to check.
 
@@ -75,6 +80,37 @@ way to put the length in the type of a `ByteArray`.
 
 ([`TryFrom`](https://doc.rust-lang.org/std/convert/trait.TryFrom.html),
 [`let`-`else`](https://doc.rust-lang.org/book/ch06-03-if-let.html#staying-on-the-happy-path-with-letelse))
+
+### Why `seal` takes the nonce by value
+
+Using one nonce for two different messages under the same key breaks the cipher. We make
+that impossible to write:
+
+```rust
+pub struct Nonce([u8; NONCE_LEN]);   // no Clone, no Copy
+
+impl Nonce {
+    pub fn random() -> Result<Self, CryptoError> { /* OS RNG */ }
+    pub fn as_bytes(&self) -> &[u8; NONCE_LEN] { &self.0 }
+}
+```
+
+- The field is private and the only public constructor is `Nonce::random()`, so a caller
+  cannot pick a number such as `[0; 24]` by accident.
+- There is no `Clone` and no `Copy`, so a `Nonce` cannot be duplicated.
+- `seal(key, nonce, ...)` takes `nonce: Nonce` *by value*. Passing it *moves* it into the
+  function, and the caller no longer has it. A second `seal(key, nonce, ...)` with the same
+  variable does not compile: ``error[E0382]: use of moved value: `nonce` ``.
+- To store the nonce in the file, call `nonce.as_bytes()` (a borrow) *before* sealing.
+- `open` takes `&[u8; 24]` because reading a stored nonce back is not reuse.
+
+In Kotlin you'd write: `fun seal(key: SecretKey, nonce: ByteArray, ...)`. Nothing stops
+`seal(key, n, a, m1); seal(key, n, a, m2)`, because the same array can be passed any number of
+times. Kotlin has no move-only values, so you would need a runtime flag inside a `Nonce` class
+and a thrown exception on the second use. In Rust the compiler rejects the program.
+
+([Ownership](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html),
+[Moves](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html#variables-and-data-interacting-with-move))
 
 ### Borrowing (`&`) versus owning
 
@@ -92,7 +128,10 @@ Ok(SecretBuf::from_vec(std::mem::take(&mut *buf)))
 Line by line:
 
 - `key.expose()` returns `&[u8; 32]`, a borrow of the key's bytes. `.into()` turns that
-  reference into the reference type the cipher wants. The key is read in place, never copied.
+  reference into the reference type the cipher wants. Our code makes no extra copy of the key.
+  The cipher struct that `new` builds does hold its own copy, and the crate wipes it when the
+  cipher is dropped. Moves and crate internals can still leave short-lived residue on the
+  stack, which no Rust code at this level can fully rule out.
 - `ciphertext.to_vec()` makes an owned copy of the input, because we are about to change the
   bytes in place and the caller's slice is read-only (`&`, not `&mut`).
 - `Zeroizing::new(...)` wraps that owned copy so its memory is wiped when `buf` goes out of
@@ -161,7 +200,8 @@ outlives its data.
 
 ### All or nothing: no partial plaintext
 
-AEAD means the tag covers the ciphertext and the associated data (`aad`, bytes that are
+AEAD means (see [RFC 8439 section 2.8](https://www.rfc-editor.org/rfc/rfc8439#section-2.8) for the
+construction) the tag covers the ciphertext and the associated data (`aad`, bytes that are
 authenticated but not encrypted, such as the vault header). `open` checks the tag before it
 gives back any plaintext, and it returns `Result<SecretBuf, CryptoError>`:
 
@@ -174,8 +214,10 @@ type cannot express it, and that is deliberate: a program that receives half-che
 plaintext will, sooner or later, use it. In the tests, `flipping_any_ciphertext_byte_fails`
 changes each byte in turn and expects `Err(CryptoError::Aead)` every time.
 
-In Kotlin you'd write: a function that returns `ByteArray?` or throws. Both work, but
-nothing in the type forces the caller to handle failure the way a Rust `Result` does.
+In Kotlin you'd write: a function that returns `ByteArray?` or throws. Kotlin's null-safety does
+force the caller to handle a `ByteArray?`, but `null` carries no reason, and thrown exceptions
+are unchecked, so nothing makes the caller handle them. A Rust `Result` forces handling and
+can carry a typed error.
 
 ([Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html))
 
@@ -183,7 +225,7 @@ nothing in the type forces the caller to handle failure the way a Rust `Result` 
 
 A nonce of the wrong length is the kind of mistake that survives code review and then
 weakens or breaks encryption. Here the compiler rules it out, and it also rules out a second
-hidden owner of the key. Because the working buffers are wiped on every exit path and failure
+hidden owner of the key, and a reused nonce. Because our working buffers are wiped on every exit path and failure
 is one opaque error, a failed decryption hands the attacker no plaintext and no hint about
 what was wrong.
 
@@ -201,7 +243,7 @@ what was wrong.
 
    Check: `cargo test -p holm-crypto --lib` fails to build with ``error[E0308]: mismatched types``,
    pointing at `&nonce`. Then change it to `&nonce[..]` and see that the error now names a
-   slice, not an array. Undo with `git checkout crates/holm-crypto/src/aead.rs`.
+   slice, not an array. (It also complains that `seal` wants a `Nonce`, not a reference.) Undo with `git checkout crates/holm-crypto/src/aead.rs`.
 2. Add this function inside `mod tests` in `aead.rs`:
 
    ```rust
@@ -214,11 +256,22 @@ what was wrong.
    Check: `cargo test -p holm-crypto --lib` fails with
    ``error[E0515]: cannot return reference to local variable `v` ``. The `Vec` is dropped when
    the function ends, so a reference to it would dangle. Undo with the same `git checkout`.
-3. Read the tests in `aead.rs` whose names end in `fails`. Check:
+3. Add this test inside `mod tests` in `aead.rs`:
+
+   ```rust
+   #[test]
+   fn nonce_reuse_does_not_compile() {
+       let nonce = Nonce::random().unwrap();
+       let _a = seal(&key(1), nonce, AAD, MSG);
+       let _b = seal(&key(1), nonce, AAD, MSG);
+   }
+   ```
+
+   Check: ``error[E0382]: use of moved value: `nonce` ``. Undo with the same `git checkout`.
+4. Read the tests in `aead.rs` whose names end in `fails`. Check:
    `cargo test -p holm-crypto --lib fails` prints one `... ok` line per such test.
 
 ## Read next
 
 - [The Rust Programming Language, ch. 4: Understanding Ownership](https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html)
 - [ch. 10.3: Validating References with Lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html)
-- [RFC 8439 section 2.8: the AEAD construction](https://www.rfc-editor.org/rfc/rfc8439#section-2.8)

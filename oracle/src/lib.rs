@@ -1,4 +1,4 @@
-//! Test-only cross-check of Holm's Argon2id against libsodium. Never shipped.
+//! Test-only cross-check of Holm's Argon2id and XChaCha20-Poly1305 against libsodium. Never shipped.
 //!
 //! The only `unsafe` code lives in the private `ffi` module below. Everything
 //! this crate exposes is a safe function.

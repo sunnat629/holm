@@ -8,7 +8,7 @@
 - File SHA-256: `a79de072571b90eb40c3a63ce0c7f75dcb4b62323c8870228e1f61dcc61d63a9`
 - Fetched over HTTPS from github.com, unmodified.
 
-Counts that `tests/xchacha_kat.rs` asserts (re-counted from the pinned file):
+Counts that `src/aead.rs` (`mod kat`) asserts (re-counted from the pinned file):
 
 | Quantity | Count |
 |---|---|
