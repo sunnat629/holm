@@ -47,7 +47,13 @@ const OFF_BODY_LEN: usize = 156;
 
 // A typo in the table above fails the build instead of silently moving a field.
 const _: () = {
+    assert!(MAGIC.len() == OFF_VERSION);
+    assert!(OFF_VERSION + 2 == OFF_FLAGS);
+    assert!(OFF_FLAGS + 2 == OFF_KDF_ID);
+    assert!(OFF_KDF_ID + 1 == OFF_RESERVED);
     assert!(OFF_RESERVED + 3 == OFF_MEMORY);
+    assert!(OFF_MEMORY + 4 == OFF_ITERATIONS);
+    assert!(OFF_ITERATIONS + 4 == OFF_PARALLELISM);
     assert!(OFF_PARALLELISM + 4 == OFF_SALT);
     assert!(OFF_SALT + 32 == OFF_WRAP_NONCE);
     assert!(OFF_WRAP_NONCE == WRAP_AAD_LEN);
