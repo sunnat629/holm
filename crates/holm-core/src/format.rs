@@ -45,6 +45,18 @@ const OFF_WRAPPED_DEK: usize = 84;
 const OFF_BODY_NONCE: usize = 132;
 const OFF_BODY_LEN: usize = 156;
 
+// A typo in the table above fails the build instead of silently moving a field.
+const _: () = {
+    assert!(OFF_RESERVED + 3 == OFF_MEMORY);
+    assert!(OFF_PARALLELISM + 4 == OFF_SALT);
+    assert!(OFF_SALT + 32 == OFF_WRAP_NONCE);
+    assert!(OFF_WRAP_NONCE == WRAP_AAD_LEN);
+    assert!(OFF_WRAP_NONCE + 24 == OFF_WRAPPED_DEK);
+    assert!(OFF_WRAPPED_DEK + 48 == OFF_BODY_NONCE);
+    assert!(OFF_BODY_NONCE + 24 == OFF_BODY_LEN);
+    assert!(OFF_BODY_LEN + 8 == HEADER_LEN);
+};
+
 /// Why a vault file was refused. No variant holds file contents.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FormatError {
@@ -163,41 +175,40 @@ impl Header {
         if file.len() > MAX_FILE_LEN {
             return Err(FormatError::TooLarge);
         }
-        let too_short = FormatError::TooShort;
-        let head = file.get(..HEADER_LEN).ok_or(too_short.clone())?;
-        let body = file.get(HEADER_LEN..).ok_or(too_short.clone())?;
+        let head = file.get(..HEADER_LEN).ok_or(FormatError::TooShort)?;
+        let body = file.get(HEADER_LEN..).ok_or(FormatError::TooShort)?;
 
         if head.get(..MAGIC.len()) != Some(&MAGIC[..]) {
             return Err(FormatError::BadMagic);
         }
-        let version = read_u16(head, OFF_VERSION).ok_or(too_short.clone())?;
+        let version = read_u16(head, OFF_VERSION).ok_or(FormatError::TooShort)?;
         if version != FORMAT_VERSION {
             return Err(FormatError::UnsupportedVersion(version));
         }
-        if read_u16(head, OFF_FLAGS).ok_or(too_short.clone())? != 0 {
+        if read_u16(head, OFF_FLAGS).ok_or(FormatError::TooShort)? != 0 {
             return Err(FormatError::BadFlags);
         }
-        let [kdf_id] = read_array::<1>(head, OFF_KDF_ID).ok_or(too_short.clone())?;
+        let [kdf_id] = read_array::<1>(head, OFF_KDF_ID).ok_or(FormatError::TooShort)?;
         if kdf_id != KDF_ID_ARGON2ID {
             return Err(FormatError::UnknownKdf(kdf_id));
         }
-        let reserved = read_array::<3>(head, OFF_RESERVED).ok_or(too_short.clone())?;
+        let reserved = read_array::<3>(head, OFF_RESERVED).ok_or(FormatError::TooShort)?;
         if reserved != [0; 3] {
             return Err(FormatError::ReservedNotZero);
         }
 
         let kdf = KdfParams {
-            memory_kib: read_u32(head, OFF_MEMORY).ok_or(too_short.clone())?,
-            iterations: read_u32(head, OFF_ITERATIONS).ok_or(too_short.clone())?,
-            parallelism: read_u32(head, OFF_PARALLELISM).ok_or(too_short.clone())?,
+            memory_kib: read_u32(head, OFF_MEMORY).ok_or(FormatError::TooShort)?,
+            iterations: read_u32(head, OFF_ITERATIONS).ok_or(FormatError::TooShort)?,
+            parallelism: read_u32(head, OFF_PARALLELISM).ok_or(FormatError::TooShort)?,
         };
         kdf.validate().map_err(FormatError::KdfPolicy)?;
 
-        let body_len = read_u64(head, OFF_BODY_LEN).ok_or(too_short.clone())?;
-        if body_len < TAG_LEN as u64 {
+        let body_len = read_u64(head, OFF_BODY_LEN).ok_or(FormatError::TooShort)?;
+        let body_len_usize = usize::try_from(body_len).map_err(|_| FormatError::LengthMismatch)?;
+        if body_len_usize < TAG_LEN {
             return Err(FormatError::BodyTooShort);
         }
-        let body_len_usize = usize::try_from(body_len).map_err(|_| FormatError::LengthMismatch)?;
         let total = HEADER_LEN
             .checked_add(body_len_usize)
             .ok_or(FormatError::LengthMismatch)?;
@@ -207,10 +218,10 @@ impl Header {
 
         let header = Header {
             kdf,
-            salt: read_array(head, OFF_SALT).ok_or(too_short.clone())?,
-            wrap_nonce: read_array(head, OFF_WRAP_NONCE).ok_or(too_short.clone())?,
-            wrapped_dek: read_array(head, OFF_WRAPPED_DEK).ok_or(too_short.clone())?,
-            body_nonce: read_array(head, OFF_BODY_NONCE).ok_or(too_short)?,
+            salt: read_array(head, OFF_SALT).ok_or(FormatError::TooShort)?,
+            wrap_nonce: read_array(head, OFF_WRAP_NONCE).ok_or(FormatError::TooShort)?,
+            wrapped_dek: read_array(head, OFF_WRAPPED_DEK).ok_or(FormatError::TooShort)?,
+            body_nonce: read_array(head, OFF_BODY_NONCE).ok_or(FormatError::TooShort)?,
             body_len,
         };
         Ok((header, body))
@@ -485,5 +496,79 @@ mod tests {
         for e in &all {
             assert!(seen.insert(e.to_string()), "duplicate message: {e}");
         }
+    }
+
+    // Hand-written bytes of a header whose fields all differ, byte by byte.
+    // Layout: magic, version 1, flags 0, kdf id 1, reserved 0, memory 131072,
+    // iterations 4, parallelism 1, salt 0x00.., wrap nonce 0x20.., wrapped
+    // DEK 0x40.., body nonce 0x80.., body_len 0x120. Written without using
+    // `encode`, so a shared offset or byte-order bug cannot hide.
+    #[rustfmt::skip]
+    const GOLDEN: [u8; HEADER_LEN] = [
+        0x48, 0x4f, 0x4c, 0x4d, 0x56, 0x4c, 0x54, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+        0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b,
+        0x2c, 0x2d, 0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
+        0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+        0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63,
+        0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f,
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b,
+        0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+        0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    fn golden_header() -> Header {
+        Header {
+            kdf: KdfParams {
+                memory_kib: 131_072,
+                iterations: 4,
+                parallelism: 1,
+            },
+            salt: core::array::from_fn(|i| u8::try_from(i).unwrap()),
+            wrap_nonce: core::array::from_fn(|i| 0x20 + u8::try_from(i).unwrap()),
+            wrapped_dek: core::array::from_fn(|i| 0x40 + u8::try_from(i).unwrap()),
+            body_nonce: core::array::from_fn(|i| 0x80 + u8::try_from(i).unwrap()),
+            body_len: 0x120,
+        }
+    }
+
+    #[test]
+    fn golden_bytes_encode() {
+        assert_eq!(golden_header().encode(), GOLDEN);
+    }
+
+    #[test]
+    fn golden_bytes_parse() {
+        let mut f = GOLDEN.to_vec();
+        f.extend_from_slice(&[7; 0x120]);
+        let (h, body) = Header::parse(&f).unwrap();
+        assert_eq!(h, golden_header());
+        assert_eq!(body, &[7; 0x120][..]);
+    }
+
+    #[test]
+    fn truncation_inside_body_rejected() {
+        let f = valid_file();
+        for len in HEADER_LEN..f.len() {
+            assert_eq!(
+                parse_err(&f[..len]),
+                FormatError::LengthMismatch,
+                "len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn kdf_policy_is_reported_before_length_faults() {
+        let mut f = with_u32(OFF_MEMORY, 65_535);
+        f.push(0); // trailing byte too
+        assert_eq!(
+            parse_err(&f),
+            FormatError::KdfPolicy(KdfParamsError::BelowFloor)
+        );
     }
 }
