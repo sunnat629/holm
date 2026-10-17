@@ -55,8 +55,12 @@ deny = [
     { crate = "axum" },
     { crate = "tiny_http" },
     { crate = "rouille" },
+    # Deliberate: mio is the socket event loop under tokio and friends. The ban also blocks
+    # crossterm and notify. If a TUI or file-watch task needs them, decide that on purpose.
     { crate = "mio" },
     { crate = "socket2" },
+    { crate = "smol" },
+    { crate = "async-net" },
 ]
 
 [sources]

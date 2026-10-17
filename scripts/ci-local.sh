@@ -3,13 +3,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Build flags from the environment could weaken or skip checks. Start from a clean slate.
+unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
+echo "NOTE  unset RUSTFLAGS, CARGO_ENCODED_RUSTFLAGS, RUSTC_WRAPPER, RUSTC_WORKSPACE_WRAPPER"
+
+# Only a clean tree counts, so a pass always describes the commit that gets pushed.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "FAIL  working tree not clean (commit or stash first)" >&2
+  git status --short >&2
+  exit 1
+fi
+
 need() { # tool, install hint
   if ! cargo "$1" --version >/dev/null 2>&1; then
     echo "MISSING cargo-$1. Install: $2" >&2
     exit 2
   fi
 }
-need deny "cargo install --locked cargo-deny"
+need deny "cargo install --locked cargo-deny --version 0.20.2"
 need audit "cargo install --locked cargo-audit --version 0.22.2"
 need vet "cargo install --locked cargo-vet --version 0.10.2"
 
