@@ -1,12 +1,14 @@
-//! Cross-checks holm-crypto's XChaCha20-Poly1305 against libsodium on seeded
-//! pseudo-random inputs.
+//! Cross-checks holm-crypto's XChaCha20-Poly1305 against libsodium on
+//! pseudo-random inputs. Keys, AAD and messages come from a fixed seed; nonces
+//! come from the OS RNG, so a failure is not reproducible by seed alone and
+//! the assert messages print the nonce in hex.
 
 use holm_crypto::SecretKey;
 use holm_crypto::aead::{Nonce, open, seal};
 use holm_oracle::{sodium_init, xchacha_encrypt};
 
-/// SplitMix64: a tiny, fixed pseudo-random generator, so every run tests the
-/// same inputs and no `rand` dependency is needed.
+/// SplitMix64: a tiny, fixed pseudo-random generator for keys, AAD and
+/// messages, so no `rand` dependency is needed.
 struct SplitMix64(u64);
 
 impl SplitMix64 {
@@ -25,6 +27,11 @@ impl SplitMix64 {
     fn bytes(&mut self, len: usize) -> Vec<u8> {
         (0..len).map(|_| self.next_u64().to_le_bytes()[0]).collect()
     }
+}
+
+/// Lowercase hex, for failure messages.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 #[test]
@@ -50,15 +57,18 @@ fn libsodium_matches_for_random_inputs() {
         let ours = seal(&key, nonce, &aad, &msg).expect("seal");
         let theirs = xchacha_encrypt(&key_bytes, &nonce_bytes, &aad, &msg);
         assert_eq!(
-            ours, theirs,
-            "case {case}: holm-crypto and libsodium disagree"
+            ours,
+            theirs,
+            "case {case}: holm-crypto and libsodium disagree (nonce {})",
+            hex(&nonce_bytes)
         );
 
         let opened = open(&key, &nonce_bytes, &aad, &theirs).expect("open libsodium output");
         assert_eq!(
             opened.expose(),
             msg.as_slice(),
-            "case {case}: open lost the plaintext"
+            "case {case}: open lost the plaintext (nonce {})",
+            hex(&nonce_bytes)
         );
     }
 }

@@ -34,6 +34,25 @@ pub const KEY_LEN: usize = 32;
 /// To store the nonce next to the ciphertext, read it with [`Nonce::as_bytes`]
 /// before sealing. [`open`] takes a plain `&[u8; 24]`, since opening may reuse
 /// a nonce read back from a file.
+///
+/// These doctests lock in the move-only property: if `Nonce` ever gains
+/// `Clone`, `Copy` or `Default`, they stop failing to compile and the test
+/// run goes red.
+///
+/// ```compile_fail,E0599
+/// let nonce = holm_crypto::aead::Nonce::random().unwrap();
+/// let _copy = nonce.clone();
+/// ```
+///
+/// ```compile_fail,E0382
+/// let nonce = holm_crypto::aead::Nonce::random().unwrap();
+/// let _moved = nonce; // a `Copy` type would make the next line compile
+/// let _ = nonce.as_bytes();
+/// ```
+///
+/// ```compile_fail,E0599
+/// let _nonce = holm_crypto::aead::Nonce::default();
+/// ```
 #[derive(Debug)]
 pub struct Nonce([u8; NONCE_LEN]);
 

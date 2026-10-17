@@ -237,13 +237,14 @@ what was wrong.
    #[test]
    fn short_nonce_does_not_compile() {
        let nonce = vec![0u8; 12];
-       let _ = seal(&key(1), &nonce, AAD, MSG);
+       let _ = open(&key(1), &nonce, AAD, &[]);
    }
    ```
 
    Check: `cargo test -p holm-crypto --lib` fails to build with ``error[E0308]: mismatched types``,
-   pointing at `&nonce`. Then change it to `&nonce[..]` and see that the error now names a
-   slice, not an array. (It also complains that `seal` wants a `Nonce`, not a reference.) Undo with `git checkout crates/holm-crypto/src/aead.rs`.
+   pointing at `&nonce`: `open` expects `&[u8; 24]` and found `&Vec<u8>`. Then change it to
+   `&nonce[..]` and see that the error now names a slice, `&[u8]`, not an array. Undo with
+   `git checkout crates/holm-crypto/src/aead.rs`.
 2. Add this function inside `mod tests` in `aead.rs`:
 
    ```rust
