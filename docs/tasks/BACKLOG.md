@@ -30,3 +30,5 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 - `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.
 - Remove the oracle-only `cargo audit` ignores (RUSTSEC-2026-0367, -0368, -0369, zip 8.6.0). Trigger: `libsodium-sys-stable` moves to zip 9.
 - Replace the 12 remaining `cargo vet` exemptions (libc, syn 2 and 3 first). Closes in Phase 2 review.
+- Enable `blake2` and `zeroize` with a direct dependency early in Phase 2. Why: the body decoder and secret types use them directly, and a transitive-only dependency cannot enable their features. Trigger: start of Phase 2.
+- Optional: a separate `deny.toml` for `fuzz/` and `oracle/`. Trigger: if their dependency graphs drift from the product's.
