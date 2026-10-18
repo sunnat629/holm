@@ -128,7 +128,7 @@ The body is the vault. After the AEAD tag checks out, everything in it is truste
 2. Change a default and watch the golden vector catch it.
    - Run: `sed -i.bak 's/AUTO_LOCK_DEFAULT_SECS: u32 = 300/AUTO_LOCK_DEFAULT_SECS: u32 = 600/' crates/holm-core/src/settings.rs && cargo test -p holm-core --locked --lib default_body_golden`
    - Check: `default_body_golden ... FAILED`. The left side starts `[1, 0, 216, 4, ...]`: 600 as a varint is `216, 4`.
-   - Undo: `mv crates/holm-core/src/settings.rs.bak crates/holm-core/src/settings.rs`
+   - Undo: `rm crates/holm-core/src/settings.rs.bak && git checkout -- crates/holm-core/src/settings.rs`. Do not `mv` the `.bak` back: it keeps its old timestamp, so cargo thinks the 600 build is still fresh.
 3. See where cargo vet's trust in postcard comes from.
    - Run: `grep -A3 'audits.bytecode-alliance.audits.postcard' supply-chain/imports.lock`, then `cargo vet --locked`
    - Check: two imported audits, `safe-to-deploy`, for `1.0.8` and the delta `1.0.8 -> 1.1.3`; then `Vetting Succeeded`. There is no audit of our own.
