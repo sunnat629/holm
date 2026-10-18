@@ -1496,6 +1496,7 @@ dependencies = [
  "egui_kittest",
  "holm-core",
  "holm-crypto",
+ "holm-gui",
  "holm-platform",
  "static_assertions",
  "tempfile",

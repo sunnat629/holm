@@ -229,6 +229,47 @@ fn lost_worker(
     std::sync::mpsc::channel().1
 }
 
+/// A spawner whose create writes the vault and then reports a store error, as a failed
+/// folder sync after the file was written does.
+fn create_then_sync_fails(
+    mut session: Session<FsStore>,
+    job: Job,
+    _wake: Box<dyn Fn() + Send>,
+) -> std::sync::mpsc::Receiver<WorkDone> {
+    let Job::Create(password, kdf) = job else {
+        panic!("expected a create job");
+    };
+    session.create(&password, &kdf).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(WorkDone {
+        session,
+        kind: holm_gui::worker::JobKind::Create,
+        result: Err(holm_core::error::CoreError::Store(
+            holm_core::store::StoreError::Io(std::io::ErrorKind::Other),
+        )),
+        added: None,
+        returned: None,
+    })
+    .unwrap();
+    rx
+}
+
+#[test]
+fn create_failing_after_write_offers_unlock() {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, _clock) = test_app(dir.path());
+    let mut harness = harness(app.with_spawner(create_then_sync_fails));
+    harness.run();
+    type_into(&mut harness, PASSWORD_LABEL, PASSWORD);
+    type_into(&mut harness, CONFIRM_LABEL, PASSWORD);
+    harness.get_by_label(UNDERSTOOD_LABEL).click();
+    harness.run();
+    harness.get_by_label(CREATE_BUTTON).click();
+    run_until(&mut harness, kind_is(ScreenKind::Unlock), WAIT);
+    harness.run();
+    let _ = harness.get_by_label(messages::CREATE_MAYBE_SAVED);
+}
+
 #[test]
 fn worker_panic_is_fatal_not_hang() {
     let dir = tempfile::tempdir().unwrap();

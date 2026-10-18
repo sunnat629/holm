@@ -59,6 +59,10 @@ pub const TICK_TO_CONTINUE: &str =
 pub const VAULT_EXISTS: &str = "A vault already exists here. Unlock it instead.";
 /// The new vault file could not be written.
 pub const SAVE_FAILED: &str = "Holm couldn't save the new vault. Try again.";
+/// The create failed after the file was written (the folder sync failed), so the vault
+/// may already exist and the password just chosen may open it.
+pub const CREATE_MAYBE_SAVED: &str =
+    "Holm may have saved your vault anyway. Try to unlock it with the password you just chose.";
 /// Any other create failure.
 pub const CREATE_FAILED: &str = "Holm couldn't create the vault. Try again.";
 
@@ -97,7 +101,7 @@ pub const UNSAVED_ON_LOCK: &str =
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 33] = [
+const ALL: [&str; 34] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -116,6 +120,7 @@ const ALL: [&str; 33] = [
     TICK_TO_CONTINUE,
     VAULT_EXISTS,
     SAVE_FAILED,
+    CREATE_MAYBE_SAVED,
     CREATE_FAILED,
     TITLE_EMPTY,
     FIELD_TOO_LONG,
@@ -275,7 +280,7 @@ fn in_words(d: Duration) -> String {
 /// `wait` in whole seconds, rounded up, and at least 1 (a wait is only shown while
 /// one is due).
 fn ceil_secs(wait: Duration) -> u64 {
-    let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+    let secs = wait.as_secs().saturating_add(u64::from(wait.subsec_nanos() > 0));
     secs.max(1)
 }
 

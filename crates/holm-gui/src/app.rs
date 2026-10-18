@@ -112,6 +112,8 @@ pub struct HolmApp {
     /// Which kind of field had focus at the end of the last frame, for
     /// [`raw_input_hook`](eframe::App::raw_input_hook), which runs before the next one.
     focus: FieldFocus,
+    /// Where the vault file is, to see whether a failed create left one behind.
+    vault_path: PathBuf,
     /// Starts the worker: [`worker::spawn`], or a fake in tests.
     spawner: Spawner,
     /// UI clock time of the last activity noted in the session. Mirrors the session's
@@ -166,6 +168,7 @@ impl HolmApp {
             ui_clock,
             clipboard,
             focus: FieldFocus::None,
+            vault_path: vault_path.clone(),
             spawner: spawn_worker,
             last_activity: Duration::ZERO,
             lock_note: None,
@@ -196,7 +199,9 @@ impl HolmApp {
         app
     }
 
-    /// Replaces the worker spawner. For tests that need a worker that fails.
+    /// Replaces the worker spawner. For tests that need a worker that fails or waits;
+    /// built only with the `test-hooks` feature.
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     #[must_use]
     pub fn with_spawner(mut self, spawner: Spawner) -> HolmApp {
@@ -535,6 +540,13 @@ impl HolmApp {
             }
             // Another process made the vault after this app showed Create.
             (JobKind::Create, Err(CoreError::VaultExists)) => Screen::Unlock(UnlockForm::new()),
+            // The file was written but the folder sync failed: the vault may exist, and a
+            // retry would spend another Argon2 run to land on Unlock anyway.
+            (JobKind::Create, Err(CoreError::Store(_)))
+                if std::fs::symlink_metadata(&self.vault_path).is_ok() =>
+            {
+                Screen::Unlock(UnlockForm::with_error(Some(messages::CREATE_MAYBE_SAVED)))
+            }
             (JobKind::Create, Err(e)) => {
                 Screen::Create(CreateForm::with_error(messages::create_error(&e)))
             }
