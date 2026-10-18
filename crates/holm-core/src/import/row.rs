@@ -188,18 +188,22 @@ fn kind_of(raw: &RawRow) -> Result<Kind, RowProblem> {
     }
 }
 
-/// True if an item of this type keeps the secret column `col`.
+/// True if an item of this type keeps the field column `col`.
 fn uses(kind: Kind, col: Col) -> bool {
     match kind {
-        Kind::Login => matches!(col, Col::Password | Col::Notes),
-        Kind::Crypto => matches!(col, Col::Address | Col::Memo | Col::Notes),
+        Kind::Login => matches!(col, Col::Username | Col::Password | Col::Url | Col::Notes),
+        Kind::Crypto => matches!(col, Col::Chain | Col::Address | Col::Memo | Col::Notes),
         Kind::Recovery => matches!(col, Col::Recovery | Col::Notes),
         Kind::Note => matches!(col, Col::Notes),
     }
 }
 
-/// The secret columns: none may be filled on a row whose type does not use it.
-const SECRET_COLS: [Col; 5] = [
+/// The field columns: none may be filled on a row whose type does not use it, so no
+/// value in the file is dropped without a row issue.
+const FIELD_COLS: [Col; 8] = [
+    Col::Username,
+    Col::Url,
+    Col::Chain,
     Col::Password,
     Col::Notes,
     Col::Address,
@@ -287,7 +291,7 @@ pub(super) fn build(mut raw: RawRow, dialect: Dialect) -> Result<ImportRow, RowP
         Kind::Recovery if !raw.filled(Col::Recovery) => return Err(RowProblem::MissingPhrase),
         _ => {}
     }
-    if SECRET_COLS
+    if FIELD_COLS
         .into_iter()
         .any(|c| raw.filled(c) && !uses(kind, c))
     {

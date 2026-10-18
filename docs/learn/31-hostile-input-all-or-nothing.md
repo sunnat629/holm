@@ -16,7 +16,8 @@ vault half-imported if something goes wrong at row 4,000.
 - A CSV header decides the dialect: Holm's own columns, or a Chrome, Firefox or Safari export.
   JSON is always Holm's own column names.
 - `Session::preview_import` counts what would happen. `Session::import` adds the rows, skips
-  duplicates already in the vault, saves, and undoes everything if the save fails.
+  any row identical in every field to an item already in the vault (or to an earlier row),
+  saves, and takes every new item back if the vault grew too large to save.
 - Two fuzz targets (`import_csv`, `import_json`) feed random bytes to `parse`.
 
 ## Rust ideas in this task
@@ -80,9 +81,13 @@ self.commit_or_undo(move |d| d.items.truncate(start))?;
 ```
 
 New items are appended to the end, so "undo" is "cut the list back to its old length". If one
-insert fails, the loop cuts and returns. If every insert works but the save fails (disk full, the
-vault too large), `commit_or_undo` runs the closure and the vault in memory matches the file on
-disk again. The closure is `move` so it owns `start`, a plain number, and borrows nothing.
+insert fails, the loop cuts and returns. If every insert works but the vault is now too large to
+save, `commit_or_undo` runs the closure and the vault in memory matches the file on disk again.
+The closure is `move` so it owns `start`, a plain number, and borrows nothing.
+
+Only "too large" undoes. Any other save error (disk full, no permission) keeps the new items in
+memory, unsaved, and the session stays dirty, so the user can free space and save again instead
+of importing twice. A screen must not say "nothing was imported" after such an error.
 
 The checks that can fail cheaply (the item limit) run before the first insert, so the common
 failure never touches the vault at all.
@@ -112,8 +117,14 @@ and never `val line: String`.
 
 A row says what it is (`type`), or Holm infers it from which secret column is filled: `recovery`
 means a recovery phrase, `address` means a crypto address, otherwise it is a login. A filled
-secret column that the row's type does not use (a `recovery` cell on a login) is an error for that
-row, not a silent drop. A password is never moved into the phrase field "because the phrase was
+column that the row's type does not use (a `recovery` cell on a login, a `username` on a note)
+is an error for that row, not a silent drop. The user is told to delete the file afterwards, so
+a value Holm quietly left out would be gone.
+
+Duplicates follow the same rule. A row is skipped only if it matches an existing item in every
+field: type, title, username, URLs, chain, category and every secret. Two recovery phrases both
+called "Ledger" are two items. The title and other display fields go into a hash to find
+candidates; secrets are then compared in place, never hashed. A password is never moved into the phrase field "because the phrase was
 empty". If Holm guessed wrong, a seed phrase could end up in a field that is shown on screen.
 
 Browser exports are logins only, and their extra columns (`guid`, `timeLastUsed`) are ignored by

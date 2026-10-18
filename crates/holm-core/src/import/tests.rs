@@ -366,7 +366,7 @@ fn bad_rows_skipped_and_reported() {
 }
 
 #[test]
-fn unused_secret_columns_by_type() {
+fn unused_columns_by_type() {
     let rows = [
         // A login does not use address, memo or recovery.
         "L,u,p,,,,login,,EXAMPLE-addr,,\n",
@@ -383,6 +383,19 @@ fn unused_secret_columns_by_type() {
         "N,,,,body,,note,,addr,,\n",
         "N,,,,body,,note,,,memo,\n",
         "N,,,,body,,note,,,,words\n",
+        // Username and url are for logins only, chain for crypto only.
+        "N,EXAMPLE-user,,,body,,note,,,,\n",
+        "N,,,https://x.example.com,body,,note,,,,\n",
+        "N,,,,body,,note,EXAMPLE-chain,,,\n",
+        "C,EXAMPLE-user,,,,,crypto,,addr,,\n",
+        "C,,,https://x.example.com,,,crypto,,addr,,\n",
+        "R,EXAMPLE-user,,,,,recovery,,,,words\n",
+        "R,,,https://x.example.com,,,recovery,,,,words\n",
+        "R,,,,,,recovery,EXAMPLE-chain,,,words\n",
+        "L,u,p,,,,login,EXAMPLE-chain,,,\n",
+        // Inferred types follow the same rule.
+        ",EXAMPLE-user,,,,,,,addr,,\n",
+        ",,,,,,,EXAMPLE-chain,,,words\n",
     ];
     for row in rows {
         let batch = csv(&format!("{HEADER}\n{row}"));
@@ -702,7 +715,7 @@ fn reimport_skips_duplicates() {
 
     let mut s = fresh();
     let report = s
-        .import(csv("title,password\nTwice,p1\nTwice,p2\n"))
+        .import(csv("title,password\nTwice,p1\nTwice,p1\n"))
         .unwrap();
     assert_eq!((report.imported, report.duplicates), (1, 1));
     assert_eq!(login_of(by_title(&s, "Twice")).1, "p1");
@@ -714,7 +727,7 @@ fn reimport_skips_duplicates() {
     .unwrap();
     let report = s
         .import(csv(
-            "title,username,url,password\n CAFE\u{301} Login ,U,HTTPS://X.example.com,other\n",
+            "title,username,url\n CAFE\u{301} Login ,U,HTTPS://X.example.com\n",
         ))
         .unwrap();
     assert_eq!((report.imported, report.duplicates), (0, 1));
@@ -736,6 +749,105 @@ fn reimport_skips_duplicates() {
     assert_eq!((report.imported, report.duplicates), (2, 0));
 }
 
+/// Imports `src` into `s` and returns (imported, duplicates).
+fn import_counts(s: &mut S, src: &str) -> (usize, usize) {
+    let report = s.import(csv(src)).unwrap();
+    (report.imported, report.duplicates)
+}
+
+#[test]
+fn dedup_only_skips_identical_items() {
+    // Same title and type, different secret: both are kept.
+    let mut s = fresh();
+    let phrases = format!(
+        "{HEADER}\nLedger,,,,,,recovery,,,,alpha beta\nLedger,,,,,,recovery,,,,gamma delta\n"
+    );
+    assert_eq!(import_counts(&mut s, &phrases), (2, 0));
+    let notes = format!(
+        "{HEADER}\nWi-Fi,,,,EXAMPLE body one,,note,,,,\nWi-Fi,,,,EXAMPLE body two,,note,,,,\n"
+    );
+    assert_eq!(import_counts(&mut s, &notes), (2, 0));
+    let wallet = format!("{HEADER}\nWallet,,,,,,crypto,EXAMPLE-chain,EXAMPLE-addr-1,,\n");
+    assert_eq!(import_counts(&mut s, &wallet), (1, 0));
+    let other_address = format!("{HEADER}\nWallet,,,,,,crypto,EXAMPLE-chain,EXAMPLE-addr-2,,\n");
+    assert_eq!(import_counts(&mut s, &other_address), (1, 0));
+    assert_eq!(s.active_items().unwrap().count(), 6);
+
+    // The same files again: every item is identical to one in the vault.
+    for src in [&phrases, &notes, &wallet, &other_address] {
+        let (imported, duplicates) = import_counts(&mut s, src);
+        assert_eq!(imported, 0, "{src}");
+        assert!(duplicates > 0, "{src}");
+    }
+    assert_eq!(s.active_items().unwrap().count(), 6);
+
+    // One field differs: not a duplicate. One row per field.
+    let mut s = fresh();
+    let base = "Same,u,p,https://x.example.com,n,,login,,,,\n";
+    assert_eq!(import_counts(&mut s, &format!("{HEADER}\n{base}")), (1, 0));
+    let changed = [
+        "Same,u,p,https://x.example.com,n,Work,login,,,,\n",
+        "Same,v,p,https://x.example.com,n,,login,,,,\n",
+        "Same,u,P,https://x.example.com,n,,login,,,,\n",
+        "Same,u,p,https://y.example.com,n,,login,,,,\n",
+        "Same,u,p,https://x.example.com,N,,login,,,,\n",
+        "Same,u,p,https://x.example.com,n ,,login,,,,\n",
+        "Other,u,p,https://x.example.com,n,,login,,,,\n",
+    ];
+    for row in changed {
+        assert_eq!(
+            import_counts(&mut s, &format!("{HEADER}\n{row}")),
+            (1, 0),
+            "{row}"
+        );
+    }
+    let crypto = "C,,,,n,,crypto,ch,addr,memo,\n";
+    assert_eq!(
+        import_counts(&mut s, &format!("{HEADER}\n{crypto}")),
+        (1, 0)
+    );
+    for row in [
+        "C,,,,n,,crypto,CH2,addr,memo,\n",
+        "C,,,,n,,crypto,ch,addr,memo2,\n",
+        "C,,,,n2,,crypto,ch,addr,memo,\n",
+    ] {
+        assert_eq!(
+            import_counts(&mut s, &format!("{HEADER}\n{row}")),
+            (1, 0),
+            "{row}"
+        );
+    }
+    let phrase = "R,,,,n,,recovery,,,,w1 w2\n";
+    assert_eq!(
+        import_counts(&mut s, &format!("{HEADER}\n{phrase}")),
+        (1, 0)
+    );
+    assert_eq!(
+        import_counts(&mut s, &format!("{HEADER}\nR,,,,n2,,recovery,,,,w1 w2\n")),
+        (1, 0)
+    );
+
+    // Display fields compare folded; the phrase compares by its words.
+    let before = s.active_items().unwrap().count();
+    for row in [
+        " SAME ,U,p,HTTPS://X.example.com,n,,login,,,,\n",
+        "c,,,,n,,crypto,CH,addr,memo,\n",
+        "R,,,,n,,recovery,,,,\"  w1\n w2 \"\n",
+    ] {
+        assert_eq!(
+            import_counts(&mut s, &format!("{HEADER}\n{row}")),
+            (0, 1),
+            "{row}"
+        );
+    }
+    assert_eq!(s.active_items().unwrap().count(), before);
+
+    // Rows in one file are compared with each other the same way.
+    let mut s = fresh();
+    let twice = format!("{HEADER}\nLedger,,,,,,recovery,,,,a b\nLedger,,,,,,recovery,,,,a b\n");
+    assert_eq!(import_counts(&mut s, &twice), (1, 1));
+}
+
 #[test]
 fn dedup_key_layout() {
     assert_eq!(
@@ -743,14 +855,19 @@ fn dedup_key_layout() {
             ItemType::Login,
             " Caf\u{e9} ",
             "U",
-            &["https://A.example.com", "b"]
+            &["https://A.example.com", "b"],
+            ""
         )
         .as_str(),
-        "caf\u{e9}\0u\0https://a.example.com\nb\0login"
+        "caf\u{e9}\0u\0https://a.example.com\nb\0\0login"
     );
     assert_eq!(
-        dedup_key(ItemType::SecureNote, "N", "", &[]).as_str(),
-        "n\0\0\0note"
+        dedup_key(ItemType::CryptoAddress, "W", "", &[], "Main Net").as_str(),
+        "w\0\0\0main net\0crypto"
+    );
+    assert_eq!(
+        dedup_key(ItemType::SecureNote, "N", "", &[], "").as_str(),
+        "n\0\0\0\0note"
     );
 }
 

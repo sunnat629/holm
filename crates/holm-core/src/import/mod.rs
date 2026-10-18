@@ -6,7 +6,9 @@
 //! ready item or a [`RowIssue`] that names the row number and the problem, never a
 //! value. Nothing is written yet. [`Session::preview_import`] counts what would
 //! happen, and [`Session::import`] adds every ready row that is not a duplicate in one
-//! change: either all of them are saved, or none.
+//! change. A row is a duplicate only if it matches an item (or an earlier row) in every
+//! user field. If the vault is then too large to save, every new item is taken back;
+//! any other save error keeps them in memory, unsaved.
 //!
 //! Every cell is a wiping buffer from the private `plain` parsers. A value moves out of
 //! it into [`Text`] or [`SecretText`](crate::text::SecretText) without a copy, and a
@@ -18,7 +20,7 @@ mod json;
 mod row;
 
 use core::fmt;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use zeroize::Zeroizing;
@@ -283,18 +285,23 @@ pub fn parse(bytes: &[u8], format: ImportFormat) -> Result<ImportBatch, ImportEr
     }
 }
 
-/// The key two items are compared by to find duplicates: the folded, trimmed title,
-/// the folded username, the folded URLs joined by `\n`, and the type, separated by
-/// `\0`. Non-logins pass an empty username and no URLs.
+/// The hash key of an item's display fields: the folded, trimmed title, the folded
+/// username, the folded URLs joined by `\n`, the folded chain and the type, separated
+/// by `\0`. A field the type does not have is passed empty.
+///
+/// Only display fields go in, so no secret is ever hashed. Items with equal keys are
+/// then compared field by field (see `same_item`).
 pub(crate) fn dedup_key(
     item_type: ItemType,
     title: &str,
     username: &str,
     urls: &[&str],
+    chain: &str,
 ) -> Zeroizing<String> {
     let title = fold(title.trim());
     let username = fold(username);
     let urls: Vec<Zeroizing<String>> = urls.iter().map(|u| fold(u)).collect();
+    let chain = fold(chain);
     let tag = match item_type {
         ItemType::Login => "login",
         ItemType::CryptoAddress => "crypto",
@@ -305,8 +312,9 @@ pub(crate) fn dedup_key(
     let len = title.len()
         + username.len()
         + urls.iter().map(|u| u.len() + 1).sum::<usize>()
+        + chain.len()
         + tag.len()
-        + 3;
+        + 4;
     let mut key = Zeroizing::new(String::with_capacity(len));
     key.push_str(&title);
     key.push('\0');
@@ -319,6 +327,8 @@ pub(crate) fn dedup_key(
         key.push_str(u);
     }
     key.push('\0');
+    key.push_str(&chain);
+    key.push('\0');
     key.push_str(tag);
     key
 }
@@ -328,9 +338,22 @@ fn key_of(title: &Text, data: &ItemData) -> Zeroizing<String> {
     match data {
         ItemData::Login { username, urls, .. } => {
             let urls: Vec<&str> = urls.iter().map(Text::as_str).collect();
-            dedup_key(ItemType::Login, title.as_str(), username.as_str(), &urls)
+            dedup_key(
+                ItemType::Login,
+                title.as_str(),
+                username.as_str(),
+                &urls,
+                "",
+            )
         }
-        other => dedup_key(other.item_type(), title.as_str(), "", &[]),
+        ItemData::CryptoAddress { chain, .. } => dedup_key(
+            ItemType::CryptoAddress,
+            title.as_str(),
+            "",
+            &[],
+            chain.as_str(),
+        ),
+        other => dedup_key(other.item_type(), title.as_str(), "", &[], ""),
     }
 }
 
@@ -344,16 +367,86 @@ impl Hash for Key {
     }
 }
 
-/// For each row, `true` if it would be added: its key matches no item in the vault
-/// (active or in the trash) and no earlier row.
+/// True if two items with equal [`dedup_key`]s are the same in every other user field:
+/// the category, and every secret byte for byte (a recovery phrase word by word).
+fn same_item(a: (Option<CategoryId>, &ItemData), b: (Option<CategoryId>, &ItemData)) -> bool {
+    if a.0 != b.0 {
+        return false;
+    }
+    match (a.1, b.1) {
+        (
+            ItemData::Login {
+                password: p1,
+                notes: n1,
+                ..
+            },
+            ItemData::Login {
+                password: p2,
+                notes: n2,
+                ..
+            },
+        ) => p1.expose() == p2.expose() && n1.expose() == n2.expose(),
+        (
+            ItemData::CryptoAddress {
+                address: a1,
+                memo: m1,
+                notes: n1,
+                ..
+            },
+            ItemData::CryptoAddress {
+                address: a2,
+                memo: m2,
+                notes: n2,
+                ..
+            },
+        ) => a1.expose() == a2.expose() && m1.expose() == m2.expose() && n1.expose() == n2.expose(),
+        (
+            ItemData::RecoveryPhrase {
+                phrase: w1,
+                notes: n1,
+            },
+            ItemData::RecoveryPhrase {
+                phrase: w2,
+                notes: n2,
+            },
+        ) => {
+            w1.expose()
+                .split_whitespace()
+                .eq(w2.expose().split_whitespace())
+                && n1.expose() == n2.expose()
+        }
+        (ItemData::SecureNote { body: b1 }, ItemData::SecureNote { body: b2 }) => {
+            b1.expose() == b2.expose()
+        }
+        _ => false,
+    }
+}
+
+/// For each row, `true` if it would be added: it is not the same item (in every user
+/// field) as any item in the vault, active or in the trash, or any earlier row.
+///
+/// Items are grouped by the hash of their display fields, and only items in one group
+/// are compared, so secrets are compared in place and never hashed or copied.
 fn keep_mask(data: &VaultData, rows: &[ImportRow]) -> Vec<bool> {
-    let mut seen: HashSet<Key> = data
-        .items
-        .iter()
-        .map(|i| Key(key_of(&i.title, &i.data)))
-        .collect();
+    type Group<'a> = Vec<(Option<CategoryId>, &'a ItemData)>;
+    let mut seen: HashMap<Key, Group<'_>> = HashMap::with_capacity(data.items.len());
+    for item in &data.items {
+        seen.entry(Key(key_of(&item.title, &item.data)))
+            .or_default()
+            .push((item.category, &item.data));
+    }
     rows.iter()
-        .map(|r| seen.insert(Key(key_of(&r.input.title, &r.input.data))))
+        .map(|r| {
+            let this = (find_category(data, r.category_name.as_ref()), &r.input.data);
+            let group = seen
+                .entry(Key(key_of(&r.input.title, &r.input.data)))
+                .or_default();
+            let new = !group.iter().any(|other| same_item(*other, this));
+            if new {
+                group.push(this);
+            }
+            new
+        })
         .collect()
 }
 
@@ -424,14 +517,17 @@ impl<S: VaultStore> Session<S> {
 
     /// Adds every ready row of `batch` that is not a duplicate, as one change.
     ///
-    /// Duplicates are dropped first. If the rest would take the vault over
-    /// [`MAX_ITEMS`], nothing is added. Categories are matched by name and never
-    /// created. If the vault then has no room to save, every added item is taken back.
+    /// Duplicates are dropped first: rows identical in type, title, username, URLs,
+    /// chain, category and every secret to an item in the vault (trash included) or to
+    /// an earlier row. If the rest would take the vault over [`MAX_ITEMS`], nothing is
+    /// added. Categories are matched by name and never created. If the vault then has no
+    /// room to save, every added item is taken back.
     ///
     /// # Errors
     /// [`CoreError::Locked`], [`CoreError::TooManyItems`] (nothing added), or the
-    /// errors of saving ([`CoreError::Vault`] with `TooLargeToSave` means nothing was
-    /// added).
+    /// errors of saving. [`CoreError::Vault`] with `TooLargeToSave` means nothing was
+    /// added. Any other save error leaves the items added in memory but not saved, and
+    /// the session dirty.
     pub fn import(&mut self, batch: ImportBatch) -> Result<ImportReport, CoreError> {
         self.unlocked()?;
         let now = self.now_unix();
