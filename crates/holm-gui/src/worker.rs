@@ -10,9 +10,11 @@ use core::fmt;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::item::{ItemId, ItemInput};
+use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::session::Session;
+use holm_core::text::SecretText;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
@@ -82,6 +84,9 @@ pub struct WorkDone {
     pub result: Result<(), CoreError>,
     /// The id of the item an add made. Present for an add that returned an id.
     pub added: Option<ItemId>,
+    /// The input of an add or update that failed with `TooLargeToSave`, handed back so
+    /// the form can be rebuilt. Always `None` otherwise. Wipes itself on drop.
+    pub returned: Option<ItemInput>,
 }
 
 impl fmt::Debug for WorkDone {
@@ -120,6 +125,7 @@ pub fn spawn(
             let mut session = session;
             let kind = job.kind();
             let mut added = None;
+            let mut returned = None;
             let result = match job {
                 Job::Create(password, params) => {
                     let result = session.create(&password, &params);
@@ -131,8 +137,18 @@ pub fn spawn(
                     drop(password);
                     result
                 }
-                Job::Add(input) => session.add_item(input).map(|id| added = Some(id)),
-                Job::Update(id, input) => session.update_item(id, input),
+                Job::Add(input) => {
+                    let backup = backup_login(&input);
+                    let result = session.add_item(input).map(|id| added = Some(id));
+                    keep_on_too_large(&result, backup, &mut returned);
+                    result
+                }
+                Job::Update(id, input) => {
+                    let backup = backup_login(&input);
+                    let result = session.update_item(id, input);
+                    keep_on_too_large(&result, backup, &mut returned);
+                    result
+                }
                 Job::Save => session.save(),
             };
             // A send fails only if the app is gone; the session then drops here,
@@ -142,11 +158,49 @@ pub fn spawn(
                 kind,
                 result,
                 added,
+                returned,
             });
         });
     // On a spawn error the closure, and with it `tx`, is already dropped.
     drop(started);
     rx
+}
+
+/// A zeroizing copy of a login input, so it survives core consuming the original.
+/// `None` for other item kinds (the GUI only builds logins).
+fn backup_login(input: &ItemInput) -> Option<ItemInput> {
+    let ItemData::Login {
+        username,
+        password,
+        urls,
+        notes,
+    } = &input.data
+    else {
+        return None;
+    };
+    Some(ItemInput {
+        title: input.title.clone(),
+        category: input.category,
+        favourite: input.favourite,
+        data: ItemData::Login {
+            username: username.clone(),
+            password: SecretText::new(password.expose().to_owned()),
+            urls: urls.clone(),
+            notes: SecretText::new(notes.expose().to_owned()),
+        },
+    })
+}
+
+/// Hands the backup back only when the change was undone for being too large. In every
+/// other case it drops here, and so wipes.
+fn keep_on_too_large<T>(
+    result: &Result<T, CoreError>,
+    backup: Option<ItemInput>,
+    returned: &mut Option<ItemInput>,
+) {
+    if matches!(result, Err(CoreError::Vault(VaultError::TooLargeToSave))) {
+        *returned = backup;
+    }
 }
 
 /// Calls the wake function when dropped.

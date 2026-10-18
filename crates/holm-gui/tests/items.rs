@@ -174,6 +174,36 @@ fn double_save_with_failing_store_adds_one_item() {
 }
 
 #[test]
+fn save_banner_and_retry_survive_navigation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    let folder = vault_path(dir.path()).parent().unwrap().to_owned();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+    fill_form(&mut harness, ROW_TITLE);
+    save_and_wait(&mut harness);
+    let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
+    let _ = harness.get_by_label("Try again");
+
+    // New login: the session is still dirty, so the banner stays.
+    harness.get_by_label("New login").click();
+    harness.run();
+    let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
+    let _ = harness.get_by_label("Try again");
+
+    // Selecting the row: same.
+    harness.get_all_by_label(ROW_TITLE).next().unwrap().click();
+    harness.run();
+    let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
+    let _ = harness.get_by_label("Try again");
+
+    // Edit: same.
+    harness.get_by_label("Edit").click();
+    harness.run();
+    let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
+    let _ = harness.get_by_label("Try again");
+}
+
+#[test]
 fn no_node_holds_password_while_hidden() {
     let dir = tempfile::tempdir().unwrap();
     let (mut harness, _clock) = open(dir.path());

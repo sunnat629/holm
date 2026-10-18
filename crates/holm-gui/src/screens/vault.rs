@@ -10,7 +10,7 @@ use std::time::Duration;
 use eframe::egui;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::item::{ItemData, ItemId};
+use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::session::Session;
 use holm_core::settings::REHIDE_PASSWORD_SECS;
 use holm_core::text::{SecretText, Text};
@@ -64,6 +64,9 @@ pub(crate) struct VaultView {
     status: Option<&'static str>,
     /// Whether the last write failed and left changes unsaved in memory.
     save_failed: bool,
+    /// The fixed line for that failed write. Kept apart from `status` so navigation and
+    /// other messages never hide it while the session is dirty.
+    save_error: Option<&'static str>,
     /// The fixed line under the password after the Copy button, if any.
     copy_note: Option<&'static str>,
 }
@@ -88,6 +91,7 @@ impl VaultView {
             reveal_until: None,
             status: None,
             save_failed: false,
+            save_error: None,
             copy_note: None,
         }
     }
@@ -128,6 +132,7 @@ impl VaultView {
         kind: JobKind,
         result: &Result<(), CoreError>,
         added: Option<ItemId>,
+        returned: Option<ItemInput>,
         session: &Session<FsStore>,
     ) {
         self.rows_stale = true;
@@ -137,6 +142,7 @@ impl VaultView {
         match (kind, result) {
             (JobKind::Add, Ok(())) | (JobKind::Update, Ok(())) => {
                 self.save_failed = false;
+                self.save_error = None;
                 if let Some(id) = added.or(self.selected) {
                     self.selected = Some(id);
                     self.mode = DetailMode::View;
@@ -144,24 +150,43 @@ impl VaultView {
                     self.mode = DetailMode::Empty;
                 }
             }
-            (JobKind::Save, Ok(())) => self.save_failed = false,
+            (JobKind::Save, Ok(())) => {
+                self.save_failed = false;
+                self.save_error = None;
+            }
             (JobKind::Add, Err(CoreError::Vault(VaultError::TooLargeToSave))) => {
-                let mut form = LoginForm::new_blank();
-                form.error = Some(messages::TOO_LARGE_TO_SAVE);
+                let form = match returned {
+                    Some(input) => LoginForm::from_input(None, input, messages::TOO_LARGE_TO_SAVE),
+                    None => {
+                        let mut form = LoginForm::new_blank();
+                        form.error = Some(messages::TOO_LARGE_TO_SAVE);
+                        form
+                    }
+                };
                 self.selected = None;
                 self.mode = DetailMode::Edit(form);
             }
             (JobKind::Update, Err(CoreError::Vault(VaultError::TooLargeToSave))) => {
-                self.mode = match self.selected.and_then(|id| session.item(id).ok()) {
-                    Some(item) => LoginForm::from_item(item).map_or(DetailMode::View, |mut f| {
-                        f.error = Some(messages::TOO_LARGE_TO_SAVE);
-                        DetailMode::Edit(f)
-                    }),
-                    None => DetailMode::Empty,
+                self.mode = match (returned, self.selected) {
+                    (Some(input), id @ Some(_)) => DetailMode::Edit(LoginForm::from_input(
+                        id,
+                        input,
+                        messages::TOO_LARGE_TO_SAVE,
+                    )),
+                    (None, Some(id)) => {
+                        match session.item(id).ok().and_then(LoginForm::from_item) {
+                            Some(mut f) => {
+                                f.error = Some(messages::TOO_LARGE_TO_SAVE);
+                                DetailMode::Edit(f)
+                            }
+                            None => DetailMode::View,
+                        }
+                    }
+                    (_, None) => DetailMode::Empty,
                 };
             }
             (JobKind::Add | JobKind::Update | JobKind::Save, Err(e)) => {
-                self.status = Some(messages::save_error(e));
+                self.save_error = Some(messages::save_error(e));
                 self.save_failed = true;
                 if kind == JobKind::Add {
                     self.selected = None;
@@ -247,15 +272,21 @@ impl VaultView {
         io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let mut job = None;
-        if let Some(status) = self.status {
-            ui.label(status);
-            if self.save_failed
-                && session.is_some_and(Session::is_dirty)
-                && ui.button(RETRY_LABEL).clicked()
-            {
-                self.status = None;
+        if self.save_failed
+            && session.is_some_and(Session::is_dirty)
+            && let Some(error) = self.save_error
+        {
+            ui.label(error);
+            if ui.button(RETRY_LABEL).clicked() {
                 job = Some(Job::Save);
             }
+            ui.separator();
+        } else if !session.is_some_and(Session::is_dirty) {
+            self.save_failed = false;
+            self.save_error = None;
+        }
+        if let Some(status) = self.status {
+            ui.label(status);
             ui.separator();
         }
         match &mut self.mode {
@@ -392,5 +423,67 @@ impl VaultView {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use holm_core::clock::SystemClock;
+
+    fn locked_session() -> Session<FsStore> {
+        let dir = tempfile::tempdir().unwrap();
+        Session::new(
+            FsStore::new(dir.path().join("holm.vault")),
+            Box::new(SystemClock::new()),
+        )
+    }
+
+    fn typed() -> ItemInput {
+        ItemInput {
+            title: Text::new("Example Mail".to_owned()),
+            category: None,
+            favourite: false,
+            data: ItemData::Login {
+                username: Text::new("ada@example.com".to_owned()),
+                password: SecretText::new("EXAMPLE-new-pass".to_owned()),
+                urls: Vec::new(),
+                notes: SecretText::new(String::new()),
+            },
+        }
+    }
+
+    fn too_large() -> Result<(), CoreError> {
+        Err(CoreError::Vault(VaultError::TooLargeToSave))
+    }
+
+    #[test]
+    fn too_large_add_keeps_the_typed_form_and_the_message() {
+        let session = locked_session();
+        let mut view = VaultView::new();
+        view.on_done(JobKind::Add, &too_large(), None, Some(typed()), &session);
+        assert!(!view.buffers_empty(), "typed values are back in the form");
+        assert_eq!(view.secret_char_count(), "EXAMPLE-new-pass".chars().count());
+        let DetailMode::Edit(form) = &view.mode else {
+            panic!("the form is open");
+        };
+        assert_eq!(form.error, Some(messages::TOO_LARGE_TO_SAVE));
+        assert_eq!(form.id, None);
+        assert!(!view.save_failed, "nothing is dirty after an undone change");
+    }
+
+    #[test]
+    fn too_large_update_keeps_the_typed_form_for_that_item() {
+        let session = locked_session();
+        let mut view = VaultView::new();
+        let id = ItemId::random().unwrap();
+        view.selected = Some(id);
+        view.on_done(JobKind::Update, &too_large(), None, Some(typed()), &session);
+        let DetailMode::Edit(form) = &view.mode else {
+            panic!("the form is open");
+        };
+        assert_eq!(form.id, Some(id));
+        assert_eq!(form.error, Some(messages::TOO_LARGE_TO_SAVE));
+        assert_eq!(view.secret_char_count(), "EXAMPLE-new-pass".chars().count());
     }
 }

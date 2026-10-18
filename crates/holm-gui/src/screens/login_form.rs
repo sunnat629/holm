@@ -12,6 +12,7 @@ use core::ops::Range;
 
 use eframe::egui;
 use egui::text::CharIndex;
+use holm_core::category::CategoryId;
 use holm_core::item::{Item, ItemData, ItemId, ItemInput};
 use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::text::{SecretText, Text};
@@ -131,6 +132,10 @@ pub(crate) enum FormAction {
 pub(crate) struct LoginForm {
     /// The item being edited, or `None` for a new login.
     pub(crate) id: Option<ItemId>,
+    /// The stored item's category, carried through an edit unchanged.
+    category: Option<CategoryId>,
+    /// The stored item's favourite flag, carried through an edit unchanged.
+    favourite: bool,
     /// The title being typed.
     title: LineBuf,
     /// The username being typed.
@@ -161,6 +166,8 @@ impl LoginForm {
     pub(crate) fn new_blank() -> LoginForm {
         LoginForm {
             id: None,
+            category: None,
+            favourite: false,
             title: LineBuf::new(),
             username: LineBuf::new(),
             url: LineBuf::new(),
@@ -184,6 +191,8 @@ impl LoginForm {
         };
         Some(LoginForm {
             id: Some(item.id()),
+            category: item.category(),
+            favourite: item.favourite(),
             title: LineBuf::from_text(item.title())?,
             username: LineBuf::from_text(username.as_str())?,
             url: LineBuf::from_text(urls.first().map_or("", Text::as_str))?,
@@ -199,9 +208,16 @@ impl LoginForm {
         input: ItemInput,
         error: &'static str,
     ) -> LoginForm {
-        let ItemInput { title, data, .. } = input;
+        let ItemInput {
+            title,
+            category,
+            favourite,
+            data,
+        } = input;
         let mut form = LoginForm::new_blank();
         form.id = id;
+        form.category = category;
+        form.favourite = favourite;
         form.error = Some(error);
         form.title = LineBuf::from_text(title.as_str()).unwrap_or_else(LineBuf::new);
         if let ItemData::Login {
@@ -235,8 +251,8 @@ impl LoginForm {
         urls.extend(kept_urls);
         ItemInput {
             title,
-            category: None,
-            favourite: false,
+            category: self.category,
+            favourite: self.favourite,
             data: ItemData::Login {
                 username,
                 password: self.password.take_secret_text(),
@@ -414,5 +430,34 @@ mod tests {
         assert_eq!(back.title.as_str(), "Example Mail");
         assert_eq!(back.error, Some("Add a title."));
         assert!(!back.password.is_empty());
+    }
+
+    #[test]
+    fn edit_keeps_the_stored_category_and_favourite() {
+        use holm_core::clock::SystemClock;
+        use holm_core::session::Session;
+        use holm_crypto::MasterPassword;
+        use holm_crypto::kdf::KdfParams;
+        use holm_platform::fs_store::FsStore;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Holm").join("holm.vault");
+        holm_platform::paths::ensure_vault_dir(&path).unwrap();
+        let mut session = Session::new(FsStore::new(path), Box::new(SystemClock::new()));
+        let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
+        session.create(&password, &KdfParams::FLOOR).unwrap();
+        let mut form = filled();
+        let input = form.take_input(SecretText::new(String::new()), Vec::new());
+        let id = session.add_item(input).unwrap();
+        session.set_favourite(id, true).unwrap();
+
+        let mut form = LoginForm::from_item(session.item(id).unwrap()).unwrap();
+        let input = form.take_input(SecretText::new(String::new()), Vec::new());
+        assert!(input.favourite, "favourite is carried through an edit");
+        assert_eq!(input.category, session.item(id).unwrap().category());
+        let back = LoginForm::from_input(Some(id), input, "x");
+        let mut back = back;
+        let again = back.take_input(SecretText::new(String::new()), Vec::new());
+        assert!(again.favourite, "and through a refill");
     }
 }

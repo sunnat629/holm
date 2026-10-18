@@ -322,6 +322,7 @@ impl HolmApp {
             kind,
             result,
             added,
+            returned,
         } = done;
         let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
         {
@@ -333,7 +334,7 @@ impl HolmApp {
             if result.is_ok() {
                 session.note_activity();
             }
-            view.on_done(kind, &result, added, &session);
+            view.on_done(kind, &result, added, returned, &session);
             self.screen = Screen::Vault(view);
             self.session = Some(session);
             return;
