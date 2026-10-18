@@ -25,6 +25,9 @@ use crate::store::{StoreError, VaultStore};
 use crate::strength;
 use crate::throttle::{Throttle, ThrottleStatus, Throttled};
 
+mod categories;
+pub(crate) mod items;
+
 /// The state of an unlocked vault. Dropping it wipes the data key and the data.
 pub(crate) struct Unlocked {
     /// The data key and current header.
@@ -354,19 +357,11 @@ impl<S: VaultStore> Session<S> {
     ///
     /// # Errors
     /// [`CoreError::Locked`] when locked.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first caller is the item module (Task 8)")
-    )]
     pub(crate) fn unlocked_mut(&mut self) -> Result<&mut Unlocked, CoreError> {
         self.open.as_mut().ok_or(CoreError::Locked)
     }
 
     /// Wall-clock time from the session's clock, for item timestamps.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first caller is the item module (Task 8)")
-    )]
     pub(crate) fn now_unix(&self) -> Timestamp {
         self.clock.now_unix()
     }
@@ -389,6 +384,32 @@ impl<S: VaultStore> Session<S> {
         open.dirty = false;
         Ok(())
     }
+
+    /// Saves after a change, and takes the change back if the vault has no room for it.
+    ///
+    /// Call this after applying a change. `undo` must put the data back exactly as it
+    /// was. On [`VaultError::TooLargeToSave`] nothing was written and `undo` runs; the
+    /// dirty flag goes back to what it was before the call, so an earlier unsaved edit
+    /// stays unsaved and is still reported on lock. Any other error keeps the change
+    /// and leaves the session dirty, so a later [`Session::save`] can retry.
+    ///
+    /// # Errors
+    /// The errors of [`Session::commit`].
+    pub(crate) fn commit_or_undo(
+        &mut self,
+        undo: impl FnOnce(&mut VaultData),
+    ) -> Result<(), CoreError> {
+        let was_dirty = self.unlocked()?.dirty;
+        match self.commit() {
+            Err(CoreError::Vault(VaultError::TooLargeToSave)) => {
+                let open = self.unlocked_mut()?;
+                undo(&mut open.data);
+                open.dirty = was_dirty;
+                Err(CoreError::Vault(VaultError::TooLargeToSave))
+            }
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -400,20 +421,20 @@ mod tests {
     use holm_crypto::KdfParamsError;
     use std::io::ErrorKind;
 
-    const PW: &str = "correct-Horse-battery-staple-EXAMPLE-9";
-    const NEW_PW: &str = "Quokka-Sextant-velvet-EXAMPLE-ember-71";
-    const WRONG: &str = "not-the-Right-password-EXAMPLE-0";
-    const FLOOR: KdfParams = KdfParams::FLOOR;
+    pub(super) const PW: &str = "correct-Horse-battery-staple-EXAMPLE-9";
+    pub(super) const NEW_PW: &str = "Quokka-Sextant-velvet-EXAMPLE-ember-71";
+    pub(super) const WRONG: &str = "not-the-Right-password-EXAMPLE-0";
+    pub(super) const FLOOR: KdfParams = KdfParams::FLOOR;
 
-    fn pw(s: &str) -> MasterPassword {
+    pub(super) fn pw(s: &str) -> MasterPassword {
         MasterPassword::new(s.to_owned())
     }
 
-    fn secs(n: u64) -> Duration {
+    pub(super) fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
     }
 
-    fn session() -> (Session<MemStore>, FakeClock) {
+    pub(super) fn session() -> (Session<MemStore>, FakeClock) {
         let clock = FakeClock::default();
         clock.set_unix(1_700_000_000);
         (
@@ -423,28 +444,28 @@ mod tests {
     }
 
     /// A session with a fresh vault, left unlocked.
-    fn created() -> (Session<MemStore>, FakeClock) {
+    pub(super) fn created() -> (Session<MemStore>, FakeClock) {
         let (mut s, clock) = session();
         s.create(&pw(PW), &FLOOR).unwrap();
         (s, clock)
     }
 
     /// A session with a fresh vault, locked.
-    fn created_locked() -> (Session<MemStore>, FakeClock) {
+    pub(super) fn created_locked() -> (Session<MemStore>, FakeClock) {
         let (mut s, clock) = created();
         s.lock();
         (s, clock)
     }
 
-    fn failures(s: &Session<MemStore>) -> u32 {
+    pub(super) fn failures(s: &Session<MemStore>) -> u32 {
         s.throttle_status().consecutive_failures
     }
 
-    fn stored(s: &Session<MemStore>) -> Vec<u8> {
+    pub(super) fn stored(s: &Session<MemStore>) -> Vec<u8> {
         s.store().bytes.clone().unwrap()
     }
 
-    fn open_file(file: &[u8], password: &str) -> VaultData {
+    pub(super) fn open_file(file: &[u8], password: &str) -> VaultData {
         let (_, plain) = envelope::open(file, &pw(password)).unwrap();
         VaultData::decode(plain.expose()).unwrap()
     }

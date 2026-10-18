@@ -87,6 +87,33 @@ impl fmt::Debug for SecretText {
 /// A secret that outside code can store and check for emptiness but never read.
 /// Only this crate can call [`GatedSecret::expose`]; the session reveals it after a
 /// password check.
+///
+/// The lock-in: `expose` is `pub(crate)`, so code in another crate cannot read the
+/// secret except through the session's password-gated `reveal_phrase`. These doctests
+/// are compiled as an outside crate and fail if `expose` ever becomes public.
+///
+/// ```compile_fail,E0624
+/// let g = holm_core::text::GatedSecret::new(holm_core::text::SecretText::new("x".to_owned()));
+/// let _ = g.expose();
+/// ```
+///
+/// ```compile_fail,E0624
+/// let g = holm_core::text::GatedSecret::new(holm_core::text::SecretText::new(String::new()));
+/// let _s: &str = g.expose();
+/// ```
+///
+/// Each `compile_fail` block above has a plain sibling below that compiles, so the
+/// failure comes from the private method and not from a typo or a wrong path.
+///
+/// ```
+/// let g = holm_core::text::GatedSecret::new(holm_core::text::SecretText::new("x".to_owned()));
+/// assert!(!g.is_empty());
+/// ```
+///
+/// ```
+/// let g = holm_core::text::GatedSecret::new(holm_core::text::SecretText::new(String::new()));
+/// assert!(g.is_empty());
+/// ```
 pub struct GatedSecret(SecretText);
 
 impl GatedSecret {

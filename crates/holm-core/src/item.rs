@@ -250,10 +250,6 @@ impl ItemInput {
 
     /// Like [`ItemInput::validate`], but an empty phrase is allowed: it means "keep the
     /// stored phrase".
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first used by the session's update path")
-    )]
     pub(crate) fn validate_for_update(&self) -> Result<(), FieldError> {
         validate_item(&self.title, &self.data, PhraseRule::EmptyKeeps)
     }
@@ -265,10 +261,6 @@ pub(crate) enum PhraseRule {
     /// Adding or decoding: the phrase must be present.
     Required,
     /// Updating: an empty phrase keeps the stored one.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first used by the session's update path")
-    )]
     EmptyKeeps,
 }
 
