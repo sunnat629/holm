@@ -49,6 +49,19 @@ mod macos {
         }
     }
 
+    /// The window options. `clipboard_shortcuts` stays off so egui never turns Cmd+C/X/V
+    /// into copy or paste events (Security decision, clipboard in Phase 3).
+    pub(crate) fn native_options() -> eframe::NativeOptions {
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_title("Holm")
+                .with_inner_size([900.0, 600.0]),
+            renderer: eframe::Renderer::Glow,
+            clipboard_shortcuts: false,
+            ..Default::default()
+        }
+    }
+
     /// Picks the vault path, then runs the window until it closes.
     pub(crate) fn run() -> ExitCode {
         let vault_path = match parse_args(std::env::args_os().skip(1)) {
@@ -67,16 +80,7 @@ mod macos {
                 return ExitCode::from(2);
             }
         };
-        let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("Holm")
-                .with_inner_size([900.0, 600.0]),
-            renderer: eframe::Renderer::Glow,
-            // egui never turns Cmd+C/X/V into copy or paste events (Security decision,
-            // clipboard in Phase 3).
-            clipboard_shortcuts: false,
-            ..Default::default()
-        };
+        let options = native_options();
         let result = eframe::run_native(
             "Holm",
             options,
@@ -108,6 +112,11 @@ mod macos {
 
         fn parse(args: &[&str]) -> Result<Option<PathBuf>, ()> {
             parse_args(args.iter().map(OsString::from))
+        }
+
+        #[test]
+        fn egui_clipboard_shortcuts_stay_off() {
+            assert!(!native_options().clipboard_shortcuts);
         }
 
         #[test]

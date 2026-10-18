@@ -283,7 +283,7 @@ impl VaultView {
     /// without a choice: "Save and lock", "Lock anyway" or "Cancel".
     fn show_lock_dialog(&mut self, ctx: &egui::Context) -> Option<VaultAction> {
         let mut action = None;
-        egui::Modal::new(egui::Id::unique("vault-lock-dialog")).show(ctx, |ui| {
+        let modal = egui::Modal::new(egui::Id::unique("vault-lock-dialog")).show(ctx, |ui| {
             ui.label(messages::UNSAVED_ON_LOCK);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -298,6 +298,10 @@ impl VaultView {
                 }
             });
         });
+        // Escape and a click on the backdrop count as Cancel.
+        if modal.should_close() {
+            self.lock_dialog = false;
+        }
         action
     }
 

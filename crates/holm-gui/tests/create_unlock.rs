@@ -241,7 +241,9 @@ fn throttle_countdown_asks_for_a_frame_at_the_next_second() {
             *slot = Some(info.delay);
         }
     });
-    harness.state_mut().tick(&ctx, &common::FakeWindow::default());
+    harness
+        .state_mut()
+        .tick(&ctx, &common::FakeWindow::default());
     let asked = delay.lock().unwrap().expect("tick asked for no frame");
     assert!(
         !asked.is_zero() && asked <= Duration::from_millis(500),

@@ -253,7 +253,8 @@ fn stale_input_in_tick_does_not_reset() {
     let a = auto_lock(&harness);
     clock.advance(a * 2 / 3);
     harness.run();
-    // The window is hidden (covered); a frame still runs with input in it.
+    // The window is hidden (covered); a frame still runs with input in it. The harness
+    // runs `tick` and `show` together, so this also covers the `visible()` gate in `show`.
     set_viewport(&mut harness, |v| v.occluded = Some(true));
     harness.event(Event::PointerMoved(pos2(450.0, 320.0)));
     harness.key_press(Key::A);
@@ -590,6 +591,8 @@ fn job_end_while_minimised_asks_for_another_frame() {
         assert!(start.elapsed() < WAIT, "job did not end");
         std::thread::sleep(Duration::from_millis(10));
     }
-    harness.state_mut().tick(&eframe::egui::Context::default(), &window);
+    harness
+        .state_mut()
+        .tick(&eframe::egui::Context::default(), &window);
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
 }

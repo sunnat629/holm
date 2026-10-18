@@ -108,11 +108,13 @@ fn read_events(ui: &egui::Ui, buf: &mut SecretInput, out: &mut SecretFieldOutput
                 Event::Key {
                     key: Key::Enter,
                     pressed: true,
+                    repeat: false,
                     ..
                 } => out.submitted = true,
                 Event::Key {
                     key: Key::V,
                     pressed: true,
+                    repeat: false,
                     modifiers,
                     ..
                 } if modifiers.command => out.paste_requested = true,
@@ -344,6 +346,42 @@ mod tests {
         let mut harness = harness();
         harness.key_press_modifiers(Modifiers::COMMAND, Key::V);
         harness.run();
+        assert_eq!(harness.state().pastes, 0);
+    }
+
+    #[test]
+    fn held_enter_and_held_paste_fire_once() {
+        let mut harness = harness();
+        focus_first(&mut harness);
+        for repeat in [false, true, true] {
+            harness.event(Event::Key {
+                key: Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers: Modifiers::NONE,
+            });
+            harness.event(Event::Key {
+                key: Key::V,
+                physical_key: None,
+                pressed: true,
+                repeat,
+                modifiers: Modifiers::COMMAND,
+            });
+        }
+        harness.step();
+        assert_eq!(harness.state().submits, 1);
+        assert_eq!(harness.state().pastes, 1);
+    }
+
+    #[test]
+    fn paste_and_ime_events_are_ignored() {
+        let mut harness = harness();
+        focus_first(&mut harness);
+        harness.event(Event::Paste("EXAMPLE-pasted".to_owned()));
+        harness.event(Event::Ime(egui::ImeEvent::Commit("EXAMPLE-ime".to_owned())));
+        harness.step();
+        assert!(harness.state().first.is_empty());
         assert_eq!(harness.state().pastes, 0);
     }
 

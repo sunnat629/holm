@@ -280,7 +280,9 @@ fn in_words(d: Duration) -> String {
 /// `wait` in whole seconds, rounded up, and at least 1 (a wait is only shown while
 /// one is due).
 fn ceil_secs(wait: Duration) -> u64 {
-    let secs = wait.as_secs().saturating_add(u64::from(wait.subsec_nanos() > 0));
+    let secs = wait
+        .as_secs()
+        .saturating_add(u64::from(wait.subsec_nanos() > 0));
     secs.max(1)
 }
 

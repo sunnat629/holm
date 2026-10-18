@@ -10,8 +10,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{
-    FakeClipboard, OTHER_PASSWORD, PASSWORD, harness, run_until, test_app_with_clipboard,
-    vault_path,
+    FakeClipboard, OTHER_PASSWORD, PASSWORD, run_until, test_app_with_clipboard, vault_path,
 };
 use eframe::egui::{Event, Key};
 use egui_kittest::Harness;
@@ -31,6 +30,12 @@ fn type_into(harness: &mut Harness<'static, HolmApp>, label: &str, text: &str) {
     harness.run();
     harness.event(Event::Text(text.to_owned()));
     harness.run();
+}
+
+/// Asserts that a node with exactly this label is on screen (`get_by_label` panics
+/// when there is none or more than one).
+fn assert_shown(harness: &Harness<'static, HolmApp>, label: &str) {
+    let _ = harness.get_by_label(label);
 }
 
 fn kind_is(kind: ScreenKind) -> impl Fn(&HolmApp) -> bool {
@@ -58,7 +63,7 @@ fn run_flow(dir: &Path) {
 
     // Create.
     let (app, _clock) = test_app_with_clipboard(dir, Box::new(fake.clone()));
-    let mut harness = harness(app);
+    let mut harness = common::harness(app);
     harness.run();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Create);
     type_into(&mut harness, "Master password", PASSWORD);
@@ -84,7 +89,7 @@ fn run_flow(dir: &Path) {
     harness.step();
     run_until(&mut harness, kind_is(ScreenKind::Vault), WAIT);
     harness.run();
-    let _ = harness.get_by_label(&format!("Username: {USERNAME}"));
+    assert_shown(&harness, &format!("Username: {USERNAME}"));
 
     // Copy: one call to the secret clipboard, with the password.
     harness.get_by_label("Copy").click();
@@ -94,7 +99,7 @@ fn run_flow(dir: &Path) {
         assert_eq!(state.sets.len(), 1, "one set_secret call");
         assert_eq!(state.sets[0].as_str(), SECRET);
     }
-    let _ = harness.get_by_label(messages::COPIED);
+    assert_shown(&harness, messages::COPIED);
 
     // Lock with the button.
     harness.get_by_label("Lock").click();
@@ -111,13 +116,13 @@ fn run_flow(dir: &Path) {
     let mut harness = common::harness(app);
     harness.run();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
-    let _ = harness.get_by_label("Unlock");
+    assert_shown(&harness, "Unlock");
 
     // A wrong password is refused with the fixed text.
     try_unlock(&mut harness, OTHER_PASSWORD);
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
     assert!(!harness.state().is_unlocked());
-    let _ = harness.get_by_label(messages::WRONG_PASSWORD);
+    assert_shown(&harness, messages::WRONG_PASSWORD);
 
     // The right one opens it, and the login is there.
     try_unlock(&mut harness, PASSWORD);
@@ -125,7 +130,7 @@ fn run_flow(dir: &Path) {
     assert!(harness.state().is_unlocked());
     harness.get_by_label(ROW_TITLE).click();
     harness.run();
-    let _ = harness.get_by_label(&format!("Username: {USERNAME}"));
+    assert_shown(&harness, &format!("Username: {USERNAME}"));
 
     // Still exactly one clipboard write: opening and viewing copied nothing.
     assert_eq!(fake.0.borrow().sets.len(), 1);
@@ -179,15 +184,41 @@ fn no_plaintext_on_disk() {
     }
     assert_eq!(std::fs::metadata(&lock).unwrap().len(), 0);
 
-    // No item text and no password, in either file.
-    for file in [&vault, &lock] {
-        let bytes = std::fs::read(file).unwrap();
-        for needle in [ROW_TITLE, USERNAME, URL_HOST, SECRET, PASSWORD] {
+    // No item text, no password and no wrong-password attempt anywhere under the
+    // tempdir root (the Holm folder and anything beside it).
+    assert!(
+        contains(b"..EXAMPLE-zq9-pass..", SECRET),
+        "the scan must find a planted needle"
+    );
+    let mut files = Vec::new();
+    collect_files(dir.path(), &mut files);
+    assert!(files.contains(&vault) && files.contains(&lock));
+    for file in files {
+        let bytes = std::fs::read(&file).unwrap();
+        for needle in [
+            ROW_TITLE,
+            USERNAME,
+            URL_HOST,
+            SECRET,
+            PASSWORD,
+            OTHER_PASSWORD,
+        ] {
             assert!(
                 !contains(&bytes, needle),
                 "plaintext found on disk ({} bytes)",
                 needle.len()
             );
+        }
+    }
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if std::fs::symlink_metadata(&path).unwrap().is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
         }
     }
 }

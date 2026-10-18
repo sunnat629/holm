@@ -460,7 +460,11 @@ mod tests {
         let mut form = LoginForm::from_item(session.item(id).unwrap()).unwrap();
         let input = form.take_input(SecretText::new(String::new()), Vec::new());
         assert!(input.favourite, "favourite is carried through an edit");
-        assert_eq!(input.category, Some(category), "category is carried through an edit");
+        assert_eq!(
+            input.category,
+            Some(category),
+            "category is carried through an edit"
+        );
         let mut back = LoginForm::from_input(Some(id), input, "x");
         let again = back.take_input(SecretText::new(String::new()), Vec::new());
         assert!(again.favourite, "and through a refill");
