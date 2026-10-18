@@ -106,6 +106,8 @@ wordlist_gate() {
 gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
+# No other gate compiles holm-core's `fuzzing` module (test-only API for fuzz/) with clippy.
+gate clippy-fuzzing cargo clippy -p holm-core --features fuzzing --all-targets --locked -- -D warnings
 gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit
@@ -127,7 +129,8 @@ oracle_gate() {
 # gate is skipped, and only on an archive it has minisign-verified first. Remove the
 # ignores once libsodium-sys-stable moves to zip 9.
 # The fuzz targets are their own workspace (fuzz/Cargo.toml) and need nightly Rust and
-# cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target;
+# cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target,
+# and any single allocation over 64 MiB counts as a crash (the decoders must stay bounded);
 # new corpus entries land in the git-ignored fuzz/corpus/, so the tree stays clean.
 # Dated nightly, so a gate result does not drift with the day. Bump it on purpose.
 FUZZ_NIGHTLY="nightly-2026-10-12"
@@ -143,12 +146,12 @@ fuzz_gate() {
   cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
   cargo audit --file fuzz/Cargo.lock || return 1
   local t seeds
-  for t in parse_header parse_header_structured unpad; do
+  for t in parse_header parse_header_structured unpad open_fixed_key decode_body; do
     mkdir -p "fuzz/corpus/$t"
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi
     # shellcheck disable=SC2086 # $seeds is empty or one path without spaces
-    cargo "+$FUZZ_NIGHTLY" fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 || return 1
+    cargo "+$FUZZ_NIGHTLY" fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 -malloc_limit_mb=64 || return 1
   done
 }
 case "$(uname -s)" in

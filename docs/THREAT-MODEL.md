@@ -17,7 +17,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Attacker | In scope? | What Holm does |
 |---|---|---|
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
-| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser and body decoding are fuzzed (`fuzz/`); full open with a fixed key is fuzzed from Phase 2. |
+| Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser, padding, body decode and the full open with a fixed key are fuzzed (`fuzz/`). |
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on sleep and screen lock, password re-entry for recovery phrases and settings changes. |
 | Clipboard snooping and clipboard history | Partly | Auto-clear, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
@@ -28,6 +28,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 ## Limits we state plainly
 
 - A weak master password is the weakest link. Argon2id slows guessing; it does not stop it.
+- The unlock throttle slows a person at the keyboard. It does nothing against a stolen file: a copy is attacked offline at the Argon2 cost alone.
 - Tampering with the encrypted data, or with any header field that still parses, looks the same as a wrong password. That is unavoidable and correct. Format errors and KDF cost rejections are their own errors, never reported as a wrong password.
 - A deleted item is gone from the new file, not from old copies or backups of it.
 - Wiping memory is best effort. See the claims below.

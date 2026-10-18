@@ -22,7 +22,7 @@ use holm_crypto::{
 use subtle::ConstantTimeEq;
 
 use crate::format::{FormatError, HEADER_LEN, Header, WRAP_AAD_LEN};
-use crate::padding::{pad, unpad};
+use crate::padding::{MAX_BODY_LEN, pad, unpad};
 
 /// Everything that can go wrong creating, opening or saving a vault.
 ///
@@ -126,10 +126,28 @@ pub fn create(
     body: &[u8],
 ) -> Result<(VaultKeys, Vec<u8>), VaultError> {
     params.validate().map_err(VaultError::KdfPolicy)?;
-    let padded = pad(body)?;
-
+    // The size cap comes before Argon2, so an oversized body costs no KDF run.
+    if body.len() > MAX_BODY_LEN {
+        return Err(VaultError::TooLargeToSave);
+    }
     let salt = random_array::<32>()?;
     let kek = derive_kek(password, &salt, params)?;
+    create_with_kek(&kek, salt, params, body)
+}
+
+/// Everything [`create`] does after key derivation: pad, draw the DEK and
+/// nonces, wrap the DEK under `kek`, seal the body.
+///
+/// `salt` and `params` are only written into the header; they are not checked
+/// against `kek`. Separate so the fuzzing build can make vault files without
+/// an Argon2 run per input.
+pub(crate) fn create_with_kek(
+    kek: &SecretKey,
+    salt: [u8; 32],
+    params: &KdfParams,
+    body: &[u8],
+) -> Result<(VaultKeys, Vec<u8>), VaultError> {
+    let padded = pad(body)?;
     let dek = SecretKey::generate()?;
 
     let wrap_nonce = Nonce::random()?;
@@ -143,11 +161,10 @@ pub fn create(
         body_len: 0,
     };
     let wrap_aad = header.encode();
-    let wrapped = aead::seal(&kek, wrap_nonce, &wrap_aad[..WRAP_AAD_LEN], dek.expose())?;
+    let wrapped = aead::seal(kek, wrap_nonce, &wrap_aad[..WRAP_AAD_LEN], dek.expose())?;
     // Unreachable: sealing 32 bytes always gives 32 + 16 = 48.
     header.wrapped_dek =
         <[u8; 48]>::try_from(wrapped.as_slice()).map_err(|_| VaultError::Crypto)?;
-    drop(kek);
 
     let (header, file) = seal_body(&dek, &header, &padded)?;
     Ok((VaultKeys { dek, header }, file))

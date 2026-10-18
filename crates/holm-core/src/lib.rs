@@ -77,6 +77,11 @@ pub mod clock;
 pub mod envelope;
 pub mod error;
 pub mod format;
+// Test-only API for the fuzz targets. Absent from a normal build; see the
+// `fuzzing` feature in Cargo.toml.
+#[cfg(any(test, feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzzing;
 pub mod generator;
 pub mod item;
 pub mod padding;

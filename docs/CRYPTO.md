@@ -229,6 +229,69 @@ model prices them just over 1e10. The model also prices a repeat by its copy cou
 long run of copies (a 10-character date repeated 100 times) can score 4 although an
 attacker who tries repeats would find it sooner; the 1,024-character limit caps this.
 
+## The vault body (schema v1)
+
+The padded plaintext is a `u16` little-endian schema version (1), then the `postcard`
+encoding of the settings, the categories, the items and the next category id.
+`VaultData::decode` treats it as hostile even though the AEAD has authenticated it,
+because a buggy or newer writer is enough to produce bad bytes:
+
+- a newer schema is refused (`NewerSchema`), never rewritten, so its fields are not lost;
+  version 0 is `UnknownSchema`;
+- every string and list length is capped while parsing (a string at most 64 KiB, the
+  item and category counts at their limits), and no list reserves more than 1024 slots
+  up front, so a huge declared length costs no memory;
+- trailing bytes are refused;
+- every field rule and cross-check (unique ids and names, known categories, the next
+  category id above every id in use) runs again before anything is returned;
+- out-of-range settings are clamped toward strict, not refused, so a vault never becomes
+  unopenable over a setting.
+
+`VaultData::encode` runs the same checks first, so Holm never writes a body it would
+refuse to open. A property test (`body_roundtrip_any`) checks that any valid body
+survives `decode(encode())`, and the `decode_body` and `open_fixed_key` fuzz targets
+run the decoder on hostile bytes with a 64 MiB per-allocation limit.
+
+## Storing the file
+
+`VaultStore` is the only way the core touches storage. Its contract: `read` refuses a
+file over 64 MiB before reading any of it; `replace` is atomic against a crash (old bytes
+or new bytes, never a mix); `create_new` never overwrites; `remove_stale_temps` removes
+only the store's own temp files.
+
+`holm-platform::FsStore` keeps it on disk with a durable save: write a new temp file
+(`<file>.tmp-<16 hex>`, exclusive create, mode 0600 on Unix) in the same directory, sync
+it, rename it over the vault, then sync the directory. The vault must be a regular file;
+a symlink is refused, never followed. A `replace` error after the rename may leave the new
+bytes in place, so the session treats any `replace` error as "old or new" and stays dirty.
+Every change in a `Session` is saved at once. A change too large to save is undone in
+memory; after any other save error the change is kept and the session stays dirty, so a
+later save retries.
+
+## Unlock throttle
+
+`Session` keeps an in-memory throttle: two free failures, then waits of 2, 4, 8, 16 and
+32 s, then 60 s for every later failure, measured on the monotonic clock. Every unlock
+error counts, except a missing file and KDF costs refused on public bytes (neither runs
+Argon2). It also guards phrase reveal, password change and weakening a setting. The
+throttle slows a person at the keyboard. It does nothing against a stolen file: an
+attacker with a copy runs Argon2 offline, as fast as their hardware allows, so the
+Argon2 cost and the strength check are the real defence.
+
+## Recovery phrase gate
+
+A recovery phrase is stored as a `GatedSecret`, which has no public accessor.
+`Session::reveal_phrase` re-checks the master password through the throttle every time
+before it returns the phrase, so a UI bug cannot show one by accident.
+
+## Generator sampling
+
+The password, passphrase and username generators take every choice from OS randomness
+through `uniform_below`, which uses rejection sampling: a 32-bit draw in the biased tail
+is thrown away and drawn again, so no value is more likely than another. Minimum digit
+and symbol counts are met by redrawing the whole password, so the output is uniform over
+the passwords that meet the spec. There is no userspace PRNG to seed.
+
 ## Memory hygiene
 
 Wiped when dropped: the KEK, the DEK, the master password and its NFC bytes, the Argon2
@@ -259,6 +322,13 @@ Known gaps:
 - The strength check wipes every heap buffer it derives from the candidate password
   (characters, lower-cased copy, matches, search stack, split table), but like the rest of
   Holm it cannot wipe stack slots and registers that briefly hold characters or prices.
+- The crash tests stop a child process with `exit` at each save step. That models a
+  killed process, not a power loss: what a disk does with data still in its cache when
+  power fails is not tested.
+- A directory sync that the volume does not support (some FAT, exFAT and network
+  volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
+- Windows write-through, the Windows directory sync and the file lock that stops two
+  Holm processes saving the same vault wait for Phase 5.
 
 ## Not claimed
 

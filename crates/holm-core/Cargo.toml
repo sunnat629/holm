@@ -10,6 +10,12 @@ description = "Holm core: vault file format and key hierarchy"
 [lints]
 workspace = true
 
+[features]
+# Exposes `holm_core::fuzzing`: vault files sealed and opened with a raw KEK,
+# no Argon2 and a fixed salt. Only the test-only `fuzz/` workspace turns this
+# on. Never enable it in a shipping build.
+fuzzing = []
+
 [dependencies]
 holm-crypto.workspace = true
 thiserror.workspace = true

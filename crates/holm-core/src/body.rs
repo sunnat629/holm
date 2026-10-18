@@ -730,4 +730,190 @@ mod tests {
             assert!(!msg.to_lowercase().contains("password"));
         }
     }
+
+    /// Writes the fuzz seeds under `fuzz/seeds/`. Run by hand after a body or
+    /// envelope change: `cargo test -p holm-core --lib write_fuzz_seeds -- --ignored`.
+    #[test]
+    #[ignore = "writes files into fuzz/seeds"]
+    fn write_fuzz_seeds() {
+        use crate::fuzzing::seal_with_kek;
+        use holm_crypto::SecretKey;
+        use std::path::PathBuf;
+
+        let seeds = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
+        let default_body = bytes(&VaultData::new_default());
+        let four_items = bytes(&data_with(every_type()));
+        let settings = postcard::to_allocvec(&SettingsWire::new(&Settings::default())).unwrap();
+        let mut huge_count = vec![1, 0];
+        huge_count.extend_from_slice(&settings);
+        huge_count.extend_from_slice(&postcard::to_allocvec(&(1u64 << 40)).unwrap());
+
+        let decode = seeds.join("decode_body");
+        std::fs::create_dir_all(&decode).unwrap();
+        std::fs::write(decode.join("default"), &default_body).unwrap();
+        std::fs::write(decode.join("four_items"), &four_items).unwrap();
+        std::fs::write(decode.join("huge_count"), &huge_count).unwrap();
+
+        // `open_fixed_key` takes an `arbitrary`-encoded `Input`: a 4-byte LE
+        // variant selector (0 picks `RawFile`, u32::MAX picks `Sealed`), then
+        // each `Vec<u8>` byte after a 1 ("one more"), ended by a 0.
+        fn arb_bytes(out: &mut Vec<u8>, v: &[u8]) {
+            for &b in v {
+                out.extend_from_slice(&[1, b]);
+            }
+            out.push(0);
+        }
+        let kek = SecretKey::from_bytes(&mut [7; 32]);
+        let open = seeds.join("open_fixed_key");
+        std::fs::create_dir_all(&open).unwrap();
+        for (name, body) in [("default", &default_body), ("four_items", &four_items)] {
+            let file = seal_with_kek(&kek, body).unwrap();
+            let mut raw = 0u32.to_le_bytes().to_vec();
+            arb_bytes(&mut raw, &file);
+            std::fs::write(open.join(format!("raw_{name}")), raw).unwrap();
+            let mut sealed = u32::MAX.to_le_bytes().to_vec();
+            arb_bytes(&mut sealed, body);
+            arb_bytes(&mut sealed, &[]); // no edits
+            std::fs::write(open.join(format!("sealed_{name}")), sealed).unwrap();
+        }
+    }
+
+    /// Spec section 12: any valid body survives `decode(encode())` unchanged.
+    mod props {
+        use super::*;
+        use proptest::collection::vec;
+        use proptest::option;
+        use proptest::prelude::*;
+        use proptest::sample::Index;
+
+        /// One-line display text: no controls or bidi, precomposed non-ASCII only.
+        const LINE: &str = "[a-zA-Z0-9 ._@:/#äéñ✉日本-]{0,40}";
+        /// Non-blank one-line display text.
+        const TITLE: &str = "[a-zA-Zä✉][a-zA-Z0-9 ._@:/#äéñ✉日本-]{0,40}";
+        /// One-line secret: anything but NUL, CR and LF, tabs and bidi included.
+        const SECRET: &str = "[ -~äé\t\u{202E}]{0,40}";
+        /// Non-blank one-line secret.
+        const ADDRESS: &str = "[a-zA-Z0-9][ -~äé\t]{0,40}";
+        /// Multi-line text.
+        const MULTI: &str = "[a-zA-Z0-9 .äé✉\n\t\r\u{202E}-]{0,80}";
+        /// Non-blank multi-line text.
+        const PHRASE: &str = "[a-z][a-z \n]{0,60}";
+        /// A canonical URL (Task 2): non-empty, no outer spaces, display rules.
+        const URL: &str = "[a-z]([a-zA-Z0-9 ./:?=&%#äé-]{0,30}[a-z0-9/])?";
+
+        fn item_data() -> impl Strategy<Value = ItemData> {
+            prop_oneof![
+                (LINE, SECRET, vec(URL, 0..=32), MULTI).prop_map(|(u, p, urls, n)| {
+                    ItemData::Login {
+                        username: t(&u),
+                        password: st(&p),
+                        urls: urls.iter().map(|s| t(s)).collect(),
+                        notes: st(&n),
+                    }
+                }),
+                (LINE, ADDRESS, SECRET, MULTI).prop_map(|(c, a, m, n)| {
+                    ItemData::CryptoAddress {
+                        chain: t(&c),
+                        address: st(&a),
+                        memo: st(&m),
+                        notes: st(&n),
+                    }
+                }),
+                (PHRASE, MULTI).prop_map(|(p, n)| ItemData::RecoveryPhrase {
+                    phrase: GatedSecret::new(st(&p)),
+                    notes: st(&n),
+                }),
+                MULTI.prop_map(|b| ItemData::SecureNote { body: st(&b) }),
+            ]
+        }
+
+        /// An item with a placeholder id, its raw id bytes, and the index used to
+        /// pick its category (`None` = uncategorised).
+        fn item_parts() -> impl Strategy<Value = (Item, [u8; 16], Option<Index>)> {
+            (
+                any::<[u8; 16]>(),
+                TITLE,
+                option::of(any::<Index>()),
+                any::<bool>(),
+                any::<i64>(),
+                any::<i64>(),
+                option::of(any::<i64>()),
+                item_data(),
+            )
+                .prop_map(
+                    |(id, title, cat, favourite, created, updated, trashed, data)| {
+                        let item = Item {
+                            id: ItemId::from_hex(&"00".repeat(16)).unwrap(),
+                            title: t(&title),
+                            category: None,
+                            favourite,
+                            created: Timestamp(created),
+                            updated: Timestamp(updated),
+                            trashed: trashed.map(Timestamp),
+                            data,
+                        };
+                        (item, id, cat)
+                    },
+                )
+        }
+
+        fn vault() -> impl Strategy<Value = VaultData> {
+            (
+                vec("[a-zA-Zä✉][a-zA-Z0-9 äé✉]{0,20}", 0..4),
+                0u32..1000,
+                vec(item_parts(), 0..6),
+                AUTO_LOCK_MIN_SECS..=AUTO_LOCK_MAX_SECS,
+                crate::settings::CLIPBOARD_MIN_SECS..=CLIPBOARD_MAX_SECS,
+                any::<bool>(),
+            )
+                .prop_map(|(names, gap, parts, auto_lock, clipboard, sleep)| {
+                    let mut d = VaultData::new_default();
+                    for (i, name) in names.iter().enumerate() {
+                        // The number keeps names unique and apart from the built-ins.
+                        let id = d.next_category_id;
+                        d.categories.push(Category {
+                            id: CategoryId(id),
+                            name: t(&format!("{i} {name}")),
+                        });
+                        d.next_category_id = id + 1;
+                    }
+                    d.next_category_id += gap;
+                    for (n, (mut item, mut id, cat)) in parts.into_iter().enumerate() {
+                        // Unique ids: the first byte is the item's position.
+                        id[0] = u8::try_from(n).unwrap();
+                        let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+                        item.id = ItemId::from_hex(&hex).unwrap();
+                        item.category = cat.map(|i| i.get(&d.categories).id);
+                        d.items.push(item);
+                    }
+                    d.settings.auto_lock_secs = auto_lock;
+                    d.settings.clipboard_clear_secs = clipboard;
+                    d.settings.lock_on_sleep = sleep;
+                    d
+                })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(256))]
+            #[test]
+            fn body_roundtrip_any(data in vault()) {
+                let encoded = data.encode().expect("generated data is valid");
+                let back = VaultData::decode(encoded.expose()).expect("decodes");
+                prop_assert_eq!(&back.settings, &data.settings);
+                prop_assert_eq!(back.next_category_id, data.next_category_id);
+                prop_assert_eq!(back.categories.len(), data.categories.len());
+                for (a, b) in back.categories.iter().zip(&data.categories) {
+                    prop_assert_eq!(a.id, b.id);
+                    prop_assert_eq!(a.name(), b.name());
+                }
+                prop_assert_eq!(back.items.len(), data.items.len());
+                for (a, b) in back.items.iter().zip(&data.items) {
+                    assert_items_eq(a, b);
+                }
+                // Encoding is deterministic: the same data gives the same bytes.
+                let again = back.encode().expect("re-encodes");
+                prop_assert_eq!(again.expose(), encoded.expose());
+            }
+        }
+    }
 }

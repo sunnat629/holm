@@ -27,6 +27,7 @@ security, three exercises, and what to read next in
 | 15 | [Generics and trait objects](15-generics-and-trait-objects.md): the vault session, generic over its store with `Session<S: VaultStore>` and a `Box<dyn Clock>`, `Option` as a locked/unlocked state, `&mut self`, `From` and `?` into one error enum, and why a password change writes before it swaps keys. |
 | 16 | [Borrowing in practice](16-borrowing-in-practice.md): returning `&str` from a `&mut self` method, `position`/`iter_mut`/`retain`, `std::mem::replace` for undo, splitting a module into a folder, and `compile_fail` doctests. |
 | 18 | [Files, fsync and processes](18-files-fsync-and-processes.md): `OpenOptions` with `create_new` and `mode`, `#[cfg(unix)]`, why write-sync-rename-sync survives a crash, checking the file you opened, and a crash test that runs itself as a child process. |
+| 21 | [Fuzzing structured inputs](21-fuzzing-structured-inputs.md): `#[derive(Arbitrary)]` so the fuzzer builds typed inputs, a test-only Cargo feature and why it must never ship, proving an allocation bound with `-malloc_limit_mb`, property tests that generate only valid data, and what an end-to-end test proves that unit tests do not. |
 
 ## Side tracks
 
