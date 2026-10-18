@@ -79,8 +79,9 @@ impl KdfParams {
 /// before it is freed. It is not locked in RAM, so the OS may still swap it
 /// out while the derivation runs. The BLAKE2b hash state inside argon2 wipes
 /// on drop (our direct `blake2` dependency turns on its `zeroize` feature).
-/// The argon2 crate's 1 KiB stack buffer is not wiped, nor are the 64-byte
-/// hash outputs its `blake2b_long` keeps on the stack.
+/// Stack temporaries are not wiped: 1 KiB blocks in argon2's block init and
+/// compression, the 64-byte `blake2b_long` outputs (one holds a copy of the
+/// KEK), and BLAKE2b's 128-byte padded final block and message words.
 ///
 /// # Errors
 /// Returns [`CryptoError::KdfParams`] if `params` break the policy, and
@@ -169,7 +170,10 @@ mod tests {
     // argon2 hashes with `Blake2bVarCore` and `Blake2b512`. Our direct `blake2`
     // dependency turns on its `zeroize` feature, so their state wipes on drop.
     // `Blake2b512` has no `ZeroizeOnDrop` marker of its own, but its only two
-    // fields (the core wrapper and the block buffer) both have it.
+    // fields (the core wrapper and the block buffer) both have it. That layout
+    // comes from digest 0.11.3's `buffer_ct_variable!`, and these assertions
+    // would still pass if a new field appeared: re-check the macro on every
+    // digest or blake2 bump.
     static_assertions::assert_impl_all!(blake2::Blake2bVarCore: zeroize::ZeroizeOnDrop);
     static_assertions::assert_impl_all!(
         blake2::digest::block_api::CtOutWrapper<blake2::Blake2bVarCore, blake2::digest::consts::U64>:

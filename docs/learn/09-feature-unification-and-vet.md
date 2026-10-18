@@ -108,9 +108,9 @@ Line by line:
 - If someone deletes `features = ["zeroize"]`, all three lines fail with
   ``the trait bound `Blake2bVarCore: ZeroizeOnDrop` is not satisfied`` and its two siblings.
 
-In Kotlin you'd write: a test that does `assertTrue(AutoCloseable::class.java
-.isAssignableFrom(Blake2b::class.java))`. That check runs only when the test runs; the Rust one
-stops the build.
+In Kotlin you'd write: a test that does
+`assertTrue(AutoCloseable::class.java.isAssignableFrom(Blake2b::class.java))`. That check
+runs only when the test runs; the Rust one stops the build.
 
 ([`static_assertions::assert_impl_all`](https://docs.rs/static_assertions/1.1.0/static_assertions/macro.assert_impl_all.html))
 
@@ -162,7 +162,8 @@ A crate can be covered in four ways, in the order we prefer them:
    someone looks again.
 
 We trusted a publisher only where isrg, mozilla and ariel-os already trust that same
-publisher (`cargo vet suggest` prints a `NOTE:` line when they do). `borsh-derive` and
+publisher (`cargo vet suggest`, which fetches the imported audits over the network, prints
+a `NOTE:` line when they do). `borsh-derive` and
 `proptest` have no such publisher, and `r-efi` is never built for Holm, so those three stay
 exempt with their reasons.
 
@@ -177,7 +178,9 @@ has no shared audit records to import and no `safe-to-run` versus `safe-to-deplo
 The BLAKE2b state inside Argon2 is derived from the master password, so leaving it in freed
 memory gave a memory dump one more place to find password-derived bytes; feature
 unification fixed that without forking `argon2`. Small gaps remain and are listed in
-`docs/CRYPTO.md` (a 1 KiB stack buffer and 64-byte hash outputs on the stack). On the supply
+`docs/CRYPTO.md`: argon2's 1 KiB blocks in block init and compression, the 64-byte
+`blake2b_long` outputs (one holds a copy of the KEK), and BLAKE2b's 128-byte padded final
+block and message words, all on the stack. On the supply
 side, an exemption means "nobody checked", while trust names who we rely on and when that
 reliance ends, so every crate in the shipped tree now has a recorded reason to be there.
 
@@ -188,12 +191,14 @@ reliance ends, so every crate in the shipped tree now has a recorded reason to b
    `holm-crypto` under it.
 2. In the root `Cargo.toml`, delete `, features = ["zeroize"]` from the `blake2` line. Check:
    `cargo test -p holm-crypto --offline` fails to compile with
-   ``the trait bound `Blake2bVarCore: ZeroizeOnDrop` is not satisfied``. Undo with
+   ``the trait bound `Blake2bVarCore: ZeroizeOnDrop` is not satisfied``. This one command
+   uses `--offline` instead of `--locked`: dropping the feature changes `Cargo.lock`, which
+   `--locked` would refuse, and `--offline` still keeps Cargo off the network. Undo with
    `git checkout Cargo.toml Cargo.lock`.
 3. In `supply-chain/audits.toml`, delete the `[[trusted.syn]]` entry (its header and the
    lines under it). Check: `cargo vet --locked` prints `Vetting Failed!` and
-   `syn:2.0.119 missing ["safe-to-deploy"]`. Then `cargo vet suggest` shows a `NOTE:` that
-   other organisations trust dtolnay. Undo with `git checkout supply-chain/audits.toml`.
+   `syn:2.0.119 missing ["safe-to-deploy"]` (and the same for 3.0.9). Undo with
+   `git checkout supply-chain/audits.toml`.
 
 ## Read next
 

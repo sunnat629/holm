@@ -198,9 +198,9 @@ setting that would make password guessing fast and an expensive one that would h
 the machine, and we decide before allocating anything. Overflow checks matter because a
 wrapped number can turn "too big" into "tiny" and get past a limit. We wipe Argon2's work
 memory (64 MiB to 1 GiB of password-derived data) before freeing it, but we do not lock it in
-RAM, so the operating system can still write it to swap while the derivation runs, and the
-argon2 crate's own small temporaries (such as its hash state and a 1 KiB stack buffer) are not
-wiped.
+RAM, so the operating system can still write it to swap while the derivation runs. Since
+lesson 09 the BLAKE2b hash state inside argon2 wipes too, but argon2's and BLAKE2b's stack
+temporaries (1 KiB blocks and short hash outputs) are not wiped; `docs/CRYPTO.md` lists them.
 
 ## Try it
 
