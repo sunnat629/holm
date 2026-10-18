@@ -46,6 +46,7 @@ security, three exercises, and what to read next in
 | 37 | [Hold to reveal](37-hold-to-reveal.md): immediate mode means no stored flag, `Response::is_pointer_button_down_on` plus `contains_pointer`, painting a borrowed `&str` instead of using a `TextEdit`, and drawing an icon from lines when the font has no glyph. |
 | 38 | [One clear for every client](38-one-clear-for-every-client.md): a trait in a shared crate with a test fake, owning a secret in `PendingClear::run(self)`, and two clocks (monotonic and wall) so a sleep cannot delay a deadline. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
+| 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks
 

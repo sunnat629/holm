@@ -106,6 +106,7 @@ wordlist_gate() {
     | shasum -a 256 -c -
 }
 gate wordlist wordlist_gate
+gate bundle-check bash scripts/bundle-macos.sh --check
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
 # Without holm-gui, `gui-window` stays off, so this checks the default feature set.
