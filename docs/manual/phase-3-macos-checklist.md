@@ -129,6 +129,9 @@ After quitting
 - [ ] `ls ~/Library/Saved\ Application\ State | grep -i holm` prints nothing.
 - [ ] The title bar said "Holm" the whole time, never an item title.
 - [ ] Activity Monitor, Network tab: Holm (`holm-gui`) sent and received 0 bytes.
+- [ ] Hold-to-reveal (#40): on the unlock screen type a fake password, hold the eye and the
+  text shows; release and 12 dots return. Hold the eye, press Cmd+Tab while still holding:
+  the text is hidden. Drag off the eye while holding: hidden.
 
 Clean up: delete the fake-data vault with `rm -r "$(dirname "$V")"` for a throwaway one, or the `Holm` folder at the default path if it holds only fake data.
 

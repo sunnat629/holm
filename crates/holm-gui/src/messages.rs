@@ -140,6 +140,10 @@ pub const EXPORT_THROTTLED: &str = "Too many wrong passwords. Wait a little and 
 /// The export failed for another reason.
 pub const EXPORT_FAILED: &str = "The export did not finish. No file was written.";
 
+/// Accessibility label of the press-and-hold eye on a password field. It is a button
+/// label, not a status line, so it stays out of `ALL` (which holds full sentences).
+pub const EYE_LABEL: &str = "Show password while held";
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
 const ALL: [&str; 50] = [
@@ -500,6 +504,12 @@ mod tests {
             export_error(&CoreError::WrongPassword),
             EXPORT_WRONG_PASSWORD
         );
+    }
+
+    #[test]
+    fn eye_label_is_plain_text() {
+        assert!(!EYE_LABEL.is_empty());
+        assert!(!EYE_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
     }
 
     #[test]

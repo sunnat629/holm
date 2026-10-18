@@ -118,6 +118,15 @@ impl SecretInput {
         self.bytes.iter().filter(|b| !is_continuation(**b)).count()
     }
 
+    /// The secret as text, for painting it while the user holds the eye button.
+    ///
+    /// Borrowed, never copied here. The caller must paint it and drop it in the same
+    /// frame, and must not store it.
+    #[must_use]
+    pub(crate) fn expose_for_paint(&self) -> &str {
+        core::str::from_utf8(&self.bytes).unwrap_or("")
+    }
+
     /// True when nothing has been typed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
