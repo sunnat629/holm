@@ -10,7 +10,14 @@
 #![deny(missing_docs)]
 
 #[cfg(target_os = "macos")]
+pub mod app;
+#[cfg(target_os = "macos")]
 pub mod fonts;
+pub mod messages;
+#[cfg(target_os = "macos")]
+mod screens;
 pub mod secret_input;
 #[cfg(target_os = "macos")]
 pub mod widgets;
+#[cfg(target_os = "macos")]
+pub mod worker;

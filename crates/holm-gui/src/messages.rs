@@ -1,0 +1,284 @@
+//! Every error and status line the create and unlock screens show.
+//!
+//! Each line is fixed text written here, never a path, a field value or a library
+//! error's `Display`. The mapping functions take a core error and return one of these
+//! constants, so the screen shows the same words for the same problem every time.
+//! Pure Rust, no egui: the tables are tested on every OS.
+
+use std::io::ErrorKind;
+use std::time::Duration;
+
+use holm_core::body::BodyError;
+use holm_core::envelope::VaultError;
+use holm_core::error::CoreError;
+use holm_core::store::StoreError;
+use holm_core::throttle::ThrottleStatus;
+
+/// A wrong password, or a vault file that was changed or damaged. The two cannot be
+/// told apart, so one line covers both.
+pub const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
+/// The memory for the key derivation could not be reserved.
+pub const NOT_ENOUGH_MEMORY: &str =
+    "Holm didn't have enough memory for this. Close some apps and try again.";
+/// The vault's key-derivation costs are outside Holm's policy.
+pub const KDF_POLICY: &str =
+    "This vault's security settings are outside what Holm accepts, so Holm won't open it.";
+/// The file is not a Holm vault, or it is damaged.
+pub const NOT_A_VAULT: &str = "This file isn't a Holm vault, or it is damaged.";
+/// The vault body was written by a newer Holm.
+pub const NEWER_VAULT: &str = "This vault was made by a newer Holm. Update Holm to open it.";
+/// There is no vault file at the path.
+pub const NO_VAULT: &str = "Holm found no vault here.";
+/// The vault file could not be read.
+pub const READ_FAILED: &str = "Holm couldn't read the vault file.";
+/// Any other unlock failure.
+pub const UNLOCK_FAILED: &str = "Holm couldn't open this vault.";
+/// The core refused an unlock because of the throttle. The screen shows the live
+/// [`throttle_line`] instead whenever it can.
+pub const TOO_MANY_TRIES: &str = "Too many tries. Wait a moment and try again.";
+
+/// The vault folder (or a write into it) is open to other users.
+pub const DIR_PERMISSIONS: &str = "Holm can't save here because other users can change this folder. Fix the folder's permissions and try again.";
+/// The vault folder could not be made or used, for any other reason.
+pub const DIR_ERROR: &str = "Holm couldn't use the folder for its vault. Check that the folder exists and is a normal folder.";
+/// Another Holm holds the vault folder's lock.
+pub const ALREADY_OPEN: &str = "Holm is already open. Close the other window first.";
+/// The worker thread ended without an answer (it panicked).
+pub const WORKER_LOST: &str = "Something went wrong while Holm was working. The vault file was not changed. Quit Holm and open it again.";
+
+/// The two password fields differ (shown on submit only).
+pub const PASSWORDS_DIFFER: &str = "The two passwords don't match.";
+/// The master password is below the strength policy.
+pub const WEAK_PASSWORD: &str = "This master password is too easy to guess. Choose a stronger one.";
+/// The "I understand" box is not ticked.
+pub const TICK_TO_CONTINUE: &str =
+    "Tick the box to confirm that you understand Holm can't recover your vault.";
+/// A vault already exists at the path. The app switches to the unlock screen instead
+/// of showing this, but the table still maps the error to fixed text.
+pub const VAULT_EXISTS: &str = "A vault already exists here. Unlock it instead.";
+/// The new vault file could not be written.
+pub const SAVE_FAILED: &str = "Holm couldn't save the new vault. Try again.";
+/// Any other create failure.
+pub const CREATE_FAILED: &str = "Holm couldn't create the vault. Try again.";
+
+/// Every constant above, for the plain-text test.
+#[cfg(test)]
+const ALL: [&str; 19] = [
+    WRONG_PASSWORD,
+    NOT_ENOUGH_MEMORY,
+    KDF_POLICY,
+    NOT_A_VAULT,
+    NEWER_VAULT,
+    NO_VAULT,
+    READ_FAILED,
+    UNLOCK_FAILED,
+    TOO_MANY_TRIES,
+    DIR_PERMISSIONS,
+    DIR_ERROR,
+    ALREADY_OPEN,
+    WORKER_LOST,
+    PASSWORDS_DIFFER,
+    WEAK_PASSWORD,
+    TICK_TO_CONTINUE,
+    VAULT_EXISTS,
+    SAVE_FAILED,
+    CREATE_FAILED,
+];
+
+/// The line the unlock screen shows for an unlock error.
+#[must_use]
+pub fn unlock_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
+            WRONG_PASSWORD
+        }
+        CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
+        CoreError::Vault(VaultError::KdfPolicy(_)) => KDF_POLICY,
+        CoreError::Vault(VaultError::Format(_) | VaultError::BadPadding)
+        | CoreError::Store(StoreError::NotARegularFile) => NOT_A_VAULT,
+        CoreError::Body(BodyError::NewerSchema(_)) => NEWER_VAULT,
+        CoreError::NoVault => NO_VAULT,
+        CoreError::Store(_) => READ_FAILED,
+        CoreError::Throttled { .. } => TOO_MANY_TRIES,
+        _ => UNLOCK_FAILED,
+    }
+}
+
+/// The line the create screen shows for a create error, and the start-up text for a
+/// vault-folder error from `ensure_vault_dir` (wrapped as [`CoreError::Store`]).
+///
+/// [`CoreError::VaultExists`] maps to [`VAULT_EXISTS`], but the app never shows it:
+/// it switches to the unlock screen instead.
+#[must_use]
+pub fn create_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
+        CoreError::VaultExists => VAULT_EXISTS,
+        CoreError::WeakPassword(_) => WEAK_PASSWORD,
+        CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
+        CoreError::Store(_) => SAVE_FAILED,
+        _ => CREATE_FAILED,
+    }
+}
+
+/// The start-up text for an error from `ensure_vault_dir`: [`DIR_PERMISSIONS`] for a
+/// folder open to other users, else [`DIR_ERROR`].
+#[must_use]
+pub fn dir_error(e: StoreError) -> &'static str {
+    match e {
+        StoreError::Io(ErrorKind::PermissionDenied) => DIR_PERMISSIONS,
+        _ => DIR_ERROR,
+    }
+}
+
+/// The throttle line under the unlock form: `None` with no failures, the failure count
+/// while no wait is due, and the wait in whole seconds (rounded up) while one is.
+/// Numbers only, never anything typed.
+#[must_use]
+pub fn throttle_line(status: &ThrottleStatus) -> Option<String> {
+    if let Some(wait) = status.retry_after {
+        return Some(format!(
+            "Too many tries. Try again in {} s.",
+            ceil_secs(wait)
+        ));
+    }
+    match status.consecutive_failures {
+        0 => None,
+        1 => Some("1 failed try.".to_owned()),
+        n => Some(format!("{n} failed tries.")),
+    }
+}
+
+/// `wait` in whole seconds, rounded up, and at least 1 (a wait is only shown while
+/// one is due).
+fn ceil_secs(wait: Duration) -> u64 {
+    let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+    secs.max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use holm_core::format::FormatError;
+    use holm_crypto::error::KdfParamsError;
+
+    fn status(failures: u32, wait_ms: Option<u64>) -> ThrottleStatus {
+        ThrottleStatus {
+            consecutive_failures: failures,
+            retry_after: wait_ms.map(Duration::from_millis),
+        }
+    }
+
+    #[test]
+    fn unlock_error_table() {
+        let table: [(CoreError, &str); 13] = [
+            (CoreError::WrongPassword, WRONG_PASSWORD),
+            (
+                CoreError::Vault(VaultError::WrongPasswordOrCorrupt),
+                WRONG_PASSWORD,
+            ),
+            (CoreError::Vault(VaultError::OutOfMemory), NOT_ENOUGH_MEMORY),
+            (
+                CoreError::Vault(VaultError::KdfPolicy(KdfParamsError::BelowFloor)),
+                KDF_POLICY,
+            ),
+            (
+                CoreError::Vault(VaultError::Format(FormatError::BadMagic)),
+                NOT_A_VAULT,
+            ),
+            (CoreError::Vault(VaultError::BadPadding), NOT_A_VAULT),
+            (CoreError::Body(BodyError::NewerSchema(9)), NEWER_VAULT),
+            (CoreError::NoVault, NO_VAULT),
+            (CoreError::Store(StoreError::NotARegularFile), NOT_A_VAULT),
+            (CoreError::Store(StoreError::TooLarge), READ_FAILED),
+            (
+                CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)),
+                READ_FAILED,
+            ),
+            (CoreError::Body(BodyError::Malformed), UNLOCK_FAILED),
+            (
+                CoreError::Throttled {
+                    retry_after_secs: 4,
+                },
+                TOO_MANY_TRIES,
+            ),
+        ];
+        for (error, line) in &table {
+            assert_eq!(unlock_error(error), *line, "{error:?}");
+        }
+        assert_eq!(
+            unlock_error(&CoreError::Vault(VaultError::Crypto)),
+            UNLOCK_FAILED
+        );
+    }
+
+    #[test]
+    fn create_error_table() {
+        let denied = StoreError::Io(ErrorKind::PermissionDenied);
+        assert_eq!(create_error(&CoreError::Store(denied)), DIR_PERMISSIONS);
+        assert_eq!(create_error(&CoreError::VaultExists), VAULT_EXISTS);
+        assert_eq!(
+            create_error(&CoreError::Store(StoreError::Io(ErrorKind::Other))),
+            SAVE_FAILED
+        );
+        assert_eq!(
+            create_error(&CoreError::Vault(VaultError::OutOfMemory)),
+            NOT_ENOUGH_MEMORY
+        );
+        let weak = holm_core::strength::StrengthVerdict {
+            score: 1,
+            chars: 12,
+            acceptable: false,
+        };
+        assert_eq!(create_error(&CoreError::WeakPassword(weak)), WEAK_PASSWORD);
+        assert_eq!(
+            create_error(&CoreError::Vault(VaultError::Crypto)),
+            CREATE_FAILED
+        );
+
+        assert_eq!(dir_error(denied), DIR_PERMISSIONS);
+        assert_eq!(dir_error(StoreError::NotARegularFile), DIR_ERROR);
+        assert_eq!(dir_error(StoreError::Io(ErrorKind::NotFound)), DIR_ERROR);
+    }
+
+    #[test]
+    fn messages_have_no_placeholders() {
+        for line in ALL {
+            assert!(!line.is_empty());
+            assert!(line.ends_with('.'), "{line}");
+            assert!(
+                !line.contains(['{', '}', '%', '<', '>', '/', '\\']),
+                "not plain text: {line}"
+            );
+        }
+        assert_eq!(
+            throttle_line(&status(3, Some(2_000))).as_deref(),
+            Some("Too many tries. Try again in 2 s.")
+        );
+    }
+
+    #[test]
+    fn throttle_line_counts_and_rounds_up() {
+        assert_eq!(throttle_line(&status(0, None)), None);
+        assert_eq!(
+            throttle_line(&status(1, None)).as_deref(),
+            Some("1 failed try.")
+        );
+        assert_eq!(
+            throttle_line(&status(2, None)).as_deref(),
+            Some("2 failed tries.")
+        );
+        assert_eq!(
+            throttle_line(&status(3, Some(1_001))).as_deref(),
+            Some("Too many tries. Try again in 2 s.")
+        );
+        assert_eq!(
+            throttle_line(&status(4, Some(1))).as_deref(),
+            Some("Too many tries. Try again in 1 s.")
+        );
+        assert_eq!(
+            throttle_line(&status(3, None)).as_deref(),
+            Some("3 failed tries.")
+        );
+    }
+}

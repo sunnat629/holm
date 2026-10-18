@@ -24,6 +24,9 @@ mod macos {
     use std::process::ExitCode;
 
     use eframe::egui;
+    use holm_core::clock::SystemClock;
+    use holm_crypto::kdf::KdfParams;
+    use holm_gui::app::{AppConfig, HolmApp, NoClipboard};
 
     /// Shown for any argument list other than none or `--vault <path>`.
     const USAGE: &str = "usage: holm-gui [--vault <path>]";
@@ -78,7 +81,14 @@ mod macos {
             options,
             Box::new(|cc| {
                 holm_gui::fonts::install_fonts(&cc.egui_ctx);
-                Ok(Box::new(HolmApp { vault_path }))
+                Ok(Box::new(HolmApp::new(AppConfig {
+                    vault_path,
+                    kdf: KdfParams::DEFAULT,
+                    session_clock: Box::new(SystemClock::new()),
+                    ui_clock: Box::new(SystemClock::new()),
+                    // The real clipboard arrives with the copy buttons (Task 5).
+                    clipboard: Box::new(NoClipboard),
+                })))
             }),
         );
         match result {
@@ -88,23 +98,6 @@ mod macos {
                 eprintln!("Holm could not open its window.");
                 ExitCode::from(1)
             }
-        }
-    }
-
-    /// The app. In this task it only shows the name; Task 3 adds the screens.
-    struct HolmApp {
-        /// The vault file this window works on.
-        #[expect(dead_code, reason = "Task 3 opens the vault at this path")]
-        vault_path: PathBuf,
-    }
-
-    impl eframe::App for HolmApp {
-        fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Holm");
-                });
-            });
         }
     }
 
