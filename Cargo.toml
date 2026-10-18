@@ -53,6 +53,12 @@ zxcvbn = { version = "3", default-features = false }
 eframe = { version = "=0.37.0", default-features = false, features = ["glow", "accesskit"] }
 # Plain-text clipboard only; Holm calls it itself (no image support).
 arboard = { version = "=3.7.0", default-features = false }
+# holm-platform's macOS-only `gui-window` feature (holm-gui only): reads the window's
+# minimised state from AppKit. Pinned to the versions eframe already pulls in, so the
+# feature adds no crate to the graph.
+raw-window-handle = { version = "=0.6.2", default-features = false, features = ["std"] }
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }
 
 # Dev and test only
 proptest = "1.12"

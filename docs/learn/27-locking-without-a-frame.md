@@ -14,8 +14,8 @@ An open vault left on an unattended Mac is the easiest attack there is: no explo
 
 ```rust
 impl eframe::App for HolmApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.tick(ctx);
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.tick(ctx, &AppKitWindow(frame));
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
@@ -31,7 +31,10 @@ In Kotlin with Compose you'd keep the idle timer in a `ViewModel` coroutine, not
 
 ```rust
 if matches!(self.screen, Screen::Vault(_)) {
-    if ctx.input(|i| i.viewport().minimized == Some(true)) {
+    let minimised = window
+        .minimised()
+        .or_else(|| ctx.input(|i| i.viewport().minimized));
+    if minimised == Some(true) {
         self.lock(LockReason::Minimised);
     } else if self.session.as_ref().is_some_and(Session::idle_expired) {
         self.lock(LockReason::Idle);
@@ -46,6 +49,21 @@ If the idle check lived in `show`, a vault behind another window could stay open
 `tick` never records activity. Input that arrives while the window is hidden may be stale or not from the user. `record_activity` runs in `show`, and only when `viewport().visible()` is not `Some(false)` and the frame has events or pointer movement.
 
 In Kotlin you'd write `if (minimized == true)` against a `Boolean?`. Rust's `Option<bool>` compares the same way: `== Some(true)` is false for both `Some(false)` and `None` ("unknown").
+
+`tick` also skips the idle check while the worker runs. So `finish` asks `idle_expired()` before the finished job counts as activity: a deadline or a sleep during a slow save still locks.
+
+### Asking AppKit, behind a trait
+
+egui has a `viewport().minimized` field, but on macOS egui-winit fills it only when the window is created (winit's query hops to the main thread and can deadlock, egui issue 3494). Minimising never changes it, so a lock built on it never fires. Holm asks AppKit itself: `holm_platform::window::is_minimised` takes the window handle eframe's `Frame` gives, casts its `NSView` pointer (the one `unsafe` line, with a `// SAFETY:` comment), and reads `NSWindow.isMiniaturized` on the main thread, so nothing hops. It sits behind holm-platform's optional `gui-window` feature, so the CLI and the core never see AppKit.
+
+```rust
+pub trait WindowState { fn minimised(&self) -> Option<bool>; }
+fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    self.tick(ctx, &AppKitWindow(frame));
+}
+```
+
+`tick` takes `&dyn WindowState`, so tests pass a `FakeWindow` they minimise by hand. In Kotlin you'd inject a `WindowStateProvider` interface into the ViewModel for the same reason.
 
 ### `Drop` does the wiping
 

@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 holm-core.workspace = true
 holm-crypto.workspace = true
-holm-platform.workspace = true
+holm-platform = { workspace = true, features = ["gui-window"] }
 zeroize.workspace = true
 
 # The GUI stack is built on macOS only. Linux and Windows compile an empty library and

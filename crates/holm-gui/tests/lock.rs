@@ -8,17 +8,22 @@ mod common;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use common::{
-    PASSWORD, TestClock, harness, make_vault, make_vault_with_auto_lock, run_until, test_app,
-    vault_path,
+    FakeWindow, PASSWORD, TestClock, harness, harness_with_window, make_vault,
+    make_vault_with_auto_lock, run_until, test_app, vault_path,
 };
 use eframe::egui::{Event, Key, Modifiers, ViewportId, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
+use holm_core::session::Session;
 use holm_gui::app::{HolmApp, LockNote, LockReason, ScreenKind};
 use holm_gui::messages;
+use holm_gui::worker::{self, Job, WorkDone};
+use holm_platform::fs_store::FsStore;
 
 const WAIT: Duration = Duration::from_secs(30);
 const SECRET: &str = "EXAMPLE-zq9-pass";
@@ -61,6 +66,17 @@ fn open(dir: &Path) -> (Harness<'static, HolmApp>, TestClock) {
     reopen(dir)
 }
 
+/// [`open`] with a window the test can minimise.
+fn open_in_window(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, FakeWindow) {
+    make_vault(dir, PASSWORD);
+    let (app, clock) = test_app(dir);
+    let window = FakeWindow::default();
+    let mut harness = harness_with_window(app, window.clone());
+    harness.run();
+    unlock(&mut harness);
+    (harness, clock, window)
+}
+
 /// The open vault's auto-lock time, from its settings.
 fn auto_lock(harness: &Harness<'static, HolmApp>) -> Duration {
     harness.state().auto_lock_time()
@@ -100,12 +116,25 @@ fn add_example(harness: &mut Harness<'static, HolmApp>) {
 /// users, so the add stays in memory and its save fails. Returns the folder, to fix
 /// its mode again.
 fn open_dirty(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, std::path::PathBuf) {
-    let (mut harness, clock) = open(dir);
+    let (harness, clock, folder, _window) = open_dirty_in_window(dir);
+    (harness, clock, folder)
+}
+
+/// [`open_dirty`] with a window the test can minimise.
+fn open_dirty_in_window(
+    dir: &Path,
+) -> (
+    Harness<'static, HolmApp>,
+    TestClock,
+    std::path::PathBuf,
+    FakeWindow,
+) {
+    let (mut harness, clock, window) = open_in_window(dir);
     let folder = vault_path(dir).parent().unwrap().to_owned();
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
     add_example(&mut harness);
     let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
-    (harness, clock, folder)
+    (harness, clock, folder, window)
 }
 
 fn private(folder: &Path) {
@@ -190,7 +219,7 @@ fn idle_lock_runs_without_ui() {
     clock.advance(a);
     // Only `tick`, as eframe's `logic` while the window is hidden; `show` never runs.
     let ctx = harness.ctx.clone();
-    harness.state_mut().tick(&ctx);
+    harness.state_mut().tick(&ctx, &FakeWindow::default());
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
     assert!(!harness.state().is_unlocked());
     assert_eq!(
@@ -244,12 +273,13 @@ fn stale_input_in_tick_does_not_reset() {
 #[test]
 fn minimise_locks_at_once() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut harness, _clock) = open(dir.path());
-    set_viewport(&mut harness, |v| v.minimized = Some(true));
+    let (mut harness, _clock, window) = open_in_window(dir.path());
+    // As AppKit reports it; eframe's own `minimized` field stays `Some(false)` on macOS.
+    window.set_minimised(true);
     harness.step();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
     assert!(!harness.state().is_unlocked());
-    set_viewport(&mut harness, |v| v.minimized = Some(false));
+    window.set_minimised(false);
     harness.run();
     assert_locked(&harness, "Locked when the window was minimised.");
 }
@@ -398,12 +428,12 @@ fn idle_lock_never_waits() {
 #[test]
 fn minimise_lock_never_waits() {
     let dir = tempfile::tempdir().unwrap();
-    let (mut harness, _clock, folder) = open_dirty(dir.path());
+    let (mut harness, _clock, folder, window) = open_dirty_in_window(dir.path());
     harness.get_by_label("Lock").click();
     harness.run();
     let _ = harness.get_by_label(messages::UNSAVED_ON_LOCK);
     // The dialog is open; minimising still locks at once.
-    set_viewport(&mut harness, |v| v.minimized = Some(true));
+    window.set_minimised(true);
     harness.step();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
     assert_eq!(
@@ -451,4 +481,68 @@ fn idle_text_follows_settings() {
     harness.run();
     assert_locked(&harness, "Locked after 10 minutes without use.");
     assert_eq!(nodes_with(&harness, "5 minutes"), 0);
+}
+
+/// Held by `idle_during_job_locks_on_finish` while its worker must wait. Only that test
+/// uses [`held_worker`], so other tests never wait on it.
+static HOLD_WORKER: Mutex<()> = Mutex::new(());
+
+/// A spawner whose worker waits until [`HOLD_WORKER`] is free, then runs the job on
+/// the real worker and passes its answer on.
+fn held_worker(
+    session: Session<FsStore>,
+    job: Job,
+    wake: Box<dyn Fn() + Send>,
+) -> Receiver<WorkDone> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        drop(HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner));
+        let done = worker::spawn(session, job, || {}).recv();
+        if let Ok(done) = done {
+            let _ = tx.send(done);
+        }
+        wake();
+    });
+    rx
+}
+
+#[test]
+fn idle_during_job_locks_on_finish() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (app, clock) = test_app(dir.path());
+    let mut harness = harness(app.with_spawner(held_worker));
+    harness.run();
+    unlock(&mut harness);
+    let a = auto_lock(&harness);
+    let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
+    harness.get_by_label("New login").click();
+    harness.run();
+    type_into(&mut harness, "Title", ROW_TITLE);
+    type_into(&mut harness, "Password", SECRET);
+    harness.get_by_label("Save").click();
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    // The idle deadline passes while the job runs (a slow disk, or a sleep).
+    clock.advance(a);
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    drop(hold);
+    run_until(
+        &mut harness,
+        |app| app.screen_kind() != ScreenKind::Working,
+        WAIT,
+    );
+    // The finished job does not count as activity: the vault locks at once.
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert!(!harness.state().is_unlocked());
+    assert_eq!(
+        harness.state().lock_note(),
+        Some(LockNote {
+            reason: LockReason::Idle,
+            discarded_unsaved: false
+        })
+    );
+    harness.run();
+    assert_locked(&harness, &line(LockReason::Idle, false, a));
 }

@@ -61,6 +61,24 @@ pub struct AppConfig {
     pub clipboard: Box<dyn SecretClipboard>,
 }
 
+/// Where the app learns whether its window is minimised. eframe's own
+/// `ViewportInfo::minimized` is read on macOS only when the window is created, so it
+/// never changes when the user minimises; eframe's `logic` passes [`AppKitWindow`],
+/// and tests pass a fake.
+pub trait WindowState {
+    /// `Some(true)` when the window is minimised, `None` when that is unknown.
+    fn minimised(&self) -> Option<bool>;
+}
+
+/// The real window, asked through AppKit (`NSWindow.isMiniaturized`).
+pub struct AppKitWindow<'a>(pub &'a eframe::Frame);
+
+impl WindowState for AppKitWindow<'_> {
+    fn minimised(&self) -> Option<bool> {
+        holm_platform::window::is_minimised(self.0)
+    }
+}
+
 /// Which screen is showing, without its data. For tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenKind {
@@ -232,13 +250,17 @@ impl HolmApp {
 
     /// Per-frame work before drawing. eframe runs it even while the window is hidden,
     /// so the idle lock never waits for a drawn frame. With the vault open it locks at
-    /// once when the window is minimised, or when the session's idle timer has run
-    /// out (which also covers a Mac waking from sleep, through the wall-clock gap);
-    /// otherwise it asks for a frame every second. It also takes the worker's answer
-    /// when it is there. It never records activity: input seen here may be stale.
-    pub fn tick(&mut self, ctx: &egui::Context) {
+    /// once when `window` says it is minimised (eframe's own field only when `window`
+    /// does not know), or when the session's idle timer has run out (which also covers
+    /// a Mac waking from sleep, through the wall-clock gap); otherwise it asks for a
+    /// frame every second. It also takes the worker's answer when it is there. It never
+    /// records activity: input seen here may be stale.
+    pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
         if matches!(self.screen, Screen::Vault(_)) {
-            if ctx.input(|i| i.viewport().minimized == Some(true)) {
+            let minimised = window
+                .minimised()
+                .or_else(|| ctx.input(|i| i.viewport().minimized));
+            if minimised == Some(true) {
                 self.lock(LockReason::Minimised);
             } else if self.session.as_ref().is_some_and(Session::idle_expired) {
                 self.lock(LockReason::Idle);
@@ -482,13 +504,20 @@ impl HolmApp {
         };
         if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) {
             let mut view = keep.unwrap_or_else(VaultView::new);
-            if result.is_ok() {
+            // `tick` skips the idle check while a job runs. Ask now, before the
+            // finished job counts as activity, so an idle deadline or a sleep during
+            // the job still locks.
+            let expired = session.idle_expired();
+            if result.is_ok() && !expired {
                 session.note_activity();
                 self.last_activity = self.ui_clock.monotonic();
             }
             view.on_done(kind, &result, added, returned, &session);
             self.screen = Screen::Vault(view);
             self.session = Some(session);
+            if expired {
+                self.lock(LockReason::Idle);
+            }
             return;
         }
         self.screen = match (kind, result) {
@@ -548,8 +577,8 @@ fn is_paste_key(event: &egui::Event) -> bool {
 }
 
 impl eframe::App for HolmApp {
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.tick(ctx);
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.tick(ctx, &AppKitWindow(frame));
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

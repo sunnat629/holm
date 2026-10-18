@@ -1508,6 +1508,9 @@ version = "0.0.0"
 dependencies = [
  "holm-core",
  "holm-crypto",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "raw-window-handle",
  "tempfile",
 ]
 

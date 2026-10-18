@@ -96,8 +96,11 @@ Lock and unlock
 - [ ] A wrong password three times: the third try is followed by a live wait ("Too
   many tries. Try again in N s.") and the Unlock button stays disabled until it ends.
 - [ ] The right password opens the vault and the login is there.
-- [ ] Minimise the window (yellow button or Cmd+M), bring it back: it is locked, with
-  "Locked when the window was minimised."
+- [ ] Minimise the window with Cmd+M, wait 2 s, bring it back from the Dock: it is
+  locked, with "Locked when the window was minimised." (Holm reads this from AppKit's
+  `isMiniaturized`; headless tests can only drive a fake window.)
+- [ ] Unlock, then minimise with the yellow button in the title bar, wait 2 s, bring it
+  back: it is locked the same way.
 - [ ] Unlock and leave Holm alone for the auto-lock time from the settings (5 minutes
   by default). The amber line "Locking in N s because of no activity." shows 30 s
   before, then it locks with "Locked after 5 minutes without use."

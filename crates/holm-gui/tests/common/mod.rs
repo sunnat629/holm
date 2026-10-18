@@ -8,7 +8,7 @@
     reason = "each test file uses a different subset of these helpers"
 )]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use holm_core::item::Timestamp;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
-use holm_gui::app::{AppConfig, HolmApp};
+use holm_gui::app::{AppConfig, HolmApp, WindowState};
 use holm_gui::clipboard::{ClipboardError, NoClipboard, SecretClipboard};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
@@ -139,14 +139,38 @@ pub fn test_app_with_clipboard(
     (app, clock)
 }
 
-/// A headless harness that runs `app` the way eframe does: `tick`, then `show`.
+/// A window whose minimised state the test sets by hand, in place of AppKit. Clones
+/// share the same state. Starts not minimised.
+#[derive(Clone, Default)]
+pub struct FakeWindow(Rc<Cell<bool>>);
+
+impl FakeWindow {
+    /// Minimises the window (`true`) or brings it back (`false`).
+    pub fn set_minimised(&self, minimised: bool) {
+        self.0.set(minimised);
+    }
+}
+
+impl WindowState for FakeWindow {
+    fn minimised(&self) -> Option<bool> {
+        Some(self.0.get())
+    }
+}
+
+/// A headless harness that runs `app` the way eframe does: `tick`, then `show`. The
+/// window is never minimised.
 pub fn harness(app: HolmApp) -> Harness<'static, HolmApp> {
+    harness_with_window(app, FakeWindow::default())
+}
+
+/// [`harness`] with `window` as the app's window.
+pub fn harness_with_window(app: HolmApp, window: FakeWindow) -> Harness<'static, HolmApp> {
     Harness::builder()
         .with_context_setup(holm_gui::fonts::install_fonts)
         .with_size([900.0, 600.0])
         .build_ui_state(
-            |ui, app: &mut HolmApp| {
-                app.tick(ui.ctx());
+            move |ui, app: &mut HolmApp| {
+                app.tick(ui.ctx(), &window);
                 app.show(ui);
             },
             app,
