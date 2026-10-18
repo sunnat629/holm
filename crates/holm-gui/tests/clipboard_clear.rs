@@ -9,7 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{
-    FakeClipboard, PASSWORD, TestClock, harness, make_vault, run_until, test_app_with_clipboard,
+    FakeClipboard, PASSWORD, TestClock, harness, make_vault, make_vault_with_clipboard, run_until,
+    test_app_with_clipboard,
 };
 use eframe::App as _;
 use eframe::egui::Event;
@@ -33,6 +34,11 @@ fn type_into(harness: &mut Harness<'static, HolmApp>, label: &str, text: &str) {
 /// the shared clock and the fake clipboard.
 fn copied(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, FakeClipboard) {
     make_vault(dir, PASSWORD);
+    copied_in_made_vault(dir)
+}
+
+/// [`copied`] on a vault the caller already made.
+fn copied_in_made_vault(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, FakeClipboard) {
     let fake = FakeClipboard::default();
     let (app, clock) = test_app_with_clipboard(dir, Box::new(fake.clone()));
     let mut harness = harness(app);
@@ -122,4 +128,46 @@ fn gui_quit_clears_clipboard() {
     harness.state_mut().on_exit(None);
     assert_eq!(fake.0.borrow().clears, 1);
     assert_eq!(fake.0.borrow().contents, None);
+}
+
+#[test]
+fn gui_copy_uses_the_vaults_clipboard_time() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault_with_clipboard(dir.path(), PASSWORD, 10);
+    let (mut harness, clock, fake) = copied_in_made_vault(dir.path());
+    let _ = harness.get_by_label(&messages::copied_note(10));
+    assert!(
+        harness
+            .query_by_label(&messages::copied_note(CLIPBOARD_DEFAULT_SECS))
+            .is_none()
+    );
+
+    clock.advance(Duration::from_secs(9));
+    harness.step();
+    assert_eq!(fake.0.borrow().clears, 0, "not yet at 9 s");
+    assert_eq!(fake.0.borrow().contents.as_deref(), Some(SECRET));
+
+    clock.advance(Duration::from_secs(1));
+    harness.step();
+    harness.run();
+    assert_eq!(fake.0.borrow().clears, 1, "cleared at 10 s");
+    assert_eq!(fake.0.borrow().contents, None);
+}
+
+#[test]
+fn gui_failed_clear_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, clock, fake) = copied(dir.path());
+    fake.0.borrow_mut().clear_sticks = true;
+
+    clock.advance(Duration::from_secs(u64::from(CLIPBOARD_DEFAULT_SECS)));
+    harness.step();
+    harness.run();
+    assert_eq!(fake.0.borrow().clears, 1);
+    let _ = harness.get_by_label(messages::CLIPBOARD_NOT_CLEARED);
+    assert!(
+        harness
+            .query_by_label(&messages::copied_note(CLIPBOARD_DEFAULT_SECS))
+            .is_none()
+    );
 }

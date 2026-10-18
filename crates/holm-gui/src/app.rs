@@ -251,6 +251,10 @@ impl HolmApp {
         let outcome = pending.run(&mut *self.clipboard);
         let note = match outcome {
             ClearOutcome::LeftAlone => Some(messages::CLIPBOARD_CHANGED.to_owned()),
+            // Same as the CLI, where this is an error: the password is still there.
+            // No retry: the value is wiped with the pending clear, and the line tells
+            // the user to replace the clipboard themselves.
+            ClearOutcome::StillThere => Some(messages::CLIPBOARD_NOT_CLEARED.to_owned()),
             _ => None,
         };
         if let Screen::Vault(view) = &mut self.screen {

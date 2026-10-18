@@ -82,6 +82,8 @@ pub struct FakeClipboardState {
     pub contents: Option<String>,
     /// How many times `clear` was called.
     pub clears: usize,
+    /// Whether `clear` does nothing, as a pasteboard that refuses to be emptied.
+    pub clear_sticks: bool,
 }
 
 /// A clipboard for tests: records `set` calls and serves `paste`. Clones share
@@ -121,7 +123,9 @@ impl Clip for FakeClipboard {
     fn clear(&mut self) {
         let mut state = self.0.borrow_mut();
         state.clears += 1;
-        state.contents = None;
+        if !state.clear_sticks {
+            state.contents = None;
+        }
     }
 }
 
@@ -239,4 +243,18 @@ pub fn make_vault_with_auto_lock(dir: &Path, password: &str, auto_lock_secs: u32
     };
     // A longer time is a weaker setting, so it needs the password.
     session.update_settings(settings, Some(&password)).unwrap();
+}
+
+/// [`make_vault`], then sets the vault's clipboard-clear time to `clipboard_clear_secs`.
+pub fn make_vault_with_clipboard(dir: &Path, password: &str, clipboard_clear_secs: u32) {
+    make_vault(dir, password);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    let password = MasterPassword::new(password.to_owned());
+    session.unlock(&password).unwrap();
+    let settings = holm_core::settings::Settings {
+        clipboard_clear_secs,
+        ..session.settings().unwrap().clone()
+    };
+    // A shorter time is a stronger setting, so it needs no password.
+    session.update_settings(settings, None).unwrap();
 }
