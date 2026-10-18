@@ -8,7 +8,7 @@
 //! Export never writes over anything: an existing path is refused before any prompt,
 //! and the file is created new with owner-only permissions.
 
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use holm_core::envelope::VaultError;
@@ -47,18 +47,15 @@ fn absolute(path: &Path) -> Result<PathBuf, CliError> {
 }
 
 /// A read error for an import file. The shared reader's own text talks about the
-/// vault file and its limit, so it is never shown. A failed read is probed once more
-/// to tell a folder or a refused file from any other failure.
-fn read_error(e: TransferError, file: &Path) -> CliError {
+/// vault file and its limit, so it is never shown.
+fn read_error(e: TransferError) -> CliError {
     match e {
         TransferError::NotFound => CliError::ImportFileMissing,
         TransferError::TooLarge => CliError::ImportTooLarge,
+        TransferError::NotAFile => CliError::ImportNotAFile,
+        TransferError::NoAccess => CliError::ImportNoAccess,
         TransferError::Import(e) => CliError::Import(e),
-        _ => match std::fs::metadata(file) {
-            Ok(m) if !m.is_file() => CliError::ImportNotAFile,
-            Err(e) if e.kind() == ErrorKind::PermissionDenied => CliError::ImportNoAccess,
-            _ => CliError::ImportReadFailed,
-        },
+        _ => CliError::ImportReadFailed,
     }
 }
 
@@ -181,7 +178,7 @@ pub fn import(
 /// The `Import…` read and parse errors of [`CliError`].
 pub(crate) fn read_import(args: &ImportArgs) -> Result<ImportBatch, CliError> {
     let file = absolute(&args.file).map_err(|_| CliError::ImportReadFailed)?;
-    transfer::read_import(&file, args.format).map_err(|e| read_error(e, &file))
+    transfer::read_import(&file, args.format).map_err(read_error)
 }
 
 /// The body of [`import`] on an open session, for `holm shell` too: the preview,

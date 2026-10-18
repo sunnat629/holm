@@ -299,3 +299,28 @@ fn import_core_error_before_rows_is_failed_not_unsaved() {
         CliError::ImportTooLargeToSave
     ));
 }
+
+#[cfg(unix)]
+#[test]
+fn import_unreadable_file_says_no_access() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, path) = vault_dir();
+    init(&path);
+    let locked = dir.path().join("locked.csv");
+    fs::write(&locked, "x").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut term = FakeTerminal::new(&[PW, "import"]);
+    let ran = run(&path, &["import", locked.to_str().unwrap()], &mut term);
+    let readable = fs::File::open(&locked).is_ok();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
+    if readable {
+        return; // running as root: the file is readable, nothing to assert
+    }
+    failed(&ran);
+    assert!(
+        ran.err.contains("Holm isn't allowed to read that file."),
+        "{}",
+        ran.err
+    );
+    assert!(term.prompts.is_empty());
+}

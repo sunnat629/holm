@@ -31,7 +31,11 @@ pub enum TransferError {
     Exists,
     /// The typed path is empty or does not start at the top folder of the disk.
     NotAbsolute,
-    /// The import file could not be read.
+    /// The import path is not a regular file: a folder, a pipe or a device.
+    NotAFile,
+    /// The operating system refused to let Holm read the import file.
+    NoAccess,
+    /// The import file could not be read, for any other reason.
     ReadFailed,
     /// The export file could not be written.
     WriteFailed,
@@ -79,6 +83,7 @@ pub fn format_for(path: &Path, forced: Option<ImportFormat>) -> ImportFormat {
 ///
 /// # Errors
 /// [`TransferError::NotFound`], [`TransferError::TooLarge`],
+/// [`TransferError::NotAFile`], [`TransferError::NoAccess`],
 /// [`TransferError::ReadFailed`] or [`TransferError::Import`].
 pub fn read_import(
     path: &Path,
@@ -87,6 +92,8 @@ pub fn read_import(
     let bytes = read_capped(path, MAX_IMPORT_BYTES).map_err(|e| match e {
         StoreError::NotFound | StoreError::Io(ErrorKind::NotFound) => TransferError::NotFound,
         StoreError::TooLarge => TransferError::TooLarge,
+        StoreError::NotARegularFile => TransferError::NotAFile,
+        StoreError::Io(ErrorKind::PermissionDenied) => TransferError::NoAccess,
         _ => TransferError::ReadFailed,
     })?;
     parse(&bytes, format_for(path, forced)).map_err(TransferError::Import)
@@ -223,6 +230,33 @@ mod tests {
         let mut b = Session::new(FsStore::new(&dest), Box::new(SystemClock::new()));
         b.unlock(&pw()).unwrap();
         assert_eq!(export_backup(&mut s, &dest), Err(TransferError::Exists));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_file_is_no_access() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("locked.csv");
+        fs::write(&f, b"x").unwrap();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o000)).unwrap();
+        let got = read_import(&f, None);
+        // Root can read a mode-000 file; then there is nothing to assert.
+        let readable = fs::File::open(&f).is_ok();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o600)).unwrap();
+        if readable {
+            return;
+        }
+        assert_eq!(got.unwrap_err(), TransferError::NoAccess);
+    }
+
+    #[test]
+    fn folder_is_not_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read_import(dir.path(), None).unwrap_err(),
+            TransferError::NotAFile
+        );
     }
 
     #[test]

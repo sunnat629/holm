@@ -115,6 +115,10 @@ pub const UNSAVED_ON_LOCK: &str =
 pub const PATH_NOT_ABSOLUTE: &str = "Type the full path, from the top folder of the disk.";
 /// No file at the typed path, so nothing was read.
 pub const IMPORT_NOT_FOUND: &str = "Holm found no file at that path. Check the path and try again.";
+/// The path is a folder or another thing that is not a regular file.
+pub const IMPORT_NOT_A_FILE: &str = "That path is not a regular file, so Holm will not import it.";
+/// The system does not let Holm read the file.
+pub const IMPORT_NO_ACCESS: &str = "Holm is not allowed to read that file. Nothing was imported.";
 /// The file could not be read.
 pub const IMPORT_READ_FAILED: &str = "Holm could not read that file. Nothing was imported.";
 /// The file is bigger than the import limit.
@@ -159,7 +163,7 @@ pub const EYE_LABEL: &str = "Show password while held";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 52] = [
+const ALL: [&str; 54] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -197,6 +201,8 @@ const ALL: [&str; 52] = [
     PASTE_TOO_LONG,
     UNSAVED_ON_LOCK,
     IMPORT_NOT_FOUND,
+    IMPORT_NOT_A_FILE,
+    IMPORT_NO_ACCESS,
     IMPORT_READ_FAILED,
     IMPORT_TOO_BIG,
     IMPORT_NOT_TEXT,

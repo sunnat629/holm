@@ -206,6 +206,8 @@ fn fail_text(fail: &TransferError, export: bool, items_added: bool) -> &'static 
         TransferError::NotFound => messages::IMPORT_NOT_FOUND,
         TransferError::NotAbsolute => messages::PATH_NOT_ABSOLUTE,
         TransferError::Exists => messages::EXPORT_EXISTS,
+        TransferError::NotAFile => messages::IMPORT_NOT_A_FILE,
+        TransferError::NoAccess => messages::IMPORT_NO_ACCESS,
         TransferError::ReadFailed => messages::IMPORT_READ_FAILED,
         TransferError::WriteFailed => messages::EXPORT_WRITE_FAILED,
         TransferError::TooLarge => messages::IMPORT_TOO_BIG,
