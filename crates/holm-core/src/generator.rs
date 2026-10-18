@@ -30,6 +30,18 @@ pub const WORDLIST_LEN: usize = 7776;
 /// How many times the password generator retries to meet the minimums.
 pub const MAX_ATTEMPTS: u32 = 10_000;
 
+/// A spec is refused when all `MAX_ATTEMPTS` tries would fail with more than this chance.
+const MAX_FAIL_CHANCE: f64 = 1e-9;
+
+#[allow(clippy::cast_precision_loss)]
+fn as_f64(n: usize) -> f64 {
+    n as f64
+}
+
+fn powi(base: f64, exp: usize) -> f64 {
+    i32::try_from(exp).map_or(f64::INFINITY, |e| base.powi(e))
+}
+
 const LOWERCASE: &str = "abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &str = "0123456789";
@@ -120,23 +132,59 @@ impl PasswordSpec {
         if u16::from(self.min_digits) + u16::from(self.min_symbols) > self.length / 2 {
             return Err(GeneratorError::TooManyRequired);
         }
-        if self.entropy_bits() < MIN_ENTROPY_BITS {
+        let (valid, total) = self.counts();
+        if valid.log2() < MIN_ENTROPY_BITS {
             return Err(GeneratorError::BelowEntropyFloor);
+        }
+        // Chance that all MAX_ATTEMPTS tries fail: (1 - p)^MAX_ATTEMPTS.
+        let p = valid / total;
+        if f64::from(MAX_ATTEMPTS) * (-p).ln_1p() > MAX_FAIL_CHANCE.ln() {
+            return Err(GeneratorError::TooManyRequired);
         }
         Ok(())
     }
 
-    /// Entropy in bits: `length * log2(pool size)`. Ignores the minimums, so it is
-    /// a slight over-estimate when they are set.
+    /// Entropy in bits: `log2` of the number of strings that meet the minimums.
+    /// The generator is uniform over exactly that set, so this is the real figure.
     #[must_use]
     pub fn entropy_bits(&self) -> f64 {
-        let pool = self.pool().len();
-        if pool == 0 {
+        if self.pool().is_empty() {
             return 0.0;
         }
-        #[allow(clippy::cast_precision_loss)]
-        let pool = pool as f64;
-        f64::from(self.length) * pool.log2()
+        self.counts().0.log2()
+    }
+
+    /// `(valid, total)` as f64: the number of strings of this length that meet the
+    /// minimums, and the number of all strings from the pool. The largest total is
+    /// about 2^841, well inside the f64 range.
+    fn counts(&self) -> (f64, f64) {
+        let pool = self.pool();
+        let digits = pool.iter().filter(|c| c.is_ascii_digit()).count();
+        let symbols = pool.iter().filter(|c| SYMBOLS.contains(**c)).count();
+        let others = pool.len() - digits - symbols;
+        let (d, s, o) = (as_f64(digits), as_f64(symbols), as_f64(others));
+        let len = usize::from(self.length);
+        // Pascal's triangle row by row: choose[n][k] = C(n, k).
+        let mut choose = vec![vec![0.0f64; len + 1]; len + 1];
+        for n in 0..=len {
+            choose[n][0] = 1.0;
+            for k in 1..=n {
+                let above = if k < n { choose[n - 1][k] } else { 0.0 };
+                choose[n][k] = choose[n - 1][k - 1] + above;
+            }
+        }
+        let (min_d, min_s) = (usize::from(self.min_digits), usize::from(self.min_symbols));
+        let mut valid = 0.0f64;
+        for i in min_d..=len {
+            for j in min_s..=(len - i) {
+                valid += choose[len][i]
+                    * choose[len - i][j]
+                    * powi(d, i)
+                    * powi(s, j)
+                    * powi(o, len - i - j);
+            }
+        }
+        (valid, powi(as_f64(pool.len()), len))
     }
 
     /// The pool in fixed order: lower, upper, digits, symbols, minus look-alikes.
@@ -161,6 +209,10 @@ impl PasswordSpec {
 }
 
 /// Settings for [`generate_passphrase`].
+///
+/// Four list words contain a hyphen (`drop-down`, `felt-tip`, `t-shirt`, `yo-yo`). They
+/// are kept. With a `-` separator they cause 0 split collisions, because no left half
+/// (`drop`, `felt`, `t`, `yo`) is a list word, so a phrase decodes uniquely.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PassphraseSpec {
     /// Number of words, 6 to 20.
@@ -284,7 +336,11 @@ fn index_below(rng: &mut dyn RandomSource, len: usize) -> Result<usize, Generato
     Ok(uniform_below(rng, n)? as usize)
 }
 
-/// The EFF large wordlist, parsed once. Some entries contain `-` (for example `t-shirt`).
+/// The EFF large wordlist, parsed once. Four entries contain `-`: `drop-down`,
+/// `felt-tip`, `t-shirt` and `yo-yo`. With a `-` separator this costs no entropy and
+/// causes 0 split collisions: no left half (`drop`, `felt`, `t`, `yo`) is itself a list
+/// word, so a joined phrase always decodes back to one word sequence. That holds only
+/// for this exact file, which `scripts/ci-local.sh` checks against its pinned SHA-256.
 pub(crate) fn wordlist() -> &'static [&'static str] {
     static LIST: OnceLock<Vec<&'static str>> = OnceLock::new();
     LIST.get_or_init(|| {
@@ -468,6 +524,10 @@ mod tests {
         let mut rng = SeqSource::new(&[u32::MAX, 5]);
         assert_eq!(uniform_below(&mut rng, nz(3)), Ok(2));
         assert_eq!(rng.next, 2);
+        // u32::MAX - 1 is the largest accepted value: (2^32 - 2) % 3 = 2, in one draw.
+        let mut rng = SeqSource::new(&[u32::MAX - 1]);
+        assert_eq!(uniform_below(&mut rng, nz(3)), Ok(2));
+        assert_eq!(rng.next, 1);
     }
 
     proptest! {
@@ -514,8 +574,16 @@ mod tests {
 
     #[test]
     fn default_password_entropy() {
+        // Below 20 * log2(94) = 131.09 because one digit and one symbol are required.
         let e = PasswordSpec::DEFAULT.entropy_bits();
-        assert!((20.0 * 94f64.log2() - e).abs() < 1e-9);
+        assert!((e - 130.93).abs() < 0.01, "e = {e}");
+        // No minimums: the exact count is pool^length.
+        let free = PasswordSpec {
+            min_digits: 0,
+            min_symbols: 0,
+            ..PasswordSpec::DEFAULT
+        };
+        assert!((free.entropy_bits() - 20.0 * 94f64.log2()).abs() < 1e-6);
         assert_eq!(SYMBOLS.len(), 32);
     }
 
@@ -586,6 +654,40 @@ mod tests {
         for (spec, want) in cases {
             assert_eq!(spec.validate(), want, "{spec:?}");
         }
+    }
+
+    #[test]
+    fn minimums_cannot_bypass_entropy_floor() {
+        // Digits and symbols only, 6 digits of 12: the naive figure is 64.71 bits, the
+        // real one is 60.19.
+        let spec = PasswordSpec {
+            length: 12,
+            lowercase: false,
+            uppercase: false,
+            digits: true,
+            symbols: true,
+            avoid_lookalikes: false,
+            min_digits: 6,
+            min_symbols: 0,
+        };
+        assert!(12.0 * 42f64.log2() >= MIN_ENTROPY_BITS);
+        assert!(spec.entropy_bits() < MIN_ENTROPY_BITS);
+        assert_eq!(spec.validate(), Err(GeneratorError::BelowEntropyFloor));
+    }
+
+    #[test]
+    fn hopeless_minimums_rejected_up_front() {
+        let spec = PasswordSpec {
+            length: 128,
+            min_digits: 64,
+            min_symbols: 0,
+            ..PasswordSpec::DEFAULT
+        };
+        assert_eq!(spec.validate(), Err(GeneratorError::TooManyRequired));
+        assert_eq!(
+            generate_password(&spec).err(),
+            Some(GeneratorError::TooManyRequired)
+        );
     }
 
     #[test]
@@ -668,7 +770,25 @@ mod tests {
             assert!(parts.iter().all(|w| list.contains(w)));
         }
         let p = passphrase_with(&mut rng, &PassphraseSpec::DEFAULT).unwrap();
+        // Hyphenated list words only add hyphens, so at least 5 and at most 5 + 6.
         assert!(p.expose().matches('-').count() >= 5);
+        // Decode: a token that is not a list word must be the left half of a hyphenated
+        // one and join the next token. Then there are exactly 6 words.
+        let mut words = 0;
+        let mut pending: Option<String> = None;
+        for tok in p.expose().split('-') {
+            let cand = match pending.take() {
+                Some(left) => format!("{left}-{tok}"),
+                None => tok.to_string(),
+            };
+            if list.contains(&cand.as_str()) {
+                words += 1;
+            } else {
+                pending = Some(cand);
+            }
+        }
+        assert!(pending.is_none());
+        assert_eq!(words, 6);
 
         let cap = PassphraseSpec {
             capitalise: true,
@@ -688,6 +808,20 @@ mod tests {
         for _ in 0..200 {
             let p = passphrase_with(&mut rng, &num).unwrap();
             assert_eq!(p.expose().chars().filter(char::is_ascii_digit).count(), 1);
+            // The digit ends a word: strip it and every part is a list word.
+            let stripped: Vec<String> = p
+                .expose()
+                .split(' ')
+                .map(|w| w.trim_end_matches(|c: char| c.is_ascii_digit()).to_string())
+                .collect();
+            assert!(stripped.iter().all(|w| list.contains(&w.as_str())));
+            assert_eq!(
+                p.expose()
+                    .split(' ')
+                    .filter(|w| w.ends_with(|c: char| c.is_ascii_digit()))
+                    .count(),
+                1
+            );
         }
     }
 

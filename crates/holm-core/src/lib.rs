@@ -19,6 +19,23 @@
 //! needs_deserialize::<holm_core::text::GatedSecret>();
 //! ```
 //!
+//! The generator spec types follow the same rule:
+//!
+//! ```compile_fail
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<holm_core::generator::PasswordSpec>();
+//! ```
+//!
+//! ```compile_fail
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<holm_core::generator::PassphraseSpec>();
+//! ```
+//!
+//! ```compile_fail
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<holm_core::generator::UsernameSpec>();
+//! ```
+//!
 //! The same check passes for a type that does implement the trait, so the failures
 //! above come from the missing impl and not from a typo:
 //!

@@ -26,7 +26,7 @@ pub(crate) fn uniform_below(rng: &mut dyn RandomSource, n: NonZeroU32) -> Result
 - A random `u32` has 2^32 possible values. If `n` does not divide 2^32 evenly, then `x % n` gives the small remainders one extra chance each. Example with `n = 3`: 2^32 = 3 x 1 431 655 765 + 1, so remainder 0 comes up once more than 1 and 2.
 - The bias is tiny for small `n`, but a password generator should have none.
 - `bound` is the largest multiple of `n` that fits in 2^32. Values at or above `bound` are thrown away and we draw again. Below `bound`, every remainder has exactly the same number of values.
-- `loop` runs until a value is accepted. The chance of a reject is below `n / 2^32`, so it almost never loops twice.
+- `loop` runs until a value is accepted. The chance of a reject is below `n / 2^32`, so for the `n` we use (at most 7776) it almost never loops twice. A huge `n` close to 2^32 would reject nearly half the draws.
 - We use `u64` for the math because 2^32 itself does not fit in a `u32`.
 
 In Kotlin you'd write: a `while (true)` loop with `Random.nextInt()`. The same trap exists there: `nextInt() % n` is biased, and `nextInt(n)` already does the rejection for you.
@@ -76,19 +76,20 @@ pub(crate) fn wordlist() -> &'static [&'static str] {
 - `include_str!` copies the file into the program when it is built, as a `&'static str`. There is no file to read at run time and nothing to tamper with on disk.
 - `OnceLock` holds a value that is set once. `get_or_init` runs the closure the first time and returns the same value after that, even from several threads.
 - Each line is `11111<TAB>abacus`. `split_once('\t')` cuts it in two and we keep the word. The words point into the built-in text, so no copies are made.
-- Four words contain a hyphen (`drop-down`, `felt-tip`, `t-shirt`, `yo-yo`). A test pins this, so a `-` separator cannot be assumed to split words cleanly.
+- Four words contain a hyphen (`drop-down`, `felt-tip`, `t-shirt`, `yo-yo`). A test pins this. A `-` separator is still safe: the left halves (`drop`, `felt`, `t`, `yo`) are not list words themselves, so a joined phrase always decodes back to one word sequence (0 split collisions). That holds only for this exact file, and `scripts/ci-local.sh` checks its SHA-256.
 
 In Kotlin you'd write: `val words by lazy { resource("words.txt").lines() }`. `lazy` plays the role of `OnceLock`.
 
 ### `f64::log2` for entropy
 
 ```rust
-let bits = f64::from(self.length) * pool.log2();
+let bits = valid_count.log2();
 ```
 
-- Entropy in bits is how many yes/no guesses an attacker needs: a pool of 94 characters gives `log2(94)`, about 6.55 bits per character.
+- Entropy in bits `b` means an attacker needs up to 2^`b` guesses: a pool of 94 characters gives `log2(94)`, about 6.55 bits per character.
 - `f64::from(u16)` converts without loss. Turning a `usize` into `f64` needs `as`, which clippy flags, so we allow it on that one line.
-- A spec below 64 bits is refused.
+- `length * log2(pool)` is only right with no minimums. With "at least 1 digit" we redraw until it holds, so the real count is the number of strings that meet the minimums, and its `log2` is slightly lower (about 130.93 bits for the default, not 131.09). We count them with a small sum in `f64`; 95^128 is about 2^841 and fits.
+- A spec below 64 bits by that exact count is refused. A spec whose minimums would make all 10 000 tries fail with more than a 1 in a billion chance is refused too.
 
 In Kotlin you'd write: `kotlin.math.log2(94.0)`.
 

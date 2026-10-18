@@ -93,6 +93,13 @@ gate() { # name, command...
   fi
 }
 
+# The EFF wordlist is include_str!'d into the binary. Its pinned SHA-256 (also in NOTICE)
+# must match, and a missing shasum or file fails the gate, so this fails closed.
+wordlist_gate() {
+  command -v shasum >/dev/null 2>&1 || { echo "MISSING shasum" >&2; return 1; }
+  echo "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e  crates/holm-core/src/eff_large_wordlist.txt" | shasum -a 256 -c -
+}
+gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
 gate test cargo test --workspace --locked
