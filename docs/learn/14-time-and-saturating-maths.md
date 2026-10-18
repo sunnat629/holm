@@ -116,4 +116,4 @@ Every unlock error counts as a failure (F16), so a damaged file cannot be used t
 - [std::time::Duration](https://doc.rust-lang.org/std/time/struct.Duration.html), see `saturating_add` and `checked_add`.
 - [The Rust book, ch16-04: Send and Sync](https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html)
 
-Next lesson: none yet. Lesson 15 arrives with the next task.
+Next lesson: [15, Generics and trait objects](15-generics-and-trait-objects.md).

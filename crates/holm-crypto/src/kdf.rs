@@ -85,7 +85,8 @@ impl KdfParams {
 ///
 /// # Errors
 /// Returns [`CryptoError::KdfParams`] if `params` break the policy, and
-/// [`CryptoError::Kdf`] if the work area cannot be allocated or Argon2 fails.
+/// [`CryptoError::OutOfMemory`] if the work area cannot be reserved, and
+/// [`CryptoError::Kdf`] if Argon2 fails.
 pub fn derive_kek(
     password: &MasterPassword,
     salt: &[u8; 32],
@@ -105,11 +106,11 @@ pub fn derive_kek(
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
     // We own the work area so we can wipe it: the argon2 crate frees its own
-    // without wiping. try_reserve_exact turns "not enough memory" into an
-    // error instead of aborting the process.
+    // without wiping. try_reserve_exact turns "not enough memory" into
+    // CryptoError::OutOfMemory instead of aborting the process.
     let mut area = Vec::new();
     area.try_reserve_exact(block_count)
-        .map_err(|_| CryptoError::Kdf)?;
+        .map_err(|_| CryptoError::OutOfMemory)?;
     area.resize(block_count, Block::default());
     let mut blocks = Zeroizing::new(area);
 

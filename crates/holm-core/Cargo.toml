@@ -23,5 +23,8 @@ unicode-normalization.workspace = true
 static_assertions.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+# Test only: tests/golden_vault.rs seals the golden vault with fixed nonces, which
+# holm-crypto's API never allows. Already in the graph through holm-crypto.
+chacha20poly1305.workspace = true
 # Test oracle only: tests/strength_oracle.rs checks Holm's own estimator against it.
 zxcvbn.workspace = true

@@ -24,6 +24,7 @@ security, three exercises, and what to read next in
 | 12 | [Owning the check](12-owning-the-strength-check.md): why Holm wrote its own strength check instead of wrapping zxcvbn, a length cap that refuses before it copies, `Zeroizing` scratch buffers, a cheapest-split table over `&[char]`, and a dev-only oracle test with a seeded generator. |
 | 13 | [Serde and a versioned binary format](13-serde-and-versioned-formats.md): serde derive on private wire types only, a format that does not describe itself, a schema version prefix, decode then validate with bounded lengths, rejecting trailing bytes, and measuring before allocating. |
 | 14 | [Time and saturating maths](14-time-and-saturating-maths.md): `Duration`, monotonic `Instant` vs wall `SystemTime`, `saturating_*` and `checked_*`, `Default`, a trait as a test seam, and the `Send` bound. |
+| 15 | [Generics and trait objects](15-generics-and-trait-objects.md): the vault session, generic over its store with `Session<S: VaultStore>` and a `Box<dyn Clock>`, `Option` as a locked/unlocked state, `&mut self`, `From` and `?` into one error enum, and why a password change writes before it swaps keys. |
 
 ## Side tracks
 

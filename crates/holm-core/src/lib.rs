@@ -8,6 +8,8 @@
 //! password. [`settings`] holds the security settings, and [`body`] encodes and decodes
 //! the versioned vault body that the envelope encrypts. [`clock`] gives a monotonic
 //! clock and the idle timer, and [`throttle`] slows repeated failed unlocks.
+//! [`store`] is the trait the vault file is read and written through, [`session`]
+//! creates, unlocks, saves and locks a vault, and [`error`] holds its one error type.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -51,6 +53,13 @@
 //! needs_deserialize::<holm_core::body::VaultData>();
 //! ```
 //!
+//! The session cannot be turned into bytes either:
+//!
+//! ```compile_fail
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<holm_core::session::LockOutcome>();
+//! ```
+//!
 //! The same check passes for a type that does implement the trait, so the failures
 //! above come from the missing impl and not from a typo:
 //!
@@ -66,12 +75,15 @@ pub mod body;
 pub mod category;
 pub mod clock;
 pub mod envelope;
+pub mod error;
 pub mod format;
 pub mod generator;
 pub mod item;
 pub mod padding;
 pub mod rules;
+pub mod session;
 pub mod settings;
+pub mod store;
 pub mod strength;
 pub mod text;
 pub mod throttle;

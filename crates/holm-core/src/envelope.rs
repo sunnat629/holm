@@ -51,6 +51,10 @@ pub enum VaultError {
     /// The OS random source or the key derivation failed.
     #[error("a cryptographic operation failed")]
     Crypto,
+    /// The memory for the key derivation could not be reserved (the unlock
+    /// screen's "not enough memory"). Never a password problem.
+    #[error("not enough memory to derive the vault key")]
+    OutOfMemory,
 }
 
 /// Hand-written instead of `#[from]`: a cost-policy failure found by the
@@ -73,6 +77,7 @@ impl From<CryptoError> for VaultError {
         match e {
             CryptoError::KdfParams(k) => VaultError::KdfPolicy(k),
             CryptoError::Aead => VaultError::WrongPasswordOrCorrupt,
+            CryptoError::OutOfMemory => VaultError::OutOfMemory,
             CryptoError::Rng | CryptoError::Kdf | CryptoError::InvalidKeyLength => {
                 VaultError::Crypto
             }
@@ -442,20 +447,20 @@ mod tests {
     }
 
     /// A committed v1 vault, so a future change cannot silently strand
-    /// existing files. Made once with
-    /// `create(&pw("caf\u{e9} golden"), &KdfParams::FLOOR, GOLDEN_BODY)`;
-    /// the salt, DEK and nonces were random, so it cannot be regenerated
-    /// byte for byte. Opening it with the decomposed form of the password also
-    /// pins NFC normalisation.
+    /// existing files. Locked with `"caf\u{e9} golden"` at `KdfParams::FLOOR`
+    /// and holding the default vault body. It is built deterministically (fixed
+    /// salt, DEK and nonces) by `tests/golden_vault.rs`, which also checks that it
+    /// regenerates byte for byte. Opening it with the decomposed form of the
+    /// password also pins NFC normalisation.
     #[test]
     fn golden_vault_opens() {
-        const GOLDEN_BODY: &[u8] = b"Holm golden vault v1\n";
         let file = include_bytes!("../tests/vectors/golden-v1.vault");
         assert_eq!(file.len(), HEADER_LEN + PAD_BLOCK + TAG_LEN);
         let (h, _) = Header::parse(file).unwrap();
         assert_eq!(h.kdf, KdfParams::FLOOR);
         let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
-        assert_eq!(body.expose(), GOLDEN_BODY);
+        let default_body = crate::body::VaultData::new_default().encode().unwrap();
+        assert_eq!(body.expose(), default_body.expose());
         assert_eq!(keys.header, h);
         assert_eq!(
             open(file, &pw("cafe golden")).unwrap_err(),
@@ -714,6 +719,14 @@ mod tests {
     }
 
     #[test]
+    fn out_of_memory_maps_to_vault_error() {
+        assert_eq!(
+            VaultError::from(CryptoError::OutOfMemory),
+            VaultError::OutOfMemory
+        );
+    }
+
+    #[test]
     fn crypto_errors_map_as_specified() {
         assert_eq!(
             VaultError::from(CryptoError::Aead),
@@ -741,6 +754,7 @@ mod tests {
             VaultError::BadPadding,
             VaultError::TooLargeToSave,
             VaultError::Crypto,
+            VaultError::OutOfMemory,
         ];
         let mut seen = std::collections::HashSet::new();
         for e in &all {
