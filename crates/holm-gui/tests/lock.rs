@@ -546,3 +546,50 @@ fn idle_during_job_locks_on_finish() {
     harness.run();
     assert_locked(&harness, &line(LockReason::Idle, false, a));
 }
+
+#[test]
+fn job_end_while_minimised_asks_for_another_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (app, _clock) = test_app(dir.path());
+    let window = FakeWindow::default();
+    let mut harness = harness_with_window(app.with_spawner(held_worker), window.clone());
+    harness.run();
+    unlock(&mut harness);
+    let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
+    harness.get_by_label("New login").click();
+    harness.run();
+    type_into(&mut harness, "Title", ROW_TITLE);
+    type_into(&mut harness, "Password", SECRET);
+    harness.get_by_label("Save").click();
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    // The user minimises while the job runs; `tick` only checks it with the vault open.
+    window.set_minimised(true);
+    drop(hold);
+    // Only `tick`, as eframe's `logic` while the window is hidden. The tick that takes
+    // the answer must ask for another frame, or the minimise lock waits for the next
+    // wake-up (up to a second, or never if the window stays hidden).
+    let start = std::time::Instant::now();
+    loop {
+        let ctx = eframe::egui::Context::default();
+        // Count immediate repaint requests (zero delay) made by the tick.
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = asked.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            if info.delay.is_zero() {
+                seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        harness.state_mut().tick(&ctx, &window);
+        if harness.state().screen_kind() != ScreenKind::Working {
+            assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+            assert!(asked.load(std::sync::atomic::Ordering::SeqCst));
+            break;
+        }
+        assert!(start.elapsed() < WAIT, "job did not end");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    harness.state_mut().tick(&eframe::egui::Context::default(), &window);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+}

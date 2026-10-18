@@ -285,7 +285,12 @@ impl HolmApp {
         };
         match polled {
             None => {}
-            Some(Ok(done)) => self.finish(done),
+            Some(Ok(done)) => {
+                self.finish(done);
+                // The new screen may need checking at once (minimised or idle while the
+                // job ran), and a hidden window draws no frame of its own.
+                ctx.request_repaint();
+            }
             Some(Err(TryRecvError::Empty)) => ctx.request_repaint_after(WORKER_POLL),
             // The worker ended without an answer: it took the session with it. The
             // vault file is untouched (create writes only after Argon2 succeeds).
