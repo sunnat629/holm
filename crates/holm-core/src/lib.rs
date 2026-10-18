@@ -6,7 +6,8 @@
 //! text types, items and categories. [`rules`] holds the field rules, and [`generator`]
 //! makes passwords, passphrases and usernames. [`strength`] checks a candidate master
 //! password. [`settings`] holds the security settings, and [`body`] encodes and decodes
-//! the versioned vault body that the envelope encrypts.
+//! the versioned vault body that the envelope encrypts. [`clock`] gives a monotonic
+//! clock and the idle timer, and [`throttle`] slows repeated failed unlocks.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -63,6 +64,7 @@
 
 pub mod body;
 pub mod category;
+pub mod clock;
 pub mod envelope;
 pub mod format;
 pub mod generator;
@@ -71,5 +73,6 @@ pub mod padding;
 pub mod rules;
 pub mod settings;
 pub mod strength;
+pub mod throttle;
 pub mod text;
 pub(crate) mod wire;

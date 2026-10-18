@@ -1,0 +1,94 @@
+# Lesson 14: Time and saturating maths
+
+## What we built
+
+Holm needs to measure two waits: the pause after failed unlocks, and the idle time before auto-lock. `clock.rs` holds a `Clock` trait, the real `SystemClock`, and `IdleTimer`. `throttle.rs` holds `delay_after`, `Throttle` and `ThrottleStatus`. The code is in `crates/holm-core/src/`.
+
+## Rust ideas in this task
+
+### `Duration`, and two kinds of clock
+
+```rust
+pub trait Clock: Send {
+    fn now_unix(&self) -> Timestamp;   // wall clock, for stamping items
+    fn monotonic(&self) -> Duration;   // for every wait
+}
+```
+
+- `Duration` is a span of time (seconds plus nanoseconds), not a point in time. Holm's monotonic clock is just "how long since the clock was made", as a `Duration`.
+- `SystemTime` is the wall clock. The user, or an attacker with a few minutes at the machine, can set it back. `Instant` is monotonic: it never goes backwards, whatever the wall clock does.
+- So the throttle and idle timer use only `monotonic()`. If they used wall time, setting the clock back an hour would erase a 60-second wait, and a quick brute-force script would not need to wait at all.
+- `SystemTime::duration_since` returns a `Result`, because the time may be before 1970. Holm turns that error into 0.
+
+In Kotlin you'd write: `System.nanoTime()` for waits (monotonic) and `System.currentTimeMillis()` for stamps (wall). Kotlin's `TimeSource.Monotonic` is the same split. Rust puts the two in different types, so you cannot mix them by accident.
+
+### `saturating_*` and `checked_*`
+
+```rust
+let secs = 1u64.checked_shl(exp).map_or(MAX_DELAY_SECS, |v| v.min(MAX_DELAY_SECS));
+self.failures = self.failures.saturating_add(1);
+now.saturating_sub(self.last)
+```
+
+- In a release build, `a + b` on integers wraps silently; in a debug build it panics. Neither is acceptable for a security counter.
+- `saturating_add` stops at the maximum instead. After `u32::MAX` failures the count stays there, it never wraps to 0 and unlocks the throttle.
+- `checked_shl` returns `None` when the shift is too big, and the code turns `None` into the 60 s cap. `u32::MAX` failures give 60 s, with no panic.
+- `Duration::saturating_sub` gives zero when the result would be negative, so a `now` earlier than `last` is harmless.
+
+In Kotlin you'd write: `Math.addExact(a, b)` throws on overflow (the `checked` idea), and there is no standard saturating add, so you write `if (a > Int.MAX_VALUE - b) Int.MAX_VALUE else a + b` by hand.
+
+### `Default`
+
+```rust
+#[derive(Debug, Default)]
+pub struct Throttle { failures: u32, not_before: Option<Duration> }
+```
+
+- `#[derive(Default)]` fills every field with its own default: `0` and `None`. That is exactly "no failures, no wait", so `new()` is just `Self::default()`.
+- The fields are private. Outside code can only call `record_failure` and `record_success`, so it cannot set `failures` to 0 by hand.
+
+In Kotlin you'd write: a data class with default arguments, `data class Throttle(val failures: Int = 0, ...)`. That one has a public `copy(failures = 0)`; the Rust struct does not.
+
+### A trait as a test seam
+
+- Code that needs the time takes a `Clock`, not `Instant::now()`. The test `FakeClock` holds an `Arc` of atomics, so a test keeps one handle and moves time with `advance`, while the code under test holds another handle.
+- A test of a 60 s wait takes microseconds, and it is exact. With the real clock you would sleep for 60 s or accept a flaky test.
+- `FakeClock` is `#[cfg(test)]`, so it is not even compiled into the release library.
+
+In Kotlin you'd write: `interface Clock { fun now(): Long }` with a `FakeClock` in the test source set, or `kotlinx-datetime`'s `Clock` with a test implementation. Same pattern.
+
+### The `Send` bound
+
+- `trait Clock: Send` says every clock can be moved to another thread. The GUI will probably hold the vault state on one thread and run timers on another, and the compiler then checks that nothing in the clock (such as an `Rc`) breaks that.
+- `Arc<AtomicI64>` is `Send`, so `FakeClock` passes. An `Rc<Cell<i64>>` would fail to compile where a `Clock` is moved across threads.
+
+In Kotlin you'd write: nothing. The JVM lets you share any object across threads, and thread safety is a convention you document. In Rust it is a type-level fact.
+
+## Why this matters for security
+
+The throttle only helps if every failed attempt is counted. The caller records a failure for **every** error from an unlock attempt, not only "wrong password". Otherwise an attacker could feed a damaged file, get a non-password error, and retry without any pause. It also must not depend on the wall clock, and its arithmetic must not wrap. `IdleTimer::expired` clamps the limit to 60 to 3,600 s, so a bad setting can never mean "never lock".
+
+Honesty note: the throttle lives in memory. Restarting Holm resets it. It slows a person at the keyboard; the real defence against offline guessing is Argon2id (lesson 04 and the crypto crate).
+
+## Try it
+
+1. Run the clock and throttle tests.
+   - Run: `cargo test -p holm-core --locked --lib -- throttle clock`
+   - Check: the last line says `12 passed; 0 failed`.
+   - Undo: nothing to undo, it only reads.
+2. Break the cap and watch the table test catch it.
+   - Run: `sed -i.bak 's/MAX_DELAY_SECS: u64 = 60/MAX_DELAY_SECS: u64 = 600/' crates/holm-core/src/throttle.rs && cargo test -p holm-core --locked --lib delay_table`
+   - Check: `delay_table ... FAILED`, and the message names `failures 8`.
+   - Undo: `rm crates/holm-core/src/throttle.rs.bak && git checkout -- crates/holm-core/src/throttle.rs`
+3. Replace a saturating add with a plain one and see the overflow test panic.
+   - Run: `sed -i.bak 's/self.failures.saturating_add(1)/self.failures + 1/' crates/holm-core/src/throttle.rs && cargo test -p holm-core --locked --lib extreme_values`
+   - Check: `extreme_values_do_not_overflow ... FAILED` with `attempt to add with overflow`.
+   - Undo: `rm crates/holm-core/src/throttle.rs.bak && git checkout -- crates/holm-core/src/throttle.rs`
+
+## Read next
+
+- [std::time::Instant](https://doc.rust-lang.org/std/time/struct.Instant.html), and why it differs from `SystemTime`.
+- [std::time::Duration](https://doc.rust-lang.org/std/time/struct.Duration.html), see `saturating_add` and `checked_add`.
+- [The Rust book, ch16-04: Send and Sync](https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html)
+
+Next lesson: none yet. Lesson 15 arrives with the next task.
