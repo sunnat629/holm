@@ -1,0 +1,6 @@
+[
+  {"title": "Example Portal", "username": "example.user", "password": "EXAMPLE-pass-1", "url": "https://portal.example.com", "category": "Work", "type": "login"},
+  {"title": "Example Memo", "notes": "EXAMPLE memo body", "category": "Personal", "type": "note"},
+  {"title": "Example Wallet", "type": "crypto", "chain": "EXAMPLE-chain", "address": "EXAMPLE-0xaddr01", "memo": "EXAMPLE-memo"},
+  {"title": "Example Recovery", "type": "recovery", "recovery": "example word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11"}
+]

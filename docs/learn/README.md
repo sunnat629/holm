@@ -37,6 +37,7 @@ security, three exercises, and what to read next in
 | 28 | [Testing a whole app](28-testing-a-whole-app.md): an integration test as its own crate, `drop` to end a lock's job, a fake shared through `Rc<RefCell<…>>`, reading modes and bytes on disk without printing a secret, `#[ignore]` tests run by hand, and what a headless test proves versus what only a person at a real Mac can check. |
 | 29 | [Iterators and lifetimes](29-iterators-and-lifetimes.md): `ItemSummary<'a>` borrowing from the session, `filter`/`map`/`collect`, closures, `sort_by` with `then_with`, and `#[default]` on enum variants. |
 | 30 | [Parsing untrusted text](30-parsing-untrusted-text.md): byte offsets instead of `char` indices in a `&str`, a small state machine with `match`, measuring before allocating so a wiping buffer never grows, errors that carry a line and never content, and a property test against an oracle crate. |
+| 31 | [Hostile input, all or nothing](31-hostile-input-all-or-nothing.md): a `HashMap` header map that stores positions, never text, `mem::take` out of a wiping buffer, an undo closure that makes an import all or nothing, bad rows reported by number only, and why Holm never guesses where a secret goes. |
 
 ## Side tracks
 

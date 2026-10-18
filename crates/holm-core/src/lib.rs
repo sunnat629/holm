@@ -10,6 +10,7 @@
 //! clock and the idle timer, and [`throttle`] slows repeated failed unlocks.
 //! [`store`] is the trait the vault file is read and written through, [`session`]
 //! creates, unlocks, saves and locks a vault, and [`error`] holds its one error type.
+//! [`import`] reads CSV and JSON import files into a vault, all or nothing.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -88,6 +89,7 @@ pub mod format;
 #[doc(hidden)]
 pub mod fuzzing;
 pub mod generator;
+pub mod import;
 pub mod item;
 pub mod padding;
 // Own CSV and JSON code for import and export. Import (Phase 4 Task 3) and export

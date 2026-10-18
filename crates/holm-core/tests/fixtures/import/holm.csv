@@ -1,0 +1,5 @@
+title,username,password,url,notes,category,type,chain,address,memo,recovery
+Example Portal,example.user,EXAMPLE-pass-1,https://portal.example.com,,Work,login,,,,
+Example Memo,,,,EXAMPLE memo body,Personal,note,,,,
+Example Wallet,,,,,,crypto,EXAMPLE-chain,EXAMPLE-0xaddr01,EXAMPLE-memo,
+Example Recovery,,,,,,recovery,,,,example word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11

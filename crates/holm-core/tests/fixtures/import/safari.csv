@@ -1,0 +1,3 @@
+Title,URL,Username,Password,Notes,OTPAuth
+Example Bank,https://bank.example.com,safari.user,EXAMPLE-safari-pw,EXAMPLE safari note,otpauth://totp/Example:safari.user?secret=EXAMPLEOTPSECRET&issuer=Example
+Example Forum,https://forum.example.com,forum.user,EXAMPLE-forum-pw,,

@@ -19,6 +19,8 @@ cargo install --locked cargo-fuzz --version 0.13.2
 | `unpad` | raw bytes, or `pad(plaintext)` output with up to 4 edits | `unpad` never panics; an accepted buffer is the canonical padding of what it returns |
 | `open_fixed_key` | a raw file, or a body sealed with `seal_with_kek` under the fixed KEK `[7; 32]` with up to 4 `(offset, xor)` edits (seeded) | the full open (envelope, padding, body decode) never panics; a changed file never opens; an unchanged one is never refused by the envelope, and a body it decodes re-encodes with the same item count |
 | `decode_body` | raw bytes (seeded from `fuzz/seeds/decode_body/`) | `VaultData::decode` never panics and never makes one allocation over 64 MiB (`-malloc_limit_mb=64`); an accepted body re-encodes, and that encoding is stable |
+| `import_csv` | raw bytes as a CSV import file (seeded from the import fixtures) | `import::parse` never panics or allocates over 64 MiB; an accepted file never yields more than `MAX_IMPORT_ROWS` rows |
+| `import_json` | raw bytes as a JSON import file (seeded from the import fixtures) | the same checks for the JSON importer |
 
 `open_fixed_key` skips Argon2 through `holm_core::fuzzing`, which exists only with
 holm-core's `fuzzing` feature. Only this workspace turns it on; it must never be
@@ -45,11 +47,13 @@ cargo +nightly-2026-10-12 fuzz run parse_header_structured fuzz/corpus/parse_hea
 cargo +nightly-2026-10-12 fuzz run unpad fuzz/corpus/unpad -- -max_total_time=30
 cargo +nightly-2026-10-12 fuzz run open_fixed_key fuzz/corpus/open_fixed_key fuzz/seeds/open_fixed_key -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run decode_body fuzz/corpus/decode_body fuzz/seeds/decode_body -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run import_csv fuzz/corpus/import_csv fuzz/seeds/import_csv -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run import_json fuzz/corpus/import_json fuzz/seeds/import_json -- -max_total_time=30 -malloc_limit_mb=64
 ```
 
 ## Long run
 
-All five targets for 600 s each, weekly and before the Phase 2a security review.
+All seven targets for 600 s each, weekly and before the Phase 2a security review.
 Same commands with `-max_total_time=600`. The manual workflow
 `.github/workflows/fuzz.yml` does the same on GitHub. Fuzzing finds bugs; a clean
 run does not prove there are none.
@@ -69,4 +73,3 @@ A crash writes its input to `fuzz/artifacts/<target>/crash-<hash>`.
 ## Deferred
 
 - The `cargo-cyclonedx` SBOM moves to Phase 6.
-- The `import_csv` and `import_json` targets move to Phase 4 with the importers.
