@@ -49,7 +49,9 @@ that PNG is committed. `make-icns.sh` uses `sips -z` to make ten sizes (16 to 10
 changed afterwards, but it does not know who made it. Apple Silicon refuses to run unsigned
 code, so the ad-hoc seal is the minimum. A Developer ID signature plus notarisation (Apple
 scans the upload) costs a paid account and is what lets Gatekeeper open the app without a
-warning. Ours is the first kind, so a downloaded copy needs right-click, Open the first time.
+warning. Ours is the first kind, so a downloaded copy needs approval the first time. On macOS 14 and earlier: right-click, Open.
+On macOS 15 and later: open the app once (it is refused), then System Settings, Privacy & Security,
+"Open Anyway".
 The `.sha256` file lets a person check the download was not damaged or swapped.
 
 ## Why not cargo-bundle

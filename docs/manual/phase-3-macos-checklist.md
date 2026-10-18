@@ -136,7 +136,7 @@ After quitting
 Bundle (#45)
 
 - [ ] `bash scripts/bundle-macos.sh` builds `target/bundle/Holm.app`. Double-click it (the first launch may need
-  right-click, Open, because it is ad-hoc signed only). The Dock shows the green H icon, the window title is
+  approve it, because it is ad-hoc signed only: right-click, Open on macOS 14 and earlier; on macOS 15 and later open it once, then System Settings, Privacy & Security, "Open Anyway"). The Dock shows the green H icon, the window title is
   "Holm", and the minimise lock and the sleep lock both work when started from the bundle.
 
 Clean up: delete the fake-data vault with `rm -r "$(dirname "$V")"` for a throwaway one, or the `Holm` folder at the default path if it holds only fake data.

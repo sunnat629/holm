@@ -44,8 +44,23 @@ app="target/bundle/Holm.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-cargo build --release --locked -p holm-gui
-cp target/release/holm-gui "$app/Contents/MacOS/Holm"
+# Own target dir, so the changed RUSTFLAGS do not invalidate the normal cache. The remaps keep the
+# builder's home directory and checkout path out of the binary's panic messages and debug paths.
+root="$(pwd -P)"
+remap="--remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup --remap-path-prefix=$root=/holm"
+CARGO_TARGET_DIR=target/bundle-build RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$remap" \
+  cargo build --release --locked -p holm-gui
+cp target/bundle-build/release/holm-gui "$app/Contents/MacOS/Holm"
+
+# The binary must not carry the builder's home path or user name. Counts only, never the matches.
+bin="$app/Contents/MacOS/Holm"
+n_home="$(grep -c -a -F -- "$HOME" "$bin" || true)"
+# The bare user name also occurs in the zxcvbn word lists, so match it as a path segment.
+n_user="$(grep -c -a -F -e "/$(id -un)/" -e "/$(id -un)." -e "/Users/$(id -un)" "$bin" || true)"
+if [ "$n_home" != "0" ] || [ "$n_user" != "0" ]; then
+  echo "bundled binary leaks the builder path: HOME matches=$n_home, user-name matches=$n_user" >&2
+  exit 1
+fi
 sed "s/@VERSION@/$version/g" "$tpl" >"$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
 bash scripts/make-icns.sh "$app/Contents/Resources/Holm.icns"
@@ -57,7 +72,10 @@ echo "built $app (version $version)"
 if [ "$mode" = "--zip" ]; then
   zip="target/bundle/Holm-$version-macos-arm64.zip"
   rm -f "$zip" "$zip.sha256"
-  ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+  ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "$app" "$zip"
+  # Only Holm.app/ entries: no __MACOSX/ AppleDouble files.
+  bad="$(unzip -Z1 "$zip" | grep -c -v '^Holm\.app/' || true)"
+  [ "$bad" = "0" ] || { echo "zip has $bad entries outside Holm.app/" >&2; exit 1; }
   (cd target/bundle && shasum -a 256 "$(basename "$zip")" >"$(basename "$zip").sha256")
   echo "wrote $zip"
   cat "$zip.sha256"
