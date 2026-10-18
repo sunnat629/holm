@@ -37,10 +37,17 @@ use scoring::Budget;
 pub const MIN_MASTER_CHARS: usize = 12;
 
 /// The most characters (Unicode scalar values after NFC) a master password may have.
-/// Longer input is refused before any of it is copied, so a huge paste costs one pass to
-/// count it. This is twice the longest repeat unit searched for, so every repeat in a
-/// password that is scored is found.
+/// Longer input is refused before it is scored, and input of more than four times this
+/// many raw characters is refused before it is even normalised, so a huge paste costs one
+/// pass to count it. The limit is twice the longest repeat unit searched for, so every
+/// repeat in a password that is scored is found.
 pub const MAX_MASTER_CHARS: usize = 2 * matching::MAX_REPEAT_UNIT;
+
+/// Input with more raw characters than this is refused before it is normalised. NFC can
+/// shorten text (a Hangul syllable is three characters decomposed, so 3 to 1 at most for
+/// text in normal use), so 4 times the limit never refuses text that would fit after NFC
+/// in any realistic case.
+const RAW_CHARS_LIMIT: usize = 4 * MAX_MASTER_CHARS;
 
 /// The lowest score (0 to 4) a master password may have. Score 4 starts at 10^10 guesses,
 /// zxcvbn's top band. Score 3 (10^8) still accepts word + year + symbol shapes such as
@@ -121,6 +128,11 @@ const ALL_FEEDBACK: &[&str] = &[
 /// refused unscored. The work grows linearly with length.
 #[must_use]
 pub fn check(password: &MasterPassword) -> StrengthReport {
+    // Count the raw characters first, so a huge paste is refused before NFC copies it.
+    let raw = password.raw_char_count();
+    if raw > RAW_CHARS_LIMIT {
+        return too_long(raw);
+    }
     let bytes = password.to_kdf_bytes();
     // `to_kdf_bytes` builds the bytes from a `String`, so they are valid UTF-8. If that
     // ever stopped being true, refuse the password rather than guess.
@@ -129,16 +141,8 @@ pub fn check(password: &MasterPassword) -> StrengthReport {
     };
     let count = text.chars().count();
     if count > MAX_MASTER_CHARS {
-        // Refuse before copying anything: fixed text, no estimate, nothing of the input.
-        return StrengthReport {
-            verdict: StrengthVerdict {
-                score: 0,
-                chars: count,
-                acceptable: false,
-            },
-            warning: Some(WARN_LONG.to_owned()),
-            suggestions: vec![SUGGEST_SHORTER.to_owned()],
-        };
+        // Refuse before scoring: fixed text, no estimate, nothing of the input.
+        return too_long(count);
     }
     let chars = wiped_chars(text.chars(), count);
     let lower = wiped_chars(chars.iter().map(char::to_ascii_lowercase), count);
@@ -155,6 +159,18 @@ pub fn check(password: &MasterPassword) -> StrengthReport {
         scoring::score(estimate.guesses)
     };
     report(score, count, &estimate.pieces)
+}
+
+fn too_long(chars: usize) -> StrengthReport {
+    StrengthReport {
+        verdict: StrengthVerdict {
+            score: 0,
+            chars,
+            acceptable: false,
+        },
+        warning: Some(WARN_LONG.to_owned()),
+        suggestions: vec![SUGGEST_SHORTER.to_owned()],
+    }
 }
 
 fn report(score: u8, chars: usize, pieces: &[Match]) -> StrengthReport {
@@ -295,6 +311,14 @@ mod tests {
         assert_eq!(r.verdict.chars, MAX_MASTER_CHARS);
         assert!(!r.verdict.acceptable);
         assert_eq!(r.warning.as_deref(), Some(WARN_REPEAT));
+    }
+
+    #[test]
+    fn huge_input_refused_before_normalising() {
+        let r = check(&pw(&"a".repeat(RAW_CHARS_LIMIT + 1)));
+        assert_eq!(r.verdict.chars, RAW_CHARS_LIMIT + 1);
+        assert!(!r.verdict.acceptable);
+        assert_eq!(r.warning.as_deref(), Some(WARN_LONG));
     }
 
     #[test]

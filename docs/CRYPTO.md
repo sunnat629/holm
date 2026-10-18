@@ -186,8 +186,9 @@ Holm's own code (no production dependency), a port of zxcvbn's guess model:
   guesses (score 4, zxcvbn's top band). There is no override. Score 3 (1e8) was the
   first rule; it accepted word + year + symbol shapes such as `Summer2026!!`, which
   rule-based cracking reaches in far fewer guesses, so the COS raised it to score 4.
-- Input over 1,024 characters is refused with fixed text before it is copied or scored,
-  so a huge paste costs one pass to count it (about 10 ms for 1,000,000 characters).
+- Input over 1,024 characters (after NFC) is refused with fixed text before it is scored.
+  Input over 4,096 raw characters is refused first, before NFC copies it, so a huge paste
+  costs one pass to count it (about 10 ms for 1,000,000 characters).
 - Pieces it recognises: words from zxcvbn's MIT frequency lists (30,000 leaked passwords,
   30,000 English Wikipedia words, 19,160 TV and film words, 10,000 surnames, 4,695 first
   names; `NOTICE` has the provenance and SHA-256, and `scripts/ci-local.sh` checks the
@@ -205,8 +206,9 @@ Holm's own code (no production dependency), a port of zxcvbn's guess model:
   gaps of at most 10 characters (more pieces or a longer gap cost over 1e10 on their
   own). One errs towards refusing: after 16,384 characters of repeat units have been
   priced in depth, later units count as 1 guess (ordinary passwords use a tiny
-  fraction of it; only long, crafted repeats run it out). One can miss a pattern: the dictionary search stops after 4,096 steps per
-  start position (realistic input never reaches it). Repeat units up to 512 characters
+  fraction of it; only long, crafted repeats run it out). One can miss a pattern: the
+  dictionary search stops after 4,096 steps per start position (realistic input never
+  reaches it). Repeat units up to 512 characters
   are searched, which is every unit with two copies in 1,024 characters. The worst case
   measured at 1,024 characters is about 28 ms and 12 MB (release build, Apple silicon).
 - Years are priced from a fixed reference year (2026), so results never depend on the
