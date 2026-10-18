@@ -31,6 +31,7 @@ security, three exercises, and what to read next in
 | 22 | [A GUI crate and its supply chain](22-a-gui-crate-and-its-supply-chain.md): a library and a binary in one crate, macOS-only dependencies, why eframe's feature list is short, fonts built in with `include_bytes!`, a single-instance lock with `File::try_lock`, and `deny` targets plus vet imports, trust and exemptions for a big new graph. |
 | 23 | [A password widget that wipes](23-a-password-widget-that-wipes.md): why `TextEdit` is not for secrets, a `Vec` that never grows, `std::mem::replace` to move a secret out without a copy, reading raw input events, painting dots instead of text, and testing a widget that has no value. |
 | 24 | [State machines and worker threads](24-state-machines-and-worker-threads.md): an enum as a screen state machine, moving the session into a worker thread and getting it back, `mpsc::Receiver::try_recv` and a disconnected channel, why the session has exactly one owner, `request_repaint_after` for a countdown, and mapping errors to fixed text. |
+| 25 | [Borrowing across a frame](25-borrowing-across-a-frame.md): building item rows once and owning them, `mem::replace` to move a view out of a borrowed enum, panels with the central panel last, and a capped pre-allocated text buffer that wipes itself. |
 
 ## Side tracks
 

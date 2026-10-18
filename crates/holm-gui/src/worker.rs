@@ -11,6 +11,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use holm_core::error::CoreError;
+use holm_core::item::{ItemId, ItemInput};
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
@@ -22,6 +23,12 @@ pub enum Job {
     Create(MasterPassword, KdfParams),
     /// Unlock the vault with this password.
     Unlock(MasterPassword),
+    /// Add this item and save. The input moves in and is wiped on the worker.
+    Add(ItemInput),
+    /// Replace this item's fields and save.
+    Update(ItemId, ItemInput),
+    /// Write the unsaved changes to disk.
+    Save,
 }
 
 impl Job {
@@ -31,13 +38,22 @@ impl Job {
         match self {
             Job::Create(..) => JobKind::Create,
             Job::Unlock(_) => JobKind::Unlock,
+            Job::Add(_) => JobKind::Add,
+            Job::Update(..) => JobKind::Update,
+            Job::Save => JobKind::Save,
         }
     }
 }
 
 impl fmt::Debug for Job {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Job::{:?}(<password hidden>)", self.kind())
+        match self {
+            Job::Create(..) | Job::Unlock(_) => {
+                write!(f, "Job::{:?}(<password hidden>)", self.kind())
+            }
+            Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
+            Job::Save => write!(f, "Job::Save"),
+        }
     }
 }
 
@@ -48,6 +64,12 @@ pub enum JobKind {
     Create,
     /// Unlocking a vault.
     Unlock,
+    /// Adding an item.
+    Add,
+    /// Updating an item.
+    Update,
+    /// Saving unsaved changes.
+    Save,
 }
 
 /// The worker's answer: the session handed back, and how the work went.
@@ -58,6 +80,8 @@ pub struct WorkDone {
     pub kind: JobKind,
     /// How it went.
     pub result: Result<(), CoreError>,
+    /// The id of the item an add made. Present for an add that returned an id.
+    pub added: Option<ItemId>,
 }
 
 impl fmt::Debug for WorkDone {
@@ -95,6 +119,7 @@ pub fn spawn(
             let tx = tx;
             let mut session = session;
             let kind = job.kind();
+            let mut added = None;
             let result = match job {
                 Job::Create(password, params) => {
                     let result = session.create(&password, &params);
@@ -106,6 +131,9 @@ pub fn spawn(
                     drop(password);
                     result
                 }
+                Job::Add(input) => session.add_item(input).map(|id| added = Some(id)),
+                Job::Update(id, input) => session.update_item(id, input),
+                Job::Save => session.save(),
             };
             // A send fails only if the app is gone; the session then drops here,
             // which wipes an unlocked vault.
@@ -113,6 +141,7 @@ pub fn spawn(
                 session,
                 kind,
                 result,
+                added,
             });
         });
     // On a spawn error the closure, and with it `tx`, is already dropped.
@@ -177,5 +206,54 @@ mod tests {
         // The thread is gone after the wake, so the channel disconnects.
         assert!(rx.recv().is_err());
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    }
+    fn login(title: &str) -> ItemInput {
+        use holm_core::item::ItemData;
+        use holm_core::text::{SecretText, Text};
+        ItemInput {
+            title: Text::new(title.to_owned()),
+            category: None,
+            favourite: false,
+            data: ItemData::Login {
+                username: Text::new("ada@example.com".to_owned()),
+                password: SecretText::new("EXAMPLE-pass".to_owned()),
+                urls: Vec::new(),
+                notes: SecretText::new(String::new()),
+            },
+        }
+    }
+
+    fn run(session: Session<FsStore>, job: Job) -> WorkDone {
+        spawn(session, job, || {}).recv().unwrap()
+    }
+
+    #[test]
+    fn add_update_and_save_jobs_run_on_the_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Holm").join("holm.vault");
+        holm_platform::paths::ensure_vault_dir(&path).unwrap();
+        let mut session = Session::new(FsStore::new(path), Box::new(SystemClock::new()));
+        let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
+        session.create(&password, &KdfParams::FLOOR).unwrap();
+
+        let done = run(session, Job::Add(login("First")));
+        assert_eq!(done.kind, JobKind::Add);
+        assert_eq!(done.result, Ok(()));
+        let id = done.added.expect("an add returns the new id");
+        assert!(!done.session.is_dirty(), "an add saves");
+
+        let done = run(done.session, Job::Update(id, login("Renamed")));
+        assert_eq!(done.kind, JobKind::Update);
+        assert_eq!(done.result, Ok(()));
+        assert_eq!(done.added, None);
+        assert_eq!(done.session.item(id).unwrap().title(), "Renamed");
+
+        let done = run(done.session, Job::Save);
+        assert_eq!(done.kind, JobKind::Save);
+        assert_eq!(done.result, Ok(()));
+        assert_eq!(
+            format!("{:?}", Job::Add(login("Secret title"))),
+            "Job::Add(<item hidden>)"
+        );
     }
 }

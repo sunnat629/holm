@@ -4,13 +4,16 @@
 //! themselves on drop.
 
 pub(crate) mod create;
+pub(crate) mod login_form;
 pub(crate) mod unlock;
+pub(crate) mod vault;
 
 use std::sync::mpsc::Receiver;
 
 use crate::worker::{JobKind, WorkDone};
 use create::CreateForm;
 use unlock::UnlockForm;
+pub(crate) use vault::VaultView;
 
 /// The screen the app shows now.
 pub(crate) enum Screen {
@@ -24,12 +27,11 @@ pub(crate) enum Screen {
         job: JobKind,
         /// Where the worker's answer arrives.
         rx: Receiver<WorkDone>,
+        /// The open vault's view, kept across item jobs (none for create and unlock).
+        keep: Option<VaultView>,
     },
     /// The vault is open.
     Vault(VaultView),
     /// Holm can't go on. Fixed text only.
     Fatal(&'static str),
 }
-
-/// The open vault. An empty placeholder until the item list (Task 4).
-pub(crate) struct VaultView;

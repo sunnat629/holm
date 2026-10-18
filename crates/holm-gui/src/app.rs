@@ -82,10 +82,6 @@ pub struct HolmApp {
     /// Argon2 costs for a new vault.
     kdf: KdfParams,
     /// The UI's clock.
-    #[expect(
-        dead_code,
-        reason = "the clipboard timer and lock notes use it (Tasks 5, 6)"
-    )]
     ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets.
     #[expect(dead_code, reason = "the copy buttons use it (Task 5)")]
@@ -173,7 +169,7 @@ impl HolmApp {
     /// Per-frame work before drawing: takes the worker's answer when it is there, and
     /// asks for the repaints that keep the screen current without input.
     pub fn tick(&mut self, ctx: &egui::Context) {
-        let polled = match &self.screen {
+        let polled = match &mut self.screen {
             Screen::Working { rx, .. } => Some(rx.try_recv()),
             Screen::Unlock(_) => {
                 if let Some(wait) = self.throttle_status().retry_after {
@@ -181,7 +177,16 @@ impl HolmApp {
                 }
                 None
             }
-            Screen::Create(_) | Screen::Vault(_) | Screen::Fatal(_) => None,
+            Screen::Vault(view) => {
+                let now = self.ui_clock.monotonic();
+                let focused = ctx.input(|i| i.viewport().focused != Some(false));
+                view.tick(now, focused);
+                if view.revealed() {
+                    ctx.request_repaint_after(Duration::from_secs(1));
+                }
+                None
+            }
+            Screen::Create(_) | Screen::Fatal(_) => None,
         };
         match polled {
             None => {}
@@ -199,7 +204,17 @@ impl HolmApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let throttle = self.throttle_status();
         let kdf = self.kdf;
+        let now = self.ui_clock.monotonic();
         let screen = &mut self.screen;
+        let session = self.session.as_ref();
+        if let Screen::Vault(view) = screen {
+            let job = view.show(ui, session, now);
+            if let Some(job) = job {
+                self.start(ui.ctx(), job);
+                ui.ctx().request_discard("the screen changed");
+            }
+            return;
+        }
         let job = egui::CentralPanel::default()
             .show(ui, |ui| match screen {
                 Screen::Create(form) => form.show(ui).map(|password| Job::Create(password, kdf)),
@@ -208,13 +223,11 @@ impl HolmApp {
                     ui.heading(match job {
                         JobKind::Create => "Creating your vault. This takes a moment.",
                         JobKind::Unlock => "Unlocking. This takes a moment.",
+                        JobKind::Add | JobKind::Update | JobKind::Save => "Saving.",
                     });
                     None
                 }
-                Screen::Vault(VaultView) => {
-                    ui.heading("Your vault is open.");
-                    None
-                }
+                Screen::Vault(_) => None,
                 Screen::Fatal(text) => {
                     ui.label(*text);
                     None
@@ -254,7 +267,8 @@ impl HolmApp {
         match &self.screen {
             Screen::Create(form) => form.buffers_empty(),
             Screen::Unlock(form) => form.buffers_empty(),
-            Screen::Working { .. } | Screen::Vault(_) | Screen::Fatal(_) => true,
+            Screen::Vault(view) => view.buffers_empty(),
+            Screen::Working { .. } | Screen::Fatal(_) => true,
         }
     }
 
@@ -273,9 +287,18 @@ impl HolmApp {
             return;
         };
         let kind = job.kind();
+        let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
+        {
+            Screen::Vault(view) => Some(view),
+            _ => None,
+        };
         let ctx = ctx.clone();
         let rx = (self.spawner)(session, job, Box::new(move || ctx.request_repaint()));
-        self.screen = Screen::Working { job: kind, rx };
+        self.screen = Screen::Working {
+            job: kind,
+            rx,
+            keep,
+        };
     }
 
     /// Takes the session back from the worker and moves to the next screen.
@@ -284,11 +307,27 @@ impl HolmApp {
             mut session,
             kind,
             result,
+            added,
         } = done;
+        let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
+        {
+            Screen::Working { keep, .. } => keep,
+            _ => None,
+        };
+        if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) {
+            let mut view = keep.unwrap_or_else(VaultView::new);
+            if result.is_ok() {
+                session.note_activity();
+            }
+            view.on_done(kind, &result, added, &session);
+            self.screen = Screen::Vault(view);
+            self.session = Some(session);
+            return;
+        }
         self.screen = match (kind, result) {
             (_, Ok(())) => {
                 session.note_activity();
-                Screen::Vault(VaultView)
+                Screen::Vault(VaultView::new())
             }
             // Another process made the vault after this app showed Create.
             (JobKind::Create, Err(CoreError::VaultExists)) => Screen::Unlock(UnlockForm::new()),
@@ -301,6 +340,9 @@ impl HolmApp {
             }
             (JobKind::Unlock, Err(e)) => {
                 Screen::Unlock(UnlockForm::with_error(Some(messages::unlock_error(&e))))
+            }
+            (JobKind::Add | JobKind::Update | JobKind::Save, Err(_)) => {
+                Screen::Fatal(messages::WORKER_LOST)
             }
         };
         self.session = Some(session);

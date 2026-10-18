@@ -11,6 +11,7 @@ use std::time::Duration;
 use holm_core::body::BodyError;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::rules::{Field, FieldError};
 use holm_core::store::StoreError;
 use holm_core::throttle::ThrottleStatus;
 
@@ -61,9 +62,32 @@ pub const SAVE_FAILED: &str = "Holm couldn't save the new vault. Try again.";
 /// Any other create failure.
 pub const CREATE_FAILED: &str = "Holm couldn't create the vault. Try again.";
 
+/// The title is empty.
+pub const TITLE_EMPTY: &str = "Add a title.";
+/// A field is longer than allowed.
+pub const FIELD_TOO_LONG: &str = "One of the fields is too long. Shorten it.";
+/// A field has spaces at its ends or hidden characters.
+pub const FIELD_FORBIDDEN: &str = "Remove spaces at the ends and hidden characters.";
+/// More web addresses than a login may hold.
+pub const TOO_MANY_URLS: &str = "This login has too many web addresses.";
+/// A field that must not be empty is empty.
+pub const FIELD_EMPTY: &str = "Fill in the field that is empty.";
+/// A field holds a reserved word.
+pub const FIELD_RESERVED: &str = "That name is reserved. Choose another.";
+/// The vault would grow past its size limit.
+pub const TOO_LARGE_TO_SAVE: &str =
+    "The vault is too large to save this change. Nothing was changed.";
+/// The change is in memory but not on disk.
+pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on disk yet.";
+/// The stored password is longer than the edit form can hold.
+pub const SECRET_TOO_LONG: &str =
+    "This password is too long to edit here, so it is shown read-only.";
+/// No login is selected.
+pub const SELECT_OR_ADD: &str = "Select a login, or add one.";
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 19] = [
+const ALL: [&str; 29] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -83,6 +107,16 @@ const ALL: [&str; 19] = [
     VAULT_EXISTS,
     SAVE_FAILED,
     CREATE_FAILED,
+    TITLE_EMPTY,
+    FIELD_TOO_LONG,
+    FIELD_FORBIDDEN,
+    TOO_MANY_URLS,
+    FIELD_EMPTY,
+    FIELD_RESERVED,
+    TOO_LARGE_TO_SAVE,
+    NOT_SAVED,
+    SECRET_TOO_LONG,
+    SELECT_OR_ADD,
 ];
 
 /// The line the unlock screen shows for an unlock error.
@@ -118,6 +152,29 @@ pub fn create_error(e: &CoreError) -> &'static str {
         CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
         CoreError::Store(_) => SAVE_FAILED,
         _ => CREATE_FAILED,
+    }
+}
+
+/// The line for a field rule that failed. It names no value.
+#[must_use]
+pub fn field_error(e: &FieldError) -> &'static str {
+    match e {
+        FieldError::Empty(Field::Title) => TITLE_EMPTY,
+        FieldError::Empty(_) => FIELD_EMPTY,
+        FieldError::TooLong(_) => FIELD_TOO_LONG,
+        FieldError::ForbiddenChar(_) => FIELD_FORBIDDEN,
+        FieldError::TooManyUrls => TOO_MANY_URLS,
+        FieldError::Reserved(_) => FIELD_RESERVED,
+    }
+}
+
+/// The line for a failed item save: the permissions line for a folder open to other
+/// users, else [`NOT_SAVED`].
+#[must_use]
+pub fn save_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
+        _ => NOT_SAVED,
     }
 }
 
@@ -239,6 +296,28 @@ mod tests {
         assert_eq!(dir_error(denied), DIR_PERMISSIONS);
         assert_eq!(dir_error(StoreError::NotARegularFile), DIR_ERROR);
         assert_eq!(dir_error(StoreError::Io(ErrorKind::NotFound)), DIR_ERROR);
+    }
+
+    #[test]
+    fn field_and_save_error_tables() {
+        assert_eq!(field_error(&FieldError::Empty(Field::Title)), TITLE_EMPTY);
+        assert_eq!(field_error(&FieldError::Empty(Field::Url)), FIELD_EMPTY);
+        assert_eq!(
+            field_error(&FieldError::TooLong(Field::Notes)),
+            FIELD_TOO_LONG
+        );
+        assert_eq!(
+            field_error(&FieldError::ForbiddenChar(Field::Url)),
+            FIELD_FORBIDDEN
+        );
+        assert_eq!(field_error(&FieldError::TooManyUrls), TOO_MANY_URLS);
+        assert_eq!(
+            field_error(&FieldError::Reserved(Field::Title)),
+            FIELD_RESERVED
+        );
+        let denied = CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied));
+        assert_eq!(save_error(&denied), DIR_PERMISSIONS);
+        assert_eq!(save_error(&CoreError::Locked), NOT_SAVED);
     }
 
     #[test]
