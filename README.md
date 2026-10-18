@@ -9,7 +9,7 @@ Your passwords in one encrypted file on your own computer. No account, no cloud,
 
 ## Why Holm
 
-- **Offline only.** Holm has no network code. It never sends your data anywhere.
+- **Offline only.** Holm has no network code and never sends your data anywhere itself. Until clipboard auto-clear lands, a password you copy in the macOS app stays on the clipboard, where macOS Universal Clipboard can reach your other Apple devices.
 - **One file you own.** Your vault is a single encrypted file. Copy it, back it up or delete it.
 - **Pure Rust.** `unsafe` is forbidden everywhere except one small macOS window file.
 - **Checked.** Fuzzed, with a local CI gate and dependency audits (cargo-deny, cargo-audit, cargo-vet).
@@ -22,7 +22,7 @@ Your passwords in one encrypted file on your own computer. No account, no cloud,
   today. Other types arrive in the next update.
 - Categories, trash, search, filter and sort.
 - Password generator.
-- Copy password, with clipboard handling.
+- Copy password. Only the CLI clears the clipboard today; the macOS app gets clipboard auto-clear in the next update.
 - Idle auto-lock.
 - Import from CSV or JSON. Exports are plaintext, and Holm warns you about it.
 - Command-line tool (`holm`) with an interactive shell.
