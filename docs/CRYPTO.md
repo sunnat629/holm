@@ -410,7 +410,10 @@ does its work and locks the vault on exit. There is no background agent.
   does not reach the shell. `ISIG` is off, so Ctrl-C arrives as a byte and takes the
   same path.
 - `get` prints every secret field as `(hidden)`, never its value or length. Display text
-  goes through a filter that replaces terminal control and bidi characters.
+  goes through a filter that replaces control characters (Unicode `Cc`) and the bidi
+  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It does
+  not replace U+2028/U+2029 or zero-width characters; core already refuses control and
+  bidi characters in display fields, and widening the filter is in `BACKLOG.md`.
 - Messages are fixed text: never a path, a value or a library message.
 
 `holm shell` keeps one unlocked session in one process, for many commands:
