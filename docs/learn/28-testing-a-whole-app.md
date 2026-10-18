@@ -145,7 +145,7 @@ main.rs ── default path or --vault ── HolmApp::new
    ├─ logic → tick: worker result, throttle countdown, idle and minimise lock
    └─ ui    → show: SecretField (wiping SecretInput), rows, login form, Copy
                     │
-                    └─ Session<FsStore> ── Argon2 on the holm-kdf thread ── holm.vault
+                    └─ Session<FsStore> ── Argon2 on the holm-work thread ── holm.vault
 ```
 
 The walking-skeleton test walks this whole picture once, from `HolmApp::new` to the

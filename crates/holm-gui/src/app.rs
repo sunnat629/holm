@@ -557,6 +557,8 @@ impl HolmApp {
             (JobKind::Unlock, Err(e)) => {
                 Screen::Unlock(UnlockForm::with_error(Some(messages::unlock_error(&e))))
             }
+            // Not reached: item jobs only finish with the vault open, and that case
+            // returned above. Kept so the match stays exhaustive and fails closed.
             (JobKind::Add | JobKind::Update | JobKind::Save, Err(_)) => {
                 Screen::Fatal(messages::WORKER_LOST)
             }

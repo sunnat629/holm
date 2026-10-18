@@ -6,7 +6,7 @@ Argon2 is meant to be slow: with Holm's default costs it takes about a second an
 
 ## What we built
 
-`HolmApp` owns the `Session`, the instance lock and one `Screen` enum: `Create`, `Unlock`, `Working`, `Vault` or `Fatal`. A submit moves the master password and the session into a thread named `holm-kdf`, which runs `create` or `unlock` and sends the session back in a `WorkDone`. The UI polls that channel once per frame with `try_recv`, so it never blocks, and a closed channel shows a fixed "something went wrong" line instead of spinning forever. Every error the user can see comes from `messages.rs`, a table of fixed lines with no paths and no library error text.
+`HolmApp` owns the `Session`, the instance lock and one `Screen` enum: `Create`, `Unlock`, `Working`, `Vault` or `Fatal`. A submit moves the master password and the session into a thread named `holm-work`, which runs `create` or `unlock` and sends the session back in a `WorkDone`. The UI polls that channel once per frame with `try_recv`, so it never blocks, and a closed channel shows a fixed "something went wrong" line instead of spinning forever. Every error the user can see comes from `messages.rs`, a table of fixed lines with no paths and no library error text.
 
 ## Rust ideas in this task
 

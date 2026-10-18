@@ -1,6 +1,6 @@
 //! The worker thread: runs Argon2 (create or unlock) off the UI thread.
 //!
-//! The session moves into one short-lived thread named `holm-kdf` and comes back in a
+//! The session moves into one short-lived thread named `holm-work` and comes back in a
 //! [`WorkDone`] over a channel, so it always has exactly one owner and no lock is
 //! needed. The master password moves in too and is dropped (wiped) on the worker
 //! before the answer is sent. If the thread dies without answering (a panic), the
@@ -101,7 +101,7 @@ impl fmt::Debug for WorkDone {
 /// How the app starts a job: [`spawn`] in the app, a fake in tests.
 pub type Spawner = fn(Session<FsStore>, Job, Box<dyn Fn() + Send>) -> Receiver<WorkDone>;
 
-/// Runs `job` on `session` in a new thread named `holm-kdf`, and returns the channel
+/// Runs `job` on `session` in a new thread named `holm-work`, and returns the channel
 /// its [`WorkDone`] arrives on.
 ///
 /// The password is dropped (and so wiped) on the worker before the answer is sent.
@@ -116,7 +116,7 @@ pub fn spawn(
 ) -> Receiver<WorkDone> {
     let (tx, rx) = mpsc::channel();
     let started = thread::Builder::new()
-        .name("holm-kdf".to_owned())
+        .name("holm-work".to_owned())
         .spawn(move || {
             // Declared first, so it drops last: `wake` runs after `tx` is gone, on
             // the normal path and when a panic unwinds this thread.

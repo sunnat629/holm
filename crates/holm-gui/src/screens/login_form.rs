@@ -230,7 +230,11 @@ impl LoginForm {
             form.username = LineBuf::from_text(username.as_str()).unwrap_or_else(LineBuf::new);
             form.url = LineBuf::from_text(urls.first().map_or("", Text::as_str))
                 .unwrap_or_else(LineBuf::new);
-            if let Some(p) = SecretInput::from_secret(password.expose(), ITEM_SECRET_CAP) {
+            // The input came out of a capped buffer, so this always fits. If it ever did
+            // not, refuse in debug builds rather than blank the password.
+            let restored = SecretInput::from_secret(password.expose(), ITEM_SECRET_CAP);
+            debug_assert!(restored.is_some(), "a taken password always fits its cap");
+            if let Some(p) = restored {
                 form.password = p;
             }
         }
@@ -447,17 +451,19 @@ mod tests {
         let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
         session.create(&password, &KdfParams::FLOOR).unwrap();
         let mut form = filled();
-        let input = form.take_input(SecretText::new(String::new()), Vec::new());
+        let mut input = form.take_input(SecretText::new(String::new()), Vec::new());
+        let category = session.add_category("Example").unwrap();
+        input.category = Some(category);
         let id = session.add_item(input).unwrap();
         session.set_favourite(id, true).unwrap();
 
         let mut form = LoginForm::from_item(session.item(id).unwrap()).unwrap();
         let input = form.take_input(SecretText::new(String::new()), Vec::new());
         assert!(input.favourite, "favourite is carried through an edit");
-        assert_eq!(input.category, session.item(id).unwrap().category());
-        let back = LoginForm::from_input(Some(id), input, "x");
-        let mut back = back;
+        assert_eq!(input.category, Some(category), "category is carried through an edit");
+        let mut back = LoginForm::from_input(Some(id), input, "x");
         let again = back.take_input(SecretText::new(String::new()), Vec::new());
         assert!(again.favourite, "and through a refill");
+        assert_eq!(again.category, Some(category), "category too");
     }
 }
