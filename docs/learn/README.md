@@ -35,6 +35,7 @@ security, three exercises, and what to read next in
 | 26 | [The clipboard is shared](26-the-clipboard-is-shared.md): a trait as a seam for the OS clipboard, `Cow<str>` to hand over text without a copy, extension traits (`SetExtApple`), wiping pasted text, all-or-nothing pastes, and why "concealed" is a request that clipboard managers may ignore. |
 | 27 | [Locking without a frame](27-locking-without-a-frame.md): eframe's `logic` versus `ui`, why the idle check must run when no frame is drawn, `Drop` wiping a replaced screen, `consume_shortcut` for Cmd+L, and a dirty-lock dialog that never loses changes silently. |
 | 28 | [Testing a whole app](28-testing-a-whole-app.md): an integration test as its own crate, `drop` to end a lock's job, a fake shared through `Rc<RefCell<…>>`, reading modes and bytes on disk without printing a secret, `#[ignore]` tests run by hand, and what a headless test proves versus what only a person at a real Mac can check. |
+| 29 | [Iterators and lifetimes](29-iterators-and-lifetimes.md): `ItemSummary<'a>` borrowing from the session, `filter`/`map`/`collect`, closures, `sort_by` with `then_with`, and `#[default]` on enum variants. |
 
 ## Side tracks
 

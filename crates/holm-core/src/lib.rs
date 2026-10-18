@@ -91,6 +91,7 @@ pub mod generator;
 pub mod item;
 pub mod padding;
 pub mod rules;
+pub mod search;
 pub mod session;
 pub mod settings;
 pub mod store;

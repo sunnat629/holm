@@ -21,11 +21,16 @@ Source of truth: GitHub issues. This file mirrors them for offline reading.
 | [#18](https://github.com/sunnat629/holm/issues/18) | Clock, throttle and idle timer | 2 | `14-time-and-saturating-maths.md` | todo |
 | [#19](https://github.com/sunnat629/holm/issues/19) | Vault store trait and session lifecycle | 2 | `15-generics-and-trait-objects.md` | todo |
 | [#20](https://github.com/sunnat629/holm/issues/20) | Items, trash, categories, settings and the phrase gate | 2 | `16-borrowing-in-practice.md` | todo |
-| [#21](https://github.com/sunnat629/holm/issues/21) | Search, filter and sort | 4 | `17-iterators-and-lifetimes.md` | todo |
+| [#21](https://github.com/sunnat629/holm/issues/21) | Search, filter and sort | 4 | `29-iterators-and-lifetimes.md` (lessons 17, 19, 20 retired) | todo |
 | [#22](https://github.com/sunnat629/holm/issues/22) | holm-platform durable file store and crash tests | 2 | `18-files-fsync-and-processes.md` | todo |
-| [#23](https://github.com/sunnat629/holm/issues/23) | Import from CSV and JSON | 4 | `19-parsing-untrusted-text.md` | todo |
-| [#24](https://github.com/sunnat629/holm/issues/24) | Plaintext CSV export | 4 | `20-building-output-safely.md` | todo |
+| [#23](https://github.com/sunnat629/holm/issues/23) | Import from CSV and JSON | 4 | `31-hostile-input-all-or-nothing.md` (lessons 17, 19, 20 retired) | todo |
+| [#24](https://github.com/sunnat629/holm/issues/24) | Plaintext CSV export | 4 | `32-building-output-safely.md` (lessons 17, 19, 20 retired) | todo |
 | [#25](https://github.com/sunnat629/holm/issues/25) | Fuzzing, property tests, full round trip and docs (2a part) | 2 | `21-fuzzing-structured-inputs.md` | todo |
+| [#35](https://github.com/sunnat629/holm/issues/35) | Std-only CSV and JSON readers and the CSV writer | 4 | `30-parsing-untrusted-text.md` | todo |
+| [#36](https://github.com/sunnat629/holm/issues/36) | holm-cli foundation: terminal prompt, instance lock, init, list, get, gen | 4 | `33-a-cli-without-a-framework.md` | todo |
+| [#37](https://github.com/sunnat629/holm/issues/37) | holm-cli write commands: add, edit, rm, passwd, copy, import, export | 4 | `34-moving-secrets-in-and-out.md` | todo |
+| [#38](https://github.com/sunnat629/holm/issues/38) | holm shell | 4 | `35-a-read-eval-loop-with-a-deadline.md` | todo |
+| [#39](https://github.com/sunnat629/holm/issues/39) | GUI search, import and export; Phase 4 docs | 4 | `36-thin-screens-over-the-core.md` | todo |
 
 ## Deferred
 
@@ -47,11 +52,11 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 
 ## Phase 4 (moved from Phase 2)
 
-Phase 2a ships the core, the durable store and the fuzzing above. These keep their task and lesson numbers and run in Phase 4, before `holm-cli`:
+Phase 2a ships the core, the durable store and the fuzzing above. These run in Phase 4 under the Phase 4 plan (lessons 17, 19 and 20 are retired), before `holm-cli`:
 
-- Task 9 (#21): search, filter and sort. Lesson 17.
-- Task 11 (#23): import from CSV and JSON. Lesson 19.
-- Task 12 (#24): plaintext CSV export. Lesson 20.
+- Plan Task 1 (#21, was Phase 2 Task 9): search, filter and sort. Lesson 29.
+- Plan Task 3 (#23, was Phase 2 Task 11): import from CSV and JSON. Lesson 31.
+- Plan Task 4 (#24, was Phase 2 Task 12): plaintext CSV export. Lesson 32.
 - The moved parts of Task 13 (#25): the `import_csv` and `import_json` fuzz targets, `tests/import_props.rs`, the `csv_roundtrip_any_fields` property test, and the export and import half of the full round trip.
 
 ## Deferred from Phase 3 (macOS walking skeleton)
@@ -102,6 +107,16 @@ Phase 5 (platform hardening and GUI polish)
 - "Save and lock" saves on the UI thread, so a hung volume freezes the window and blocks the idle lock: send it through `Job::Save` with a lock-after flag (Task 6 M4).
 - Error-path tests for `LockError::Io` and a failed worker spawn; `PermissionDenied` copy is shown for every EACCES (Task 3 M8, M9).
 - Quitting mid-Argon2 drops the instance lock while the worker owns the session; harmless (`create_new` never overwrites), revisit with the lock work (Task 3 M10).
+
+Phase 3 final review Minors
+
+- m1: `O_NOFOLLOW` is wrong on riscv64 Linux (`fs_store.rs:162-171`). Fix: move riscv64 to the `0o400000` branch or return `None`.
+- m2: no guard against drift between holm-platform `[lints.rust]` and `[workspace.lints.rust]`. Fix: add a ci-local grep or a test, and `#![forbid(unsafe_code)]` to holm-platform's integration tests.
+- m3: the manual checklist sets `$V` only on the throwaway path. Fix: add `V="$HOME/Library/Application Support/Holm/holm.vault"` for the default route (checklist lines 73, 120, 126, 133).
+- m4: `create_then_sync_fails` (holm-gui `tests/create_unlock.rs`) leaves the fake session unlocked. Fix: `session.lock()` in the fake, then unlock with `PASSWORD` and expect Vault.
+- m5: no test that Escape or a backdrop click cancels the lock dialog (`vault.rs:300-303`).
+- m6: two comment lines in `holm-platform/Cargo.toml` (19 and 22) run past 100 columns.
+- owed: the owner's real-Mac minimise run. If it does not lock, it is Critical.
 
 Phase 6 (release)
 
