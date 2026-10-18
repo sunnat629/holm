@@ -2,11 +2,7 @@
 
 ## What we built
 
-The envelope from lesson 07 encrypts a body, but until now the body was just bytes. This task decides what those bytes are. `body::VaultData` holds the vault's settings, categories, items and the next category id. `VaultData::encode` turns it into bytes, and `VaultData::decode` turns bytes back into it.
-
-The layout is a 2-byte schema version (`1`, little-endian), then the [`postcard`](https://docs.rs/postcard) encoding of the four fields. `settings::Settings` holds the security settings: auto-lock (60 to 3,600 s), clipboard clearing (5 to 90 s), lock on sleep, and the generator defaults. They live inside the encrypted body so nobody can weaken them by editing a file.
-
-The files are `crates/holm-core/src/settings.rs`, `crates/holm-core/src/body.rs`, and new wire types in `crates/holm-core/src/wire.rs`.
+The envelope from lesson 07 encrypts a body, and this task decides what those bytes are. `body::VaultData` holds the settings, categories, items and next category id, and `encode` and `decode` turn it into bytes and back. The layout is a 2-byte little-endian schema version, then the [`postcard`](https://docs.rs/postcard) encoding of the four fields. `settings::Settings` holds auto-lock (60 to 3,600 s), clipboard clearing (5 to 90 s), lock on sleep and the generator defaults, inside the encrypted body so nobody can weaken them by editing a file. The code is in `settings.rs`, `body.rs` and `wire.rs` under `crates/holm-core/src/`.
 
 ## Rust ideas in this task
 
@@ -91,7 +87,9 @@ if !leftover.is_empty() {
 ```
 
 - `take_from_bytes` returns the value and the unread rest. Holm insists the rest is empty. Extra bytes mean a buggy writer or a body from a format we do not understand, and ignoring them would hide data that could later be lost on save.
-- It also keeps one meaning per file: two different byte strings never decode to the same vault, so the golden test means what it says.
+- Encode is deterministic: one vault always gives the same bytes, so the golden test pins the writer. Decode is not canonical. Postcard accepts an overlong varint (`158, 0` reads as 30), and clamping maps clipboard 0 and 5 to the same setting. That is fine because the body is AEAD-authenticated and Holm always re-encodes canonically, but never compare body bytes to detect a change.
+
+In Kotlin you'd write: `ProtoBuf.decodeFromByteArray(bytes)`, which ignores trailing data, so you would decode from a stream and check `input.available() == 0` yourself.
 
 ### Measure before you allocate
 
@@ -115,7 +113,7 @@ In Kotlin you'd write: `ByteArray(size)` then `ByteBuffer.wrap(arr).put(...)`, w
 
 ## Why this matters for security
 
-The body is the vault. After the AEAD tag checks out, everything in it is trusted by the rest of Holm, so the decoder is the last gate. It treats its input as hostile: a bug in an older writer, or a future one, must give an error, never a panic, a huge allocation, or an item that breaks the field rules (such as a title with a right-to-left override that disguises `exe` as `txt`).
+The body is the vault, and once the AEAD tag checks out the rest of Holm trusts it, so the decoder is the last gate. It treats its input as hostile: a bug in an older writer, or a future one, must give an error, never a panic, a huge allocation, or an item that breaks the field rules (such as a title with a right-to-left override that disguises `exe` as `txt`).
 
 `encode` runs the same checks before it writes, so Holm cannot save a body it would refuse to open. Settings are the one exception on the way in: an out-of-range value in an authenticated body is clamped into range, not refused (`docs/DECISIONS.md`), so a vault never becomes unopenable over a setting.
 

@@ -197,7 +197,6 @@ impl<'a> ItemOut<'a> {
 
 /// An item as read. Nothing here is trusted until [`ItemIn::into_item`] returns `Ok`.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ItemIn {
     id: ItemId,
     title: WireStr,
@@ -210,7 +209,6 @@ pub(crate) struct ItemIn {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 enum DataIn {
     Login {
         username: WireStr,
@@ -310,7 +308,6 @@ impl<'a> CategoryOut<'a> {
 
 /// A category as read.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct CategoryIn {
     id: CategoryId,
     name: WireStr,
@@ -336,7 +333,6 @@ impl CategoryIn {
 /// Every conversion destructures the whole struct, so a new settings field cannot be
 /// left out of the wire format by accident: it stops the build instead.
 #[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SettingsWire {
     auto_lock_secs: u32,
     clipboard_clear_secs: u32,
@@ -347,7 +343,6 @@ pub(crate) struct SettingsWire {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PasswordSpecWire {
     length: u16,
     lowercase: bool,
@@ -360,7 +355,6 @@ struct PasswordSpecWire {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PassphraseSpecWire {
     words: u8,
     separator: char,
@@ -369,7 +363,6 @@ struct PassphraseSpecWire {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct UsernameSpecWire {
     words: u8,
     digits: u8,
@@ -504,7 +497,6 @@ pub(crate) struct BodyOut<'a> {
 /// The whole body as read. Nothing here is trusted until [`crate::body`] has converted
 /// and checked it.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct BodyIn {
     pub(crate) settings: SettingsWire,
     pub(crate) categories: BoundedVec<CategoryIn, MAX_CATEGORIES>,

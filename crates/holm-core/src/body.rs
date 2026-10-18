@@ -531,8 +531,8 @@ mod tests {
 
     #[test]
     fn every_prefix_fails_without_panic() {
-        let mut items = every_type();
-        items.truncate(2);
+        let items = every_type();
+        assert_eq!(items.len(), 4, "all four item types");
         let b = bytes(&data_with(items));
         for n in 0..b.len() {
             assert!(VaultData::decode(&b[..n]).is_err(), "prefix of {n} bytes");
