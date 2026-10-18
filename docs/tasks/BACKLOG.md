@@ -90,6 +90,18 @@ Phase 5 (platform hardening and GUI polish)
 - Latin subsetting of the fonts.
 - The spec §8.0 last-used vault path (Phase 3 uses the default path or `--vault`).
 - Revealed text: drop egui's galley and AccessKit copies sooner, if egui allows it (F11).
+- After a save error the new item's id is not selected: find it by comparing row ids before and after the rebuild (Task 4 M-1).
+- Non-store errors (`TooManyItems`, RNG failure, `NotFound`) get the "change is open in Holm" copy though nothing was committed: give them their own text (Task 4 M-2).
+- Re-hide and countdown repaint fire up to 1 s late: reuse `until_next_second` (Task 4 M-3; same for the lock warning countdown, Task 6 M8).
+- Add the missing `field_error_messages_have_no_values` test and the reveal tests (not selectable, hides on leaving the item or on Edit) (Task 4 M-9, M-10).
+- `char_limit(MAX_LINE_BYTES / 4)` cuts a long paste at 256 chars while the core allows 1024 bytes: drop it or size it in bytes (Task 4 M-11).
+- Prompt before an open edit form is discarded by a row click or New login (Task 4 M-12).
+- Manual lock drops typed, unsubmitted edits without asking: ask or note "discarded" when the form buffers are not empty (Task 6 M1).
+- `record_activity` counts every event, including focus loss and AccessKit requests: count user-input events only (Task 6 M2).
+- Cmd+L pressed during a running job is lost: add a pending-lock flag that `finish` honours (Task 6 M3).
+- "Save and lock" saves on the UI thread, so a hung volume freezes the window and blocks the idle lock: send it through `Job::Save` with a lock-after flag (Task 6 M4).
+- Error-path tests for `LockError::Io` and a failed worker spawn; `PermissionDenied` copy is shown for every EACCES (Task 3 M8, M9).
+- Quitting mid-Argon2 drops the instance lock while the worker owns the session; harmless (`create_new` never overwrites), revisit with the lock work (Task 3 M10).
 
 Phase 6 (release)
 
