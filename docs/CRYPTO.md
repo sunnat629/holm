@@ -465,9 +465,14 @@ Known gaps:
   whole, with fixed text and a line number, never a cell value. Rows with problems are
   skipped and reported by row number only.
 - Export writes plaintext CSV: every password, in the clear. The file is created new
-  (never over an existing file or through a symlink) with mode 0600 on Unix, and a
-  failed write removes the partial file. The master password is asked again first and
-  `EXPORT_WARNING` is shown before any byte is written.
+  (never over an existing file or through a symlink) with mode 0600 on Unix. If the
+  write or its sync fails, the partial file is first truncated to zero bytes and synced
+  through the open handle, then removed. The remove is best effort (it can fail on the
+  same flaky or removable volume, or if the path was swapped meanwhile); the truncate
+  means a failed remove leaves an empty file, not partial plaintext. The truncate is
+  best effort too: if the volume refuses it as well, some of the plaintext can stay on
+  disk. The master password is asked again first and `EXPORT_WARNING` is shown before
+  any byte is written.
 - Export does not escape cells that start with `=`, `+`, `-` or `@`. Escaping would
   change the stored value, so a re-import would not match byte for byte. The warning
   names spreadsheets instead, because that is where formula injection happens.

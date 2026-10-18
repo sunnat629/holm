@@ -3,8 +3,9 @@
 //!
 //! [`write_new_private_file`] creates a new file that only its owner can read (mode
 //! 0600 on Unix) and never touches an existing file or follows a symlink. If anything
-//! fails after the create, the partial file is removed, so a half-written export with
-//! some passwords in it is not left behind.
+//! fails after the create, the partial file is truncated to zero bytes and synced,
+//! then removed (best effort), so a half-written export with some passwords in it is
+//! not left behind even when the remove fails too.
 //!
 //! [`read_capped`] reads a whole import file into wiping memory, but only a regular
 //! file no larger than the caller's cap. A FIFO, a device or a folder is refused
@@ -41,12 +42,18 @@ pub(crate) fn write_new_private_file_with(
 ) -> Result<(), StoreError> {
     let mut file = create_exclusive(path)?;
     let written = write(&mut file, bytes).and_then(|()| file.sync_all());
-    drop(file);
     match written {
         Ok(()) => Ok(()),
         Err(e) => {
-            // Best effort: the write error is the one to report. Only a file this call
-            // created is ever at `path` here, unless something replaced it meanwhile.
+            // First empty the file through the handle, so if the remove below fails
+            // too (a flaky or removable volume, the case where the write just failed)
+            // no partial plaintext stays on disk. All best effort: the write error is
+            // the one to report.
+            let _ = file.set_len(0);
+            let _ = file.sync_all();
+            drop(file);
+            // Only a file this call created is ever at `path` here, unless something
+            // replaced it meanwhile.
             let _ = fs::remove_file(path);
             Err(StoreError::Io(e.kind()))
         }
@@ -206,6 +213,33 @@ mod tests {
             write_new_private_file_with(&path, b"EXAMPLE-secret", &mut fail_halfway).unwrap_err();
         assert_eq!(err, StoreError::Io(ErrorKind::StorageFull));
         assert!(fs::symlink_metadata(&path).is_err(), "partial file left");
+    }
+
+    /// The remove can fail too (here the folder turns read-only mid-write). The
+    /// partial file is then left, but empty: it was truncated and synced first.
+    #[cfg(unix)]
+    #[test]
+    fn failed_write_truncates_before_a_failed_remove() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.csv");
+        let folder = dir.path().to_owned();
+        let set_mode = |m: u32| fs::set_permissions(&folder, fs::Permissions::from_mode(m));
+        let mut fail_halfway = |file: &mut File, bytes: &[u8]| {
+            file.write_all(&bytes[..7])?;
+            file.sync_all()?;
+            set_mode(0o500)?;
+            Err(io::Error::from(ErrorKind::StorageFull))
+        };
+        let err =
+            write_new_private_file_with(&path, b"EXAMPLE-secret", &mut fail_halfway).unwrap_err();
+        set_mode(0o700).unwrap();
+        assert_eq!(err, StoreError::Io(ErrorKind::StorageFull));
+        // As root the remove still works and the file is gone; that is fine too.
+        if let Ok(meta) = fs::symlink_metadata(&path) {
+            assert_eq!(meta.len(), 0, "partial plaintext left on disk");
+            assert_eq!(fs::read(&path).unwrap(), b"");
+        }
     }
 
     #[test]
