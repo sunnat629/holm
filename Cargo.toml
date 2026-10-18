@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-cli"]
+members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-platform", "crates/holm-cli"]
 # Separate workspaces (own lockfiles): libsodium oracle tests and cargo-fuzz.
 exclude = ["oracle", "fuzz"]
 
@@ -18,6 +18,7 @@ unsafe_code = "forbid"
 # Internal crates
 holm-crypto = { path = "crates/holm-crypto", version = "0.0.0" }
 holm-core = { path = "crates/holm-core", version = "0.0.0" }
+holm-platform = { path = "crates/holm-platform", version = "0.0.0" }
 
 # Runtime
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
@@ -42,6 +43,8 @@ proptest = "1.12"
 hex = "0.4"
 serde_json = "1"
 static_assertions = "1.1"
+# Throwaway directories for holm-platform tests. Already in the graph through proptest.
+tempfile = "3"
 
 # Argon2 is slow in unoptimised builds. Optimise dependencies even in dev
 # so tests that derive keys stay fast. Our own code stays easy to debug.

@@ -1,0 +1,18 @@
+[package]
+name = "holm-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Holm platform code: the vault file on disk, with durable writes"
+
+[lints]
+workspace = true
+
+[dependencies]
+holm-core.workspace = true
+holm-crypto.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -26,6 +26,7 @@ security, three exercises, and what to read next in
 | 14 | [Time and saturating maths](14-time-and-saturating-maths.md): `Duration`, monotonic `Instant` vs wall `SystemTime`, `saturating_*` and `checked_*`, `Default`, a trait as a test seam, and the `Send` bound. |
 | 15 | [Generics and trait objects](15-generics-and-trait-objects.md): the vault session, generic over its store with `Session<S: VaultStore>` and a `Box<dyn Clock>`, `Option` as a locked/unlocked state, `&mut self`, `From` and `?` into one error enum, and why a password change writes before it swaps keys. |
 | 16 | [Borrowing in practice](16-borrowing-in-practice.md): returning `&str` from a `&mut self` method, `position`/`iter_mut`/`retain`, `std::mem::replace` for undo, splitting a module into a folder, and `compile_fail` doctests. |
+| 18 | [Files, fsync and processes](18-files-fsync-and-processes.md): `OpenOptions` with `create_new` and `mode`, `#[cfg(unix)]`, why write-sync-rename-sync survives a crash, checking the file you opened, and a crash test that runs itself as a child process. |
 
 ## Side tracks
 

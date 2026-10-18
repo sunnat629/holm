@@ -84,6 +84,16 @@ impl<S: VaultStore> Session<S> {
         Ok(&data.items[i])
     }
 
+    /// The items not in Trash, in stored order, with no filtering or sorting. The
+    /// item list shows these; search and sort are separate (Phase 4).
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`].
+    pub fn active_items(&self) -> Result<impl Iterator<Item = &Item> + '_, CoreError> {
+        let data = &self.unlocked()?.data;
+        Ok(data.items.iter().filter(|i| i.trashed.is_none()))
+    }
+
     /// Adds an item and saves.
     ///
     /// # Errors
@@ -570,6 +580,19 @@ mod tests {
         assert_eq!(s.item(id).err(), Some(CoreError::NotFound));
         assert_eq!(s.trash(id), Err(CoreError::NotFound));
         assert!(!s.is_dirty());
+    }
+
+    #[test]
+    fn active_items_skips_trash_in_stored_order() {
+        let (mut s, _) = created();
+        s.add_item(login("A", "x")).unwrap();
+        let b = s.add_item(login("B", "x")).unwrap();
+        s.add_item(login("C", "x")).unwrap();
+        s.trash(b).unwrap();
+        let titles: Vec<&str> = s.active_items().unwrap().map(Item::title).collect();
+        assert_eq!(titles, ["A", "C"]);
+        s.lock();
+        assert_eq!(s.active_items().err(), Some(CoreError::Locked));
     }
 
     #[test]
