@@ -13,7 +13,7 @@ right end, drawn in `crates/holm-gui/src/widgets/secret_field.rs`. While you hol
 down on it, the box paints the secret as text instead of the 12 fixed dots. Let go, drag off
 it, switch window (Cmd+Tab) or lock, and the dots come back at once. Space held on the
 keyboard-focused eye also reveals; it never types a space into the secret, and typing
-while the eye has focus moves focus back to the field.
+while the eye has focus moves focus back to the field. The rule is an allowlist: only Space (and Tab, which moves focus on) stay on the eye. Every other key press, text, paste or cut moves focus to the field in that same frame, so Cmd+V, Enter and Backspace still work. A lone space typed while the eye has focus is the reveal key, not text.
 
 ## Rust ideas in this task
 

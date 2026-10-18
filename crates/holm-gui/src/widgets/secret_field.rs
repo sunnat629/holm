@@ -86,25 +86,26 @@ pub fn secret_field(
     let held_by_key = eye.has_focus() && window_focused && ui.input(|i| i.key_down(Key::Space));
     let revealing = held_by_pointer || held_by_key;
 
-    // Holding the eye must not take typing focus away from the field. Only a pointer press
-    // moves focus; a keyboard "click" (Space or Enter on the focused eye) must not, or the
-    // same frame's Space text would be typed into the secret.
-    let typed_while_eye_focused = eye.has_focus()
+    // Holding the eye must not take typing focus away from the field. A pointer press moves
+    // focus. While the eye has keyboard focus, an allowlist stays on the eye: Space (key
+    // press and release, and its " " text, which is the reveal key and never typed), Tab
+    // (focus navigation), key releases, and anything that is not input. Every other key
+    // press, text, paste or cut hands focus to the field in the same frame so it is read
+    // there and nothing is dropped. Egui has no keys for bare modifiers, so those never
+    // reach this match.
+    let input_for_field = eye.has_focus()
         && ui.input(|i| {
-            i.events.iter().any(|e| {
-                matches!(e, Event::Text(t) if t != " ")
-                    || matches!(
-                        e,
-                        Event::Key {
-                            key: Key::Backspace,
-                            pressed: true,
-                            ..
-                        }
-                    )
+            i.events.iter().any(|e| match e {
+                Event::Text(t) => t != " ",
+                Event::Key {
+                    key, pressed: true, ..
+                } => !matches!(key, Key::Space | Key::Tab),
+                Event::Paste(_) | Event::Cut => true,
+                _ => false,
             })
         });
-    if response.clicked() || eye.is_pointer_button_down_on() || typed_while_eye_focused {
-        // Typing while the eye has focus hands focus to the field instead of dropping keys.
+    if response.clicked() || eye.is_pointer_button_down_on() || input_for_field {
+        // Input while the eye has focus hands focus to the field instead of dropping it.
         response.request_focus();
     }
 
@@ -739,6 +740,8 @@ mod tests {
     }
 
     #[test]
+    // kittest runs one frame per event, so Key::Space and Text(" ") cannot share a frame here
+    // as they do under egui-winit. Do not drop the `t != " "` filter because this is green.
     fn space_on_focused_eye_reveals_and_never_types() {
         let mut harness = harness();
         type_secret(&mut harness);
@@ -766,5 +769,58 @@ mod tests {
         assert_eq!(harness.state().first.char_count(), 11);
         assert!(harness.state().last.has_focus);
         assert!(harness.state().second.is_empty());
+    }
+
+    #[test]
+    fn paste_with_eye_focused_goes_to_the_field() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::V);
+        harness.run();
+        assert_eq!(harness.state().pastes, 1);
+        assert!(harness.state().last.has_focus);
+        assert_eq!(harness.state().first.char_count(), 10);
+    }
+
+    #[test]
+    fn enter_with_eye_focused_submits() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        harness.key_press(Key::Enter);
+        harness.run();
+        assert_eq!(harness.state().submits, 1);
+        assert!(harness.state().last.has_focus);
+        assert_eq!(harness.state().first.char_count(), 10);
+    }
+
+    #[test]
+    fn backspace_with_eye_focused_goes_to_the_field() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        harness.key_press(Key::Backspace);
+        harness.run();
+        assert_eq!(harness.state().first.char_count(), 9);
+        assert!(harness.state().last.has_focus);
+    }
+
+    #[test]
+    fn tab_and_modifier_keys_stay_on_the_eye() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        harness.key_press_modifiers(Modifiers::SHIFT, Key::Space);
+        harness.run();
+        assert!(!harness.state().last.has_focus);
+        // Tab from the field lands on the eye and must not be pulled back to the field.
+        harness.get_by_label(LABEL).focus();
+        harness.run();
+        assert!(harness.state().last.has_focus);
+        harness.key_press(Key::Tab);
+        harness.run();
+        assert!(!harness.state().last.has_focus);
+        assert_eq!(harness.state().first.char_count(), 10);
     }
 }
