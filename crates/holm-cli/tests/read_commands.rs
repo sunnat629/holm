@@ -321,9 +321,11 @@ fn ref_prefix_rules() {
     let ran = run(&path, &["get", &hex[..5]], &mut term);
     assert_eq!(ran.code, usage());
     assert!(term.prompts.is_empty());
-    // Upper case, or not hex at all, is a usage error too.
+    // Upper case, or not hex at all, is a usage error too. The last digit is an
+    // upper-case letter, so the ref has upper case even when the id's first digits
+    // are all 0-9.
     for bad in [
-        hex[..8].to_uppercase(),
+        format!("{}F", hex[..7].to_uppercase()),
         "zzzzzzzz".to_owned(),
         format!("{hex}0"),
     ] {
