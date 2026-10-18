@@ -36,6 +36,7 @@ security, three exercises, and what to read next in
 | 27 | [Locking without a frame](27-locking-without-a-frame.md): eframe's `logic` versus `ui`, why the idle check must run when no frame is drawn, `Drop` wiping a replaced screen, `consume_shortcut` for Cmd+L, and a dirty-lock dialog that never loses changes silently. |
 | 28 | [Testing a whole app](28-testing-a-whole-app.md): an integration test as its own crate, `drop` to end a lock's job, a fake shared through `Rc<RefCell<…>>`, reading modes and bytes on disk without printing a secret, `#[ignore]` tests run by hand, and what a headless test proves versus what only a person at a real Mac can check. |
 | 29 | [Iterators and lifetimes](29-iterators-and-lifetimes.md): `ItemSummary<'a>` borrowing from the session, `filter`/`map`/`collect`, closures, `sort_by` with `then_with`, and `#[default]` on enum variants. |
+| 30 | [Parsing untrusted text](30-parsing-untrusted-text.md): byte offsets instead of `char` indices in a `&str`, a small state machine with `match`, measuring before allocating so a wiping buffer never grows, errors that carry a line and never content, and a property test against an oracle crate. |
 
 ## Side tracks
 

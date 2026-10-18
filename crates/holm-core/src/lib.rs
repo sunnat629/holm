@@ -90,6 +90,17 @@ pub mod fuzzing;
 pub mod generator;
 pub mod item;
 pub mod padding;
+// Own CSV and JSON code for import and export. Import (Phase 4 Task 3) and export
+// (Task 4) are its callers; until both land, part of it is used only by its tests.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        unused_imports,
+        reason = "callers arrive in Phase 4 Tasks 3 and 4"
+    )
+)]
+pub(crate) mod plain;
 pub mod rules;
 pub mod search;
 pub mod session;
