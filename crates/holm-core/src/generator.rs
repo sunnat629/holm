@@ -973,4 +973,28 @@ mod tests {
             [&"drop-down", &"felt-tip", &"t-shirt", &"yo-yo"]
         );
     }
+
+    #[test]
+    fn defaults_pass_the_master_password_check() {
+        // What the generator offers by default must be accepted as a master password.
+        let mut rng = SplitMix64Source(0x5EED);
+        for _ in 0..300 {
+            let p = passphrase_with(&mut rng, &PassphraseSpec::DEFAULT).unwrap();
+            let master = holm_crypto::MasterPassword::new(p.expose().to_owned());
+            let verdict = crate::strength::check(&master).verdict;
+            assert!(
+                verdict.acceptable,
+                "default passphrase refused (score {})",
+                verdict.score
+            );
+            let p = password_with(&mut rng, &PasswordSpec::DEFAULT).unwrap();
+            let master = holm_crypto::MasterPassword::new(p.expose().to_owned());
+            let verdict = crate::strength::check(&master).verdict;
+            assert!(
+                verdict.acceptable,
+                "default password refused (score {})",
+                verdict.score
+            );
+        }
+    }
 }

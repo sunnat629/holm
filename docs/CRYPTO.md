@@ -182,39 +182,52 @@ held in `VaultKeys` using `subtle::ConstantTimeEq`.
 `holm_core::strength::check` decides whether a new master password is accepted. It is
 Holm's own code (no production dependency), a port of zxcvbn's guess model:
 
-- The NFC form must have at least 12 `char`s, and the estimate must reach 1e8 guesses
-  (score 3 on zxcvbn's 0-4 scale). There is no override.
+- The NFC form must have from 12 to 1,024 `char`s, and the estimate must reach 1e10
+  guesses (score 4, zxcvbn's top band). There is no override. Score 3 (1e8) was the
+  first rule; it accepted word + year + symbol shapes such as `Summer2026!!`, which
+  rule-based cracking reaches in far fewer guesses, so the COS raised it to score 4.
+- Input over 1,024 characters is refused with fixed text before it is copied or scored,
+  so a huge paste costs one pass to count it (about 10 ms for 1,000,000 characters).
 - Pieces it recognises: words from zxcvbn's MIT frequency lists (30,000 leaked passwords,
   30,000 English Wikipedia words, 19,160 TV and film words, 10,000 surnames, 4,695 first
   names; `NOTICE` has the provenance and SHA-256, and `scripts/ci-local.sh` checks the
   hash), in any case, reversed or with l33t symbols; the word `holm` at rank 1; keyboard
-  walks on QWERTY, Dvorak and two keypads; repeats; letter and digit sequences; years
-  and dates.
+  walks on QWERTY, Dvorak and two keypads; repeats, found at every start inside a run;
+  letter and digit sequences; years and dates.
 - The estimate is the cheapest way to build the whole password from those pieces, with
   any gap priced as random characters (`10^length`), using zxcvbn's formula
-  `l! x product + 10000^(l-1)`. Holm finds the true minimum; zxcvbn's search can only
-  return the same or more.
-- The whole password is scored, with no 100-character cut-off. Work is bounded instead.
-  Two bounds cannot change the score: at most 4 pieces, and random gaps of at most 10
-  characters (more pieces or a longer gap cost over 1e10 on their own). One errs towards
-  refusing: after 65,536 characters of repeat units have been priced in depth, later
-  units count as 1 guess. Two can miss a pattern: repeat units longer than 512
-  characters are not detected, and the dictionary search stops after 4,096 steps per
-  start position.
+  `l! x product + 10000^(l-1)`. Holm finds that minimum exactly for the pieces it found.
+  Every matcher aims to find at least what zxcvbn finds and price it no higher, but that
+  is checked by tests, not proved: a piece Holm misses can make its estimate higher than
+  zxcvbn's. The first version of the repeat matcher did exactly that (`yoyohellohello`
+  was accepted), and the generated oracle corpus below now covers that shape.
+- Work is bounded. Two bounds cannot change the result: at most 4 pieces, and random
+  gaps of at most 10 characters (more pieces or a longer gap cost over 1e10 on their
+  own). One errs towards refusing: after 16,384 characters of repeat units have been
+  priced in depth, later units count as 1 guess (ordinary passwords use a tiny
+  fraction of it; only long, crafted repeats run it out). One can miss a pattern: the dictionary search stops after 4,096 steps per
+  start position (realistic input never reaches it). Repeat units up to 512 characters
+  are searched, which is every unit with two copies in 1,024 characters. The worst case
+  measured at 1,024 characters is about 28 ms and 12 MB (release build, Apple silicon).
 - Years are priced from a fixed reference year (2026), so results never depend on the
   clock. Years after 2026 get the minimum price.
 - Feedback is fixed text chosen from the cheapest split; it never contains the password.
 - A dev-only test (`crates/holm-core/tests/strength_oracle.rs`) runs the `zxcvbn` crate
-  as an oracle on a fixed corpus of about 12,000 weak candidates: every one zxcvbn scores
-  below 3 must be refused, Holm's score must never be above zxcvbn's, and strong
-  passphrases and random strings must be accepted.
+  as an oracle on two corpora under 100 characters: about 12,000 weak candidates built
+  from word lists and suffixes, and 6,000 generated compositions from a fixed seed
+  (doubled words, prefix + repeat, walks and dates in the middle, l33t + year,
+  capitalised word + digits + symbols, three-piece mixes). Every candidate zxcvbn scores
+  below 4 must be refused, and Holm's score must never be above zxcvbn's. Strong
+  passphrases, random strings and a few passwords just over zxcvbn's 1e10 line must be
+  accepted, and the generator's default password and passphrase must pass.
 
 Limits, honestly: this is an estimate of one attacker model, not a proof. The lists are
 English-centric, so words from other languages, local names and newer leaks are priced as
-random characters. The oracle bounds disagreement with zxcvbn on its corpus only. Beyond
-the two bounds that can miss a pattern, a crafted input (for example a sequence of more
-than 512 characters, typed twice) can be over-estimated and accepted. Such inputs are far
-longer than any real password, and zxcvbn itself scores only the first 100 characters.
+random characters. The oracle bounds disagreement with zxcvbn on its corpora only. Score
+4 still accepts some guessable shapes, for example word + date + word, because zxcvbn's
+model prices them just over 1e10. The model also prices a repeat by its copy count, so a
+long run of copies (a 10-character date repeated 100 times) can score 4 although an
+attacker who tries repeats would find it sooner; the 1,024-character limit caps this.
 
 ## Memory hygiene
 

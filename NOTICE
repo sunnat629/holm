@@ -37,6 +37,7 @@ License:  MIT License, Copyright (c) 2012-2016 Dan Wheeler and Dropbox, Inc.
           THE SOFTWARE.
 Data:     zxcvbn built the lists from leaked-password frequencies (Xato / Mark Burnett),
           English Wikipedia, US census names and surnames, and Wiktionary's US TV and film
-          word counts.
+          word counts. Wikipedia and Wiktionary text is CC BY-SA; the lists hold only
+          derived word rankings, which zxcvbn ships under its MIT grant above.
 SHA-256:  664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276
 Changes:  none. The file is a byte-exact copy of the source. Holm parses it at run time.

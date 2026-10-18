@@ -2,9 +2,11 @@
 //!
 //! The matchers and their guess formulas follow zxcvbn (Dropbox's CoffeeScript v4.4.2 and
 //! the Rust `zxcvbn` 3.1.1 port). Where the two differ, or where a zxcvbn rule depends on
-//! the clock or truncates input, Holm picks the stricter choice, so a piece Holm prices is
-//! never priced higher than zxcvbn would price it. Notes on each matcher say where Holm
-//! differs.
+//! the clock or truncates input, Holm picks the stricter choice. Notes on each matcher say
+//! where Holm differs. That is the design aim, not a proof: Holm could still miss a piece
+//! zxcvbn finds (for example, zxcvbn's greedy repeat regex can end a repeat before the run
+//! ends, and Holm emits only the longest one from each start). The oracle test measures
+//! how often Holm's estimate is above zxcvbn's.
 //!
 //! A [`Match`] holds only a span, a guess count and a feedback hint, never characters.
 //! Every heap buffer here is a [`Zeroizing`] vector that grows through [`push_wiped`], so no
@@ -280,21 +282,24 @@ fn uppercase_variations(token: &[char]) -> (f64, u8) {
 
 /// How many ways the substitutions could have been made (zxcvbn's formula).
 fn l33t_variations(token: &[char], lower: &[char], word: &str) -> f64 {
-    // Distinct (symbol, letter) pairs used. A word has at most MAX_WORD_LEN of them.
-    let mut pairs = [('\0', '\0'); MAX_WORD_LEN];
+    // Distinct (symbol, letter) pairs used, as two wiped arrays (they hold password
+    // characters). A word has at most MAX_WORD_LEN of them.
+    let mut symbols = Zeroizing::new(['\0'; MAX_WORD_LEN]);
+    let mut letters = Zeroizing::new(['\0'; MAX_WORD_LEN]);
     let mut used = 0;
     for (p, w) in word.bytes().enumerate() {
         let w = char::from(w);
         if lower[p] != w {
-            let pair = (token[p], w);
-            if !pairs[..used].contains(&pair) && used < pairs.len() {
-                pairs[used] = pair;
+            let seen = (0..used).any(|x| symbols[x] == token[p] && letters[x] == w);
+            if !seen && used < MAX_WORD_LEN {
+                symbols[used] = token[p];
+                letters[used] = w;
                 used += 1;
             }
         }
     }
     let mut variations = 1.0;
-    for &(symbol, letter) in &pairs[..used] {
+    for (&symbol, &letter) in symbols[..used].iter().zip(&letters[..used]) {
         let s = lower.iter().filter(|&&c| c == symbol).count();
         let u = lower.iter().filter(|&&c| c == letter).count();
         if s == 0 || u == 0 {
@@ -416,20 +421,27 @@ fn to_i32(n: usize) -> i32 {
 
 // ---- Repeats ----------------------------------------------------------------------------
 
-/// The longest repeated unit Holm looks for. Longer units are not searched for, so their
-/// copies are priced as whatever else they match. This bounds the work at about
-/// `MAX_REPEAT_UNIT` steps per character, however long the password is.
+/// The longest repeated unit Holm looks for. It is half of
+/// [`MAX_MASTER_CHARS`](super::MAX_MASTER_CHARS), so in any password Holm scores, every
+/// unit with two copies is searched for.
 pub(crate) const MAX_REPEAT_UNIT: usize = 512;
 
 /// Two or more back-to-back copies of a unit: the unit's own price times the copy count.
 ///
-/// zxcvbn finds one repeat at a time, left to right, with a regex. Holm finds every
-/// maximal run for every unit length up to [`MAX_REPEAT_UNIT`], which includes zxcvbn's
-/// matches. The unit is priced by a full estimate of its own (as zxcvbn does), drawn from a
-/// shared [`Budget`].
+/// zxcvbn finds one repeat at a time, left to right, with a regex, so where its match
+/// starts depends on what it matched before. Holm finds every maximal run for every unit
+/// length up to [`MAX_REPEAT_UNIT`], and emits a match at every start inside the run that
+/// still has at least two whole copies before the run ends. Such a match covers as many
+/// copies as fit. This finds the aligned `hellohello` inside `yoyohellohello`, where the
+/// run of 5-character units starts one character early.
+///
+/// A unit is priced by a full estimate of its own (as zxcvbn does), drawn from a shared
+/// [`Budget`]. Starts that are a whole number of units apart see the same unit, so each of
+/// the run's `unit` rotations is priced once and the price is reused.
 fn repeats(text: Text<'_>, budget: &mut Budget, out: &mut Zeroizing<Vec<Match>>) {
     let chars = text.chars;
     let n = chars.len();
+    let mut prices: Zeroizing<Vec<f64>> = Zeroizing::new(Vec::new());
     for unit in 1..=MAX_REPEAT_UNIT.min(n / 2) {
         let mut k = 0;
         while k + unit < n {
@@ -441,18 +453,28 @@ fn repeats(text: Text<'_>, budget: &mut Budget, out: &mut Zeroizing<Vec<Match>>)
             while k + unit < n && chars[k] == chars[k + unit] {
                 k += 1;
             }
-            let copies = (k - start + unit) / unit;
-            if copies >= 2 && is_primitive(&chars[start..start + unit]) {
-                let base = Text {
-                    chars: &chars[start..start + unit],
-                    lower: &text.lower[start..start + unit],
-                };
-                let guesses = (scoring::unit_guesses(base, budget) * copies as f64).min(CAP);
+            // The run is `start..end`: every character equals the one `unit` later.
+            let end = k + unit;
+            if end - start < 2 * unit || !is_primitive(&chars[start..start + unit]) {
+                continue;
+            }
+            prices.clear();
+            for s in start..=end - 2 * unit {
+                let rotation = s - start;
+                if rotation < unit {
+                    let base = Text {
+                        chars: &chars[s..s + unit],
+                        lower: &text.lower[s..s + unit],
+                    };
+                    push_wiped(&mut prices, scoring::unit_guesses(base, budget));
+                }
+                let copies = (end - s) / unit;
+                let guesses = (prices[rotation % unit] * copies as f64).min(CAP);
                 push_wiped(
                     out,
                     Match {
-                        i: start,
-                        j: start + copies * unit - 1,
+                        i: s,
+                        j: s + copies * unit - 1,
                         guesses,
                         hint: Hint::Repeat,
                         flags: 0,
@@ -804,6 +826,37 @@ mod tests {
             separated_date(&"11/4.1990".chars().collect::<Vec<_>>()),
             None
         );
+    }
+
+    #[test]
+    fn repeat_found_at_every_start() {
+        // The run of 5-character units starts at 3 (`o` = the last `o` of `yoyo`).
+        assert!(has("yoyohellohello", Hint::Repeat, 3, 12));
+        assert!(has("yoyohellohello", Hint::Repeat, 4, 13));
+        // Every start with two whole copies left, each as long as fits.
+        for (i, j) in [(0, 8), (1, 6), (2, 7), (3, 8)] {
+            assert!(has("abcabcabc", Hint::Repeat, i, j), "{i}..={j}");
+        }
+        assert!(!has("abcabcabc", Hint::Repeat, 4, 8));
+    }
+
+    #[test]
+    fn each_rotation_priced_once() {
+        // 12 characters of `abc`: 7 starts, but only 3 rotations of 3 characters each.
+        let chars: Vec<char> = "abcabcabcabc".chars().collect();
+        let mut budget = Budget::default();
+        let before = budget.remaining();
+        let mut out = Zeroizing::new(Vec::new());
+        repeats(
+            Text {
+                chars: &chars,
+                lower: &chars,
+            },
+            &mut budget,
+            &mut out,
+        );
+        assert_eq!(out.len(), 7);
+        assert_eq!(before - budget.remaining(), 9);
     }
 
     #[test]

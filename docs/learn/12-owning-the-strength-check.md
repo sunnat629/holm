@@ -2,34 +2,34 @@
 
 ## What we built
 
-Holm checks how strong a new master password is before it makes a vault. `strength::check` takes a `&MasterPassword` and returns a `StrengthReport`: a score from 0 to 4, the length in characters, a yes or no, and fixed advice text. A password is accepted only with a score of at least 3 (an estimated 10^8 guesses or more) and at least 12 characters.
+Holm checks how strong a new master password is before it makes a vault. `strength::check` takes a `&MasterPassword` and returns a `StrengthReport`: a score from 0 to 4, the length in characters, a yes or no, and fixed advice text. A password is accepted only with a score of 4 (an estimated 10^10 guesses or more) and 12 to 1,024 characters. The first rule was score 3 (10^8), but that let `Summer2026!!` through, so it was raised.
 
-The first version wrapped the `zxcvbn` crate. Review found that it added 17 crates nobody had reviewed to `holm-core`'s production tree, read the system clock, and copied the password into many ordinary `String`s that are never wiped. So the check is now Holm's own code: a port of zxcvbn's model, about 1,800 lines with tests, in `crates/holm-core/src/strength/`. The `zxcvbn` crate stays only as a dev-dependency, where a test uses it as an oracle.
+The first version wrapped the `zxcvbn` crate. Review found that it added 17 crates nobody had reviewed to `holm-core`'s production tree, read the system clock, and copied the password into many ordinary `String`s that are never wiped. So the check is now Holm's own code: a port of zxcvbn's model, about 1,900 lines with tests, in `crates/holm-core/src/strength.rs` and `crates/holm-core/src/strength/`. The `zxcvbn` crate stays only as a dev-dependency, where a test uses it as an oracle.
 
 The check has three steps:
 
-1. Find guessable pieces: listed words (also capitalised, reversed or in l33t), `holm`, keyboard walks, repeats, sequences, years and dates.
+1. Find guessable pieces: listed words (also capitalised, reversed or in l33t), `holm`, keyboard walks, repeats (at every start inside a run), sequences, years and dates.
 2. Find the cheapest way to build the whole password from those pieces, pricing gaps as random characters.
 3. Turn the guess count into a score.
 
 ## Rust ideas in this task
 
-### Data in the binary: `include_str!` plus a pinned hash
+### Refuse before you copy: a length cap
 
 ```rust
-const RAW: &str = include_str!("frequency_lists.coffee");
-
-pub(crate) fn entries() -> &'static [Entry] {
-    static LIST: OnceLock<Vec<Entry>> = OnceLock::new();
-    LIST.get_or_init(build)
+let count = text.chars().count();
+if count > MAX_MASTER_CHARS {
+    return StrengthReport { /* score 0, fixed "too long" text */ };
 }
+let chars = wiped_chars(text.chars(), count);
 ```
 
-- `include_str!` reads the file at compile time and puts its text in the binary as a `&'static str`. Nothing is read from disk at run time.
-- The file is a byte-exact copy of zxcvbn's MIT word lists. `NOTICE` records where it came from, and `scripts/ci-local.sh` checks its SHA-256, so a changed byte stops the merge.
-- `OnceLock` builds the parsed, sorted list the first time it is needed, and every later call gets the same `&'static` slice. Each `Entry` holds a `&'static str` slice of `RAW`, so parsing copies no words.
+- `text.chars().count()` walks the UTF-8 bytes once and allocates nothing. Only when the count is at most 1,024 does `check` copy the text into a `[char]` buffer and run the matchers.
+- Without the cap, a 1 MB paste cost seconds and gigabytes, and the app calls `check` while you type. With it, the worst 1,024-character input takes about 28 ms, and a 1 MB paste is refused in about 10 ms.
+- `MAX_MASTER_CHARS` is defined as `2 * matching::MAX_REPEAT_UNIT`, so the code itself says why the number is 1,024: every repeat with two copies fits inside the limit and is found.
+- The refusal text is a fixed `&'static str`, like every other line of feedback, so a too-long input is never echoed back.
 
-In Kotlin you'd write: a resource file loaded with `javaClass.getResource(...)` inside a `by lazy { ... }` property. Rust checks it at compile time: a missing file is a build error, not a runtime `null`.
+In Kotlin you'd write: `if (text.codePointCount(0, text.length) > MAX) return tooLong()` at the top of the function. Same guard clause; in Rust the early `return` also drops (and wipes) anything built so far, so the guard cannot leak.
 
 ### Scratch buffers that wipe: `Zeroizing<Vec<T>>`
 
@@ -89,7 +89,8 @@ zxcvbn.workspace = true
 ```
 
 - A `[dev-dependencies]` crate is built only for tests, examples and benchmarks. It is never linked into the library or into any binary that uses it.
-- `tests/strength_oracle.rs` builds about 12,000 weak candidates from fixed word lists, suffixes and variants. It asserts that Holm refuses every one that zxcvbn scores below 3, and that Holm's score is never above zxcvbn's. A second test checks that strong passphrases and random strings are still accepted, so the check cannot pass by refusing everything.
+- `tests/strength_oracle.rs` builds about 12,000 weak candidates from fixed word lists, suffixes and variants, and 6,000 more from a seeded generator (doubled words, prefix + repeat, walks and dates in the middle, l33t + year, and more). It asserts that Holm refuses every one that zxcvbn scores below 4, and that Holm's score is never above zxcvbn's. The fixed list alone missed a real bug, `yoyohellohello` being accepted; the generator found it in seconds.
+- A seeded generator is a plain function of its seed, so the "random" corpus is the same on every run and a failure can be reproduced exactly. A third test checks that strong passphrases, random strings and a few passwords just over the 10^10 line are accepted, so the check cannot pass by refusing everything.
 - Because zxcvbn is dev-only, `cargo vet` needs its tree to be only `safe-to-run` (fine to build and test on our machines), not `safe-to-deploy`.
 
 In Kotlin you'd write: `testImplementation("...")` in Gradle. Same idea: the oracle library stays on the test classpath.
@@ -100,16 +101,16 @@ The strength check sees the one secret that protects every other secret, just be
 
 - Every heap buffer derived from the password is wiped.
 - Nothing reads the clock, so the same password always gets the same answer.
-- The whole password is judged. zxcvbn scored only the first 100 characters.
+- The whole password is judged, up to 1,024 characters. zxcvbn scored only the first 100.
 - The feedback is fixed text from a table, and a test checks that report text comes from nowhere else.
 
-The cost is that our estimator could have bugs. The oracle test bounds that risk on a fixed corpus but does not prove the code correct. `docs/CRYPTO.md` lists the remaining limits: English-centric lists, and two work bounds that a crafted, very long input could slip past.
+The cost is that our estimator could have bugs. The oracle test bounds that risk on a fixed corpus but does not prove the code correct. `docs/CRYPTO.md` lists the remaining limits: English-centric lists, a dictionary step cap, and shapes such as word + date + word that zxcvbn's model still prices at score 4.
 
 ## Try it
 
 1. Run the unit tests and the oracle.
    - Run: `cargo test -p holm-core --locked --lib strength`, then `cargo test -p holm-core --locked --test strength_oracle`
-   - Check: both `test result:` lines say `ok.` with 0 failed; the second shows `2 passed`.
+   - Check: both `test result:` lines say `ok.` with 0 failed; the second shows `3 passed`.
    - Undo: nothing to undo, it only reads.
 2. Tamper with the word list and watch the hash gate catch it.
    - Run: `printf 'x' >> crates/holm-core/src/strength/frequency_lists.coffee && grep -o '664d[0-9a-f]*  crates/holm-core/src/strength/frequency_lists.coffee' scripts/ci-local.sh | shasum -a 256 -c -`
@@ -123,7 +124,7 @@ The cost is that our estimator could have bugs. The oracle test bounds that risk
 ## Read next
 
 - [The Rust book, ch08-02: storing UTF-8 text with strings](https://doc.rust-lang.org/book/ch08-02-strings.html)
-- [std::sync::OnceLock](https://doc.rust-lang.org/std/sync/struct.OnceLock.html)
+- [str::chars](https://doc.rust-lang.org/std/primitive.str.html#method.chars)
 - [zeroize::Zeroizing](https://docs.rs/zeroize/latest/zeroize/struct.Zeroizing.html)
 
 Next lesson: none yet. Lesson 13 arrives with the next task.

@@ -1,12 +1,14 @@
 //! Master password strength check.
 //!
 //! [`check`] estimates how many guesses an attacker needs for a candidate master password
-//! and applies Holm's two rules: at least [`MIN_MASTER_CHARS`] characters, and a score of
-//! at least [`MIN_MASTER_SCORE`], which means at least 10^8 guesses.
+//! and applies Holm's rules: at least [`MIN_MASTER_CHARS`] and at most
+//! [`MAX_MASTER_CHARS`] characters, and a score of at least [`MIN_MASTER_SCORE`], which
+//! means at least 10^10 guesses.
 //!
-//! The estimate is Holm's own, in the spirit of zxcvbn and kept at least as strict on weak
-//! passwords (a test checks this against the `zxcvbn` crate, which is a dev-dependency
-//! only). It works on the NFC form of the whole password, with no length cut-off:
+//! The estimate is Holm's own, a port of zxcvbn's model that aims to be at least as strict
+//! on weak passwords (a test checks this against the `zxcvbn` crate, which is a
+//! dev-dependency only; it is measured, not proven). It works on the NFC form of the whole
+//! password:
 //!
 //! 1. Find guessable pieces: words from an embedded list of 93,855 common passwords,
 //!    words and names (also upper-cased, reversed, or with look-alike symbols such as `@`
@@ -34,8 +36,16 @@ use scoring::Budget;
 /// The fewest characters (Unicode scalar values after NFC) a master password may have.
 pub const MIN_MASTER_CHARS: usize = 12;
 
-/// The lowest score (0 to 4) a master password may have. Score 3 starts at 10^8 guesses.
-pub const MIN_MASTER_SCORE: u8 = 3;
+/// The most characters (Unicode scalar values after NFC) a master password may have.
+/// Longer input is refused before any of it is copied, so a huge paste costs one pass to
+/// count it. This is twice the longest repeat unit searched for, so every repeat in a
+/// password that is scored is found.
+pub const MAX_MASTER_CHARS: usize = 2 * matching::MAX_REPEAT_UNIT;
+
+/// The lowest score (0 to 4) a master password may have. Score 4 starts at 10^10 guesses,
+/// zxcvbn's top band. Score 3 (10^8) still accepts word + year + symbol shapes such as
+/// `Summer2026!!`, which rule-based cracking reaches quickly.
+pub const MIN_MASTER_SCORE: u8 = 4;
 
 /// The numbers behind a strength decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,7 +55,9 @@ pub struct StrengthVerdict {
     pub score: u8,
     /// Length in `char`s of the NFC form.
     pub chars: usize,
-    /// True when `score >= MIN_MASTER_SCORE` and `chars >= MIN_MASTER_CHARS`.
+    /// True when `score >= MIN_MASTER_SCORE` and `chars` is from `MIN_MASTER_CHARS` to
+    /// `MAX_MASTER_CHARS`. Above `MAX_MASTER_CHARS` the password is not scored and `score`
+    /// is 0.
     pub acceptable: bool,
 }
 
@@ -71,12 +83,14 @@ const WARN_SEQUENCE: &str = "Runs of letters or numbers are easy to guess.";
 const WARN_YEAR: &str = "Years are easy to guess.";
 const WARN_DATE: &str = "Dates are easy to guess.";
 const WARN_SHORT: &str = "This is too short for a master password.";
+const WARN_LONG: &str = "This is too long for a master password.";
 const SUGGEST_WORDS: &str = "Use four or more unrelated words, or let Holm make a passphrase.";
 const SUGGEST_CAPS: &str = "Capital letters in the usual places add little.";
 const SUGGEST_ALL_CAPS: &str = "All capitals are almost as easy to guess as none.";
 const SUGGEST_REVERSED: &str = "Spelling a word backwards adds little.";
 const SUGGEST_L33T: &str = "Swapping letters for look-alike symbols adds little.";
 const SUGGEST_LONGER: &str = "Use at least 12 characters.";
+const SUGGEST_SHORTER: &str = "Use at most 1,024 characters.";
 
 /// Every text a report can hold.
 #[cfg(test)]
@@ -91,17 +105,20 @@ const ALL_FEEDBACK: &[&str] = &[
     WARN_YEAR,
     WARN_DATE,
     WARN_SHORT,
+    WARN_LONG,
     SUGGEST_WORDS,
     SUGGEST_CAPS,
     SUGGEST_ALL_CAPS,
     SUGGEST_REVERSED,
     SUGGEST_L33T,
     SUGGEST_LONGER,
+    SUGGEST_SHORTER,
 ];
 
 /// Scores `password` and decides whether Holm accepts it as a master password.
 ///
-/// The whole NFC form is judged, however long. The work grows linearly with length.
+/// The whole NFC form is judged, up to [`MAX_MASTER_CHARS`] characters; anything longer is
+/// refused unscored. The work grows linearly with length.
 #[must_use]
 pub fn check(password: &MasterPassword) -> StrengthReport {
     let bytes = password.to_kdf_bytes();
@@ -111,6 +128,18 @@ pub fn check(password: &MasterPassword) -> StrengthReport {
         return report(0, 0, &[]);
     };
     let count = text.chars().count();
+    if count > MAX_MASTER_CHARS {
+        // Refuse before copying anything: fixed text, no estimate, nothing of the input.
+        return StrengthReport {
+            verdict: StrengthVerdict {
+                score: 0,
+                chars: count,
+                acceptable: false,
+            },
+            warning: Some(WARN_LONG.to_owned()),
+            suggestions: vec![SUGGEST_SHORTER.to_owned()],
+        };
+    }
     let chars = wiped_chars(text.chars(), count);
     let lower = wiped_chars(chars.iter().map(char::to_ascii_lowercase), count);
     let estimate = scoring::estimate(
@@ -129,7 +158,8 @@ pub fn check(password: &MasterPassword) -> StrengthReport {
 }
 
 fn report(score: u8, chars: usize, pieces: &[Match]) -> StrengthReport {
-    let acceptable = score >= MIN_MASTER_SCORE && chars >= MIN_MASTER_CHARS;
+    let acceptable =
+        score >= MIN_MASTER_SCORE && (MIN_MASTER_CHARS..=MAX_MASTER_CHARS).contains(&chars);
     let mut warning = None;
     let mut suggestions = Vec::new();
     if score < MIN_MASTER_SCORE {
@@ -261,9 +291,10 @@ mod tests {
 
     #[test]
     fn long_repeat_refused() {
-        let r = check(&pw(&"a".repeat(10_000)));
-        assert_eq!(r.verdict.chars, 10_000);
+        let r = check(&pw(&"a".repeat(MAX_MASTER_CHARS)));
+        assert_eq!(r.verdict.chars, MAX_MASTER_CHARS);
         assert!(!r.verdict.acceptable);
+        assert_eq!(r.warning.as_deref(), Some(WARN_REPEAT));
     }
 
     #[test]
@@ -303,19 +334,95 @@ mod tests {
         }
     }
 
-    #[test]
-    fn long_random_input_judged_in_full() {
-        // 10,000 fixed pseudo-random printable characters: no cut-off, bounded work.
+    /// Fixed pseudo-random printable characters.
+    fn random_text(len: usize) -> String {
         let mut state: u32 = 12_345;
-        let text: String = (0..10_000)
+        (0..len)
             .map(|_| {
                 state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
                 char::from(b'!' + u8::try_from((state >> 16) % 94).unwrap_or(0))
             })
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn longest_allowed_input_judged_in_full() {
+        // 1,024 characters are scored: a strong one is accepted, and a weak tail is seen.
+        let text = random_text(MAX_MASTER_CHARS);
         let r = check(&pw(&text));
-        assert_eq!(r.verdict.chars, 10_000);
+        assert_eq!(r.verdict.chars, 1_024);
         assert_eq!(r.verdict.score, 4);
         assert!(r.verdict.acceptable);
+        let weak = format!("{}{}", "1".repeat(MAX_MASTER_CHARS - 8), "password");
+        let r = check(&pw(&weak));
+        assert_eq!(r.verdict.chars, 1_024);
+        assert!(!r.verdict.acceptable);
+        assert_ne!(r.warning.as_deref(), Some(WARN_LONG));
+    }
+
+    #[test]
+    fn over_length_refused_unscored() {
+        let mut text = random_text(MAX_MASTER_CHARS);
+        text.push('Z');
+        let r = check(&pw(&text));
+        assert_eq!(
+            r.verdict,
+            StrengthVerdict {
+                score: 0,
+                chars: 1_025,
+                acceptable: false
+            }
+        );
+        assert_eq!(r.warning.as_deref(), Some(WARN_LONG));
+        assert_eq!(r.suggestions, [SUGGEST_SHORTER]);
+        // A huge paste is refused too, with the same fixed text.
+        let r = check(&pw(&"x".repeat(1_000_000)));
+        assert_eq!(r.verdict.chars, 1_000_000);
+        assert!(!r.verdict.acceptable);
+        assert_eq!(r.warning.as_deref(), Some(WARN_LONG));
+    }
+
+    #[test]
+    fn length_limits_match_their_text() {
+        assert_eq!(MAX_MASTER_CHARS, 1_024);
+        assert_eq!(MIN_MASTER_CHARS, 12);
+        assert!(SUGGEST_SHORTER.contains("1,024"));
+        assert!(SUGGEST_LONGER.contains("12"));
+    }
+
+    #[test]
+    fn word_year_symbol_refused() {
+        // zxcvbn scores these 3 (just over 1e8 guesses); Holm needs score 4.
+        for text in [
+            "Summer2026!!",
+            "Welcome2026!!",
+            "dragon2026!!",
+            "Charlie2026!!",
+            "Batman1990!!",
+            "Michael1987!!",
+            "MyHolmPassword1",
+        ] {
+            let r = check(&pw(text));
+            assert!(!r.verdict.acceptable, "accepted {text}");
+            assert!(r.verdict.score < MIN_MASTER_SCORE);
+        }
+    }
+
+    #[test]
+    fn repeats_after_a_matching_character_refused() {
+        // The run of 5-character units in `yoyohellohello` starts one character early;
+        // the aligned `hellohello` must still be found.
+        for text in [
+            "yoyohellohello",
+            "darndarnstevensteven",
+            "brycebryceorangeorange",
+            "justinejustineshoeshoe",
+            "closecloseragsdaleragsdale",
+            "ycxycx22x22x",
+        ] {
+            let r = check(&pw(text));
+            assert!(r.verdict.score <= 2, "{text}: score {}", r.verdict.score);
+            assert!(!r.verdict.acceptable);
+        }
     }
 }

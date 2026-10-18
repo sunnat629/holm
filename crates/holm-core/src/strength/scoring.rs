@@ -2,9 +2,10 @@
 //!
 //! As in zxcvbn, a password split into `l` pieces costs `l! x (product of piece prices) +
 //! 10000^(l-1)` guesses (the additive term is 1 for a single piece). Gaps between matches
-//! are priced as random characters, `10^length`. Holm finds the true minimum with dynamic
-//! programming; zxcvbn's search prunes some splits, so its result can only be the same or
-//! higher.
+//! are priced as random characters, `10^length`. Holm finds the cheapest split of the
+//! matches it found, exactly, with dynamic programming. It is the true minimum only for
+//! that set of matches: if Holm misses a piece that zxcvbn finds, Holm's estimate can be
+//! higher than zxcvbn's. `tests/strength_oracle.rs` measures that; nothing proves it away.
 //!
 //! Two bounds keep the work linear in the password length without changing the score:
 //! - At most [`MAX_PIECES`] pieces. Five or more pieces cost over `10000^4 = 1e16` from the
@@ -35,7 +36,7 @@ const MIN_MULTI_CHAR_GUESSES: f64 = 50.0;
 /// Characters that repeat units may still be priced with a full estimate of their own.
 /// After that a unit is priced at one guess, the strictest choice. Ordinary passwords use a
 /// tiny fraction of it; only a crafted input of many long repeats can run it out.
-pub(crate) const UNIT_BUDGET: usize = 1 << 16;
+pub(crate) const UNIT_BUDGET: usize = 1 << 14;
 
 /// The shared allowance for pricing repeat units.
 pub(crate) struct Budget {
@@ -47,6 +48,14 @@ impl Default for Budget {
         Budget {
             remaining: UNIT_BUDGET,
         }
+    }
+}
+
+impl Budget {
+    /// Characters left to price in depth.
+    #[cfg(test)]
+    pub(crate) fn remaining(&self) -> usize {
+        self.remaining
     }
 }
 
