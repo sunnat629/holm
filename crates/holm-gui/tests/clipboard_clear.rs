@@ -9,7 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{
-    FakeClipboard, PASSWORD, TestClock, harness, make_vault, make_vault_with_clipboard, run_until, test_app_with_clipboard,
+    FakeClipboard, PASSWORD, TestClock, harness, make_vault, make_vault_with_clipboard, run_until,
+    test_app_with_clipboard,
 };
 use eframe::App as _;
 use eframe::egui::Event;
