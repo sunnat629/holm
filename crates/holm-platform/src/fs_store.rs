@@ -102,6 +102,38 @@ fn io_err(e: &io::Error) -> StoreError {
     StoreError::Io(e.kind())
 }
 
+/// `ENOTSUP` on this OS, from the C headers (`libc` is not a dependency). On Linux
+/// it equals `EOPNOTSUPP`, which std already maps to `ErrorKind::Unsupported`; on
+/// macOS it is a different number that std leaves uncategorised.
+#[cfg(unix)]
+const ENOTSUP: Option<i32> = if cfg!(any(target_os = "linux", target_os = "android")) {
+    Some(95)
+} else if cfg!(any(target_vendor = "apple", target_os = "freebsd")) {
+    Some(45)
+} else {
+    None
+};
+
+/// `EINVAL`, the same number on every Unix Holm supports.
+#[cfg(unix)]
+const EINVAL: i32 = 22;
+
+/// True if a **directory** sync failed only because the volume cannot sync a
+/// directory: `ErrorKind::Unsupported`, or raw `ENOTSUP` or `EINVAL` (some FAT,
+/// exFAT and network volumes). Such a failure counts as success (Security decision,
+/// durable writes, F30). Never use this for a file sync: a file that cannot be
+/// synced is not durable, and that must fail the save.
+#[cfg(unix)]
+fn dir_sync_unsupported(e: &io::Error) -> bool {
+    if e.kind() == ErrorKind::Unsupported {
+        return true;
+    }
+    match e.raw_os_error() {
+        Some(code) => code == EINVAL || ENOTSUP == Some(code),
+        None => false,
+    }
+}
+
 /// Lowercase hex, two digits per byte.
 fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -240,15 +272,15 @@ impl FsStore {
     /// Syncs the directory so a rename or new link is on disk. On Unix only;
     /// elsewhere there is no portable way, and this does nothing.
     ///
-    /// `ErrorKind::Unsupported` counts as success: some FAT and exFAT volumes cannot
-    /// sync a directory (Security decision, durable writes). Any other error fails.
+    /// A volume that cannot sync a directory (see [`dir_sync_unsupported`]) counts
+    /// as success (Security decision, durable writes). Any other error fails.
     fn sync_dir(&self) -> Result<(), StoreError> {
         #[cfg(unix)]
         {
             let dir = File::open(self.dir()).map_err(|e| io_err(&e))?;
             match dir.sync_all() {
                 Ok(()) => {}
-                Err(e) if e.kind() == ErrorKind::Unsupported => {}
+                Err(e) if dir_sync_unsupported(&e) => {}
                 Err(e) => return Err(io_err(&e)),
             }
         }
@@ -351,6 +383,11 @@ impl VaultStore for FsStore {
     /// fails if anything is already there. The temp is removed in every branch.
     /// Where hard links are not supported (FAT, exFAT), falls back to an exclusive
     /// create of the vault path itself, removed again if writing it fails.
+    ///
+    /// Known gap (fix in Phase 5): that fallback is not crash-atomic. A crash
+    /// between the exclusive create and the sync can leave a short or empty vault
+    /// file, which then fails to unlock and blocks a new `create` with
+    /// `VaultExists`. The hard-link path (every other file system) has no such gap.
     fn create_new(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         if bytes.len() > MAX_FILE_LEN {
             return Err(StoreError::TooLarge);
@@ -439,6 +476,36 @@ mod tests {
     #[test]
     fn bare_file_name_uses_the_current_directory() {
         assert_eq!(FsStore::new("holm.vault").dir(), Path::new("."));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dir_sync_classifier_accepts_only_unsupported_cases() {
+        use std::io::Error;
+        assert!(dir_sync_unsupported(&Error::from(ErrorKind::Unsupported)));
+        assert!(dir_sync_unsupported(&Error::from_raw_os_error(EINVAL)));
+        if let Some(code) = ENOTSUP {
+            assert!(dir_sync_unsupported(&Error::from_raw_os_error(code)));
+        }
+        if cfg!(target_vendor = "apple") {
+            assert_eq!(ENOTSUP, Some(45));
+            // EOPNOTSUPP on macOS, which std maps to `Unsupported`.
+            assert!(dir_sync_unsupported(&Error::from_raw_os_error(102)));
+        }
+        if cfg!(target_os = "linux") {
+            assert_eq!(ENOTSUP, Some(95));
+        }
+        // EIO, EACCES and ENOSPC are real failures.
+        for code in [5, 13, 28] {
+            assert!(
+                !dir_sync_unsupported(&Error::from_raw_os_error(code)),
+                "{code}"
+            );
+        }
+        assert!(!dir_sync_unsupported(&Error::from(
+            ErrorKind::PermissionDenied
+        )));
+        assert!(!dir_sync_unsupported(&Error::from(ErrorKind::InvalidInput)));
     }
 
     #[test]

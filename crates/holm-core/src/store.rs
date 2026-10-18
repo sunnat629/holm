@@ -54,7 +54,11 @@ pub trait VaultStore {
     ///
     /// # Errors
     /// [`StoreError::TooLarge`], [`StoreError::NotARegularFile`], or
-    /// [`StoreError::Io`]. On any error the old file is unchanged.
+    /// [`StoreError::Io`]. An error before the new bytes are in place leaves the old
+    /// file unchanged. An error after that point (for example a failed directory
+    /// sync after the rename in `holm-platform`) may leave the new bytes in full. So
+    /// callers treat any `replace` error as "old or new": they keep their changes
+    /// and stay dirty, and the next save writes them again.
     fn replace(&mut self, bytes: &[u8]) -> Result<(), StoreError>;
 
     /// Creates the file with `bytes`. Never overwrites: if a file already exists it
