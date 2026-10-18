@@ -425,7 +425,8 @@ does its work and locks the vault on exit. There is no background agent.
   runs before a typed line does, so a line typed after the idle time runs against a
   locked vault. An idle lock never waits or asks: unsaved changes are discarded and the
   message says so. `lock` and `exit` save first, and if that fails they lock only after
-  `discard` is typed. Every lock clears the clipboard if it still holds Holm's value.
+  `discard` is typed. Every lock clears the clipboard if it still holds Holm's value,
+  or if it can't be read back (then Holm says it could not check).
 - A command's own prompts (a hidden entry, `Type … to continue`, the discard prompt)
   wait with a deadline too: the auto-lock time from when the prompt starts. If it
   passes, the command is cancelled before it changes anything, and the shell idle-locks

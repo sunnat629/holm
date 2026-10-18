@@ -3,7 +3,7 @@
 //!
 //! Every copy is marked `org.nspasteboard.ConcealedType` (arboard's
 //! `exclude_from_history`), which asks clipboard managers not to keep it. Reading the
-//! clipboard back is only for [`ConcealedClipboard::holds`]: the text goes straight
+//! clipboard back is only for [`ConcealedClipboard::check`]: the text goes straight
 //! into a wiping buffer, is compared, and is dropped. Nothing here formats or logs a
 //! clipboard value, and errors carry no library message.
 //!
@@ -21,6 +21,18 @@ pub enum ClipboardError {
     Unavailable,
     /// The clipboard was there but did not take the text.
     Refused,
+}
+
+/// What [`ConcealedClipboard::check`] found on the clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipCheck {
+    /// Exactly the text asked about.
+    Holds,
+    /// Other text, something that is not text, or nothing.
+    Other,
+    /// The clipboard could not be read, so what it holds is unknown. A caller that
+    /// put a secret there clears it anyway.
+    Unreadable,
 }
 
 /// The open system clipboard.
@@ -46,7 +58,7 @@ mod imp {
     use arboard::SetExtApple as _;
     use zeroize::Zeroizing;
 
-    use super::{ClipboardError, ConcealedClipboard};
+    use super::{ClipCheck, ClipboardError, ConcealedClipboard};
 
     impl ConcealedClipboard {
         /// Opens the system clipboard.
@@ -72,19 +84,20 @@ mod imp {
                 .map_err(|_| ClipboardError::Refused)
         }
 
-        /// True if the clipboard's text is exactly `text`. The text read back moves
-        /// into a wiping buffer with no copy, and is dropped after the compare.
-        pub fn holds(&mut self, text: &str) -> bool {
-            self.inner
-                .get()
-                .text()
-                .ok()
-                .map(Zeroizing::new)
-                .is_some_and(|now| now.as_str() == text)
+        /// Whether the clipboard's text is exactly `text`. The text read back moves
+        /// into a wiping buffer with no copy, and is dropped after the compare. No
+        /// text on the clipboard (empty, or an image) is [`ClipCheck::Other`]; any
+        /// other read error is [`ClipCheck::Unreadable`], never a guess.
+        pub fn check(&mut self, text: &str) -> ClipCheck {
+            match self.inner.get().text().map(Zeroizing::new) {
+                Ok(now) if now.as_str() == text => ClipCheck::Holds,
+                Ok(_) | Err(arboard::Error::ContentNotAvailable) => ClipCheck::Other,
+                Err(_) => ClipCheck::Unreadable,
+            }
         }
 
         /// Empties the clipboard. A failure is not reported here; callers check
-        /// [`ConcealedClipboard::holds`] afterwards.
+        /// [`ConcealedClipboard::check`] afterwards.
         pub fn clear(&mut self) {
             let _ = self.inner.clear();
         }
@@ -93,7 +106,7 @@ mod imp {
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
-    use super::{ClipboardError, ConcealedClipboard};
+    use super::{ClipCheck, ClipboardError, ConcealedClipboard};
 
     impl ConcealedClipboard {
         /// There is no supported clipboard on this system.
@@ -113,7 +126,7 @@ mod imp {
         }
 
         /// Never called: no value of this type exists here.
-        pub fn holds(&mut self, _text: &str) -> bool {
+        pub fn check(&mut self, _text: &str) -> ClipCheck {
             match self.never {}
         }
 
@@ -154,9 +167,9 @@ mod tests {
     fn real_round_trip() {
         let mut clip = ConcealedClipboard::open().unwrap();
         clip.set("holm-EXAMPLE-clip").unwrap();
-        assert!(clip.holds("holm-EXAMPLE-clip"));
-        assert!(!clip.holds("something else"));
+        assert_eq!(clip.check("holm-EXAMPLE-clip"), ClipCheck::Holds);
+        assert_eq!(clip.check("something else"), ClipCheck::Other);
         clip.clear();
-        assert!(!clip.holds("holm-EXAMPLE-clip"));
+        assert_eq!(clip.check("holm-EXAMPLE-clip"), ClipCheck::Other);
     }
 }

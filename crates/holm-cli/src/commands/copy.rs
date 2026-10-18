@@ -2,7 +2,8 @@
 //!
 //! The copy runs in the foreground: Holm waits for the clear time or for Enter, then
 //! empties the clipboard, but only if it still holds Holm's value. If another app put
-//! something there meanwhile, Holm leaves it alone. The vault is locked and its
+//! something there meanwhile, Holm leaves it alone. If the clipboard can't be read
+//! back, Holm clears it anyway and says so. The vault is locked and its
 //! folder lock released before the wait starts, so the GUI can open it meanwhile.
 //! A copied value is never printed.
 
@@ -18,7 +19,7 @@ use holm_core::item::{ItemData, ItemId};
 use holm_core::session::Session;
 use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_core::text::Text;
-use holm_platform::clipboard::{ClipboardError, ConcealedClipboard};
+use holm_platform::clipboard::{ClipCheck, ClipboardError, ConcealedClipboard};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -38,8 +39,8 @@ pub trait Clip {
     /// # Errors
     /// [`ClipboardError`] if the clipboard did not take it.
     fn set(&mut self, text: &str) -> Result<(), ClipboardError>;
-    /// True if the clipboard holds exactly `text`.
-    fn holds(&mut self, text: &str) -> bool;
+    /// Whether the clipboard holds exactly `text`, or could not be read.
+    fn check(&mut self, text: &str) -> ClipCheck;
     /// Empties the clipboard.
     fn clear(&mut self);
 }
@@ -49,12 +50,43 @@ impl Clip for ConcealedClipboard {
         ConcealedClipboard::set(self, text)
     }
 
-    fn holds(&mut self, text: &str) -> bool {
-        ConcealedClipboard::holds(self, text)
+    fn check(&mut self, text: &str) -> ClipCheck {
+        ConcealedClipboard::check(self, text)
     }
 
     fn clear(&mut self) {
         ConcealedClipboard::clear(self);
+    }
+}
+
+/// Holm's value was there and is gone now.
+const CLEARED: &str = "Clipboard cleared.";
+/// Another app's copy replaced Holm's value.
+const LEFT_ALONE: &str = "The clipboard changed since Holm copied to it, so Holm left it alone.";
+/// The clipboard could not be read before the clear, but could after it.
+const CLEARED_UNREADABLE: &str =
+    "Holm couldn't read the clipboard to check it, so it cleared it anyway.";
+/// The clipboard could not be read after the clear.
+const CLEARED_UNCHECKED: &str =
+    "Holm cleared the clipboard but couldn't read it back to check that it's empty.";
+
+/// The clear after a copy: empties the clipboard if it holds `value` or can't be
+/// read (fail closed: Holm never leaves its value there because a read failed), and
+/// leaves another app's copy alone. Returns the line that says what happened.
+///
+/// # Errors
+/// [`CliError::ClearFailed`] if `value` is still there after the clear.
+pub(crate) fn clear_copied(clip: &mut dyn Clip, value: &str) -> Result<&'static str, CliError> {
+    let before = clip.check(value);
+    if before == ClipCheck::Other {
+        return Ok(LEFT_ALONE);
+    }
+    clip.clear();
+    match (before, clip.check(value)) {
+        (_, ClipCheck::Holds) => Err(CliError::ClearFailed),
+        (_, ClipCheck::Unreadable) => Ok(CLEARED_UNCHECKED),
+        (ClipCheck::Unreadable, ClipCheck::Other) => Ok(CLEARED_UNREADABLE),
+        (_, ClipCheck::Other) => Ok(CLEARED),
     }
 }
 
@@ -122,7 +154,8 @@ pub fn value_of(
 }
 
 /// Puts `value` on the clipboard, waits up to `secs` seconds or until Enter, then
-/// clears the clipboard if it still holds `value`.
+/// clears the clipboard if it still holds `value` or can't be read
+/// ([`clear_copied`]).
 ///
 /// The clear runs even when the message or the wait fails; that error is returned
 /// after it.
@@ -145,24 +178,11 @@ pub fn copy_and_wait(
         "Copied. Holm clears the clipboard in {secs} seconds. Press Enter to clear it now."
     );
     let waited = term.wait_for_key(until);
-    let unchanged = clip.holds(&value);
-    if unchanged {
-        clip.clear();
-        if clip.holds(&value) {
-            return Err(CliError::ClearFailed);
-        }
-    }
+    let cleared = clear_copied(clip, &value)?;
     drop(value);
     said?;
     waited?;
-    if unchanged {
-        writeln!(err, "Clipboard cleared.")?;
-    } else {
-        writeln!(
-            err,
-            "The clipboard changed since Holm copied to it, so Holm left it alone."
-        )?;
-    }
+    writeln!(err, "{cleared}")?;
     Ok(())
 }
 

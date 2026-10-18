@@ -19,7 +19,7 @@ use holm_core::clock::SystemClock;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
-use holm_platform::clipboard::ClipboardError;
+use holm_platform::clipboard::{ClipCheck, ClipboardError};
 use holm_platform::fs_store::FsStore;
 use holm_platform::tty::TtyError;
 use zeroize::Zeroizing;
@@ -121,6 +121,8 @@ pub struct ClipState {
     pub clears: usize,
     /// Another app's copy, put on the clipboard right after Holm's `set`.
     pub replaced_by: Option<String>,
+    /// How many of the next reads of the clipboard fail.
+    pub unreadable_checks: usize,
 }
 
 /// A clipboard over shared [`ClipState`].
@@ -134,8 +136,17 @@ impl Clip for FakeClip {
         Ok(())
     }
 
-    fn holds(&mut self, text: &str) -> bool {
-        self.0.borrow().contents.as_deref() == Some(text)
+    fn check(&mut self, text: &str) -> ClipCheck {
+        let mut s = self.0.borrow_mut();
+        if s.unreadable_checks > 0 {
+            s.unreadable_checks -= 1;
+            return ClipCheck::Unreadable;
+        }
+        if s.contents.as_deref() == Some(text) {
+            ClipCheck::Holds
+        } else {
+            ClipCheck::Other
+        }
     }
 
     fn clear(&mut self) {

@@ -678,24 +678,15 @@ impl Shell<'_> {
         Ok(())
     }
 
-    /// Clears the clipboard if a copy is pending and it still holds Holm's value.
-    /// The value is wiped either way.
+    /// Clears the clipboard if a copy is pending and it still holds Holm's value or
+    /// can't be read ([`copy::clear_copied`]). The value is wiped either way.
     fn clear_clipboard(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
         let Some(mut p) = self.pending.take() else {
             return Ok(());
         };
-        if !p.clip.holds(&p.value) {
-            writeln!(
-                err,
-                "The clipboard changed since Holm copied to it, so Holm left it alone."
-            )?;
-            return Ok(());
-        }
-        p.clip.clear();
-        if p.clip.holds(&p.value) {
-            writeln!(err, "holm: {}", CliError::ClearFailed)?;
-        } else {
-            writeln!(err, "Clipboard cleared.")?;
+        match copy::clear_copied(p.clip.as_mut(), &p.value) {
+            Ok(said) => writeln!(err, "{said}")?,
+            Err(e) => writeln!(err, "holm: {e}")?,
         }
         Ok(())
     }

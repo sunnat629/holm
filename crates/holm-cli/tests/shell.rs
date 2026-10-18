@@ -525,6 +525,32 @@ fn a_changed_clipboard_is_left_alone() {
 }
 
 #[test]
+fn an_unreadable_clipboard_is_cleared_anyway() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    clip.borrow_mut().unreadable_checks = 1;
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![t(PW), t("gen --copy"), Step::Deadline(30), t("exit")],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    let state = clip.borrow();
+    assert_eq!(state.clears, 1);
+    assert_eq!(state.contents, None);
+    assert!(
+        ran.err
+            .contains("Holm couldn't read the clipboard to check it, so it cleared it anyway."),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains("left it alone"), "{}", ran.err);
+}
+
+#[test]
 fn exit_clears_clipboard_and_locks() {
     let (_dir, path) = vault_dir();
     init(&path);

@@ -580,6 +580,54 @@ fn copy_waits_then_clears_only_if_unchanged() {
     );
     assert!(ran.err.contains("left it alone"), "{}", ran.err);
 
+    // The clipboard can't be read back: Holm clears it anyway and says so.
+    let clip = Rc::new(RefCell::new(ClipState {
+        unreadable_checks: 1,
+        ..ClipState::default()
+    }));
+    let env = env_with_clip(&clip);
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run_env(
+        &path,
+        &["get", &login, "--copy", "password"],
+        &mut term,
+        &env,
+    );
+    ok(&ran);
+    assert_eq!(clip.borrow().clears, 1);
+    assert_eq!(clip.borrow().contents, None);
+    assert!(
+        ran.err
+            .contains("Holm couldn't read the clipboard to check it, so it cleared it anyway."),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains("left it alone"), "{}", ran.err);
+
+    // Not even after the clear: Holm says it could not check.
+    let clip = Rc::new(RefCell::new(ClipState {
+        unreadable_checks: 2,
+        ..ClipState::default()
+    }));
+    let env = env_with_clip(&clip);
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run_env(
+        &path,
+        &["get", &login, "--copy", "password"],
+        &mut term,
+        &env,
+    );
+    ok(&ran);
+    assert_eq!(clip.borrow().clears, 1);
+    assert_eq!(clip.borrow().contents, None);
+    assert!(
+        ran.err.contains(
+            "Holm cleared the clipboard but couldn't read it back to check that it's empty."
+        ),
+        "{}",
+        ran.err
+    );
+
     // `gen --copy` needs no vault and waits the default 30 seconds.
     let clip = Rc::new(RefCell::new(ClipState::default()));
     let env = env_with_clip(&clip);
