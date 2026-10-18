@@ -340,7 +340,15 @@ mod unix {
         let (vmin, vtime) = if polling { (0, 1) } else { (1, 0) };
         raw.special_codes[SpecialCodeIndex::VMIN] = vmin;
         raw.special_codes[SpecialCodeIndex::VTIME] = vtime;
-        tcsetattr(tty, OptionalActions::Now, &raw).map_err(errno)?;
+        // `Flush` (TCSAFLUSH), not `Now`: input typed before the prompt appeared
+        // (typeahead) is discarded when raw mode starts. That input was typed while the
+        // terminal still echoed, so it was shown in the clear; with `Now` it stayed
+        // queued and the first read took it as the start of the password. Discarding it
+        // means a secret is only ever what was typed after the no-echo prompt. Output
+        // already written is still sent first. No headless test: proving this needs a
+        // pseudo-terminal, which std can't open and rustix opens only behind a feature
+        // Holm doesn't enable; `manual_typeahead_is_discarded` checks it by hand.
+        tcsetattr(tty, OptionalActions::Flush, &raw).map_err(errno)?;
         Ok(guard)
     }
 
@@ -601,6 +609,22 @@ mod tests {
     #[ignore = "needs a person at a real terminal"]
     fn manual_prompt_on_a_real_tty() {
         let line = read_line("Type abc, Backspace, c, Enter (no echo): ", opts(false, 64))
+            .unwrap()
+            .unwrap();
+        assert_eq!(line.as_str(), "abc");
+    }
+
+    /// Run by hand in a terminal: `cargo test -p holm-platform --features tty
+    /// manual_typeahead -- --ignored --nocapture`, then type `xyz` (no Enter) during
+    /// the 3-second pause, and `abc` and Enter at the prompt. `xyz` is typed before the
+    /// prompt, so it echoes; raw mode's `Flush` must then discard it, so the line read
+    /// is `abc`, not `xyzabc`.
+    #[test]
+    #[ignore = "needs a person at a real terminal"]
+    fn manual_typeahead_is_discarded() {
+        println!("Type xyz now (no Enter)...");
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let line = read_line("Now type abc, Enter (no echo): ", opts(false, 64))
             .unwrap()
             .unwrap();
         assert_eq!(line.as_str(), "abc");
