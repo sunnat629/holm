@@ -99,6 +99,9 @@ pub fn copied_note(secs: u32) -> String {
 }
 /// The auto-clear found another app's copy on the clipboard and left it alone.
 pub const CLIPBOARD_CHANGED: &str = "The clipboard changed, so Holm left it alone.";
+/// The auto-clear ran but the password is still on the clipboard.
+pub const CLIPBOARD_NOT_CLEARED: &str =
+    "Holm couldn't clear the clipboard. Copy something else to replace it.";
 /// The clipboard did not take the password.
 pub const COPY_FAILED: &str = "Couldn't copy. Try again.";
 /// A paste would not fit the field, so nothing was pasted.
@@ -154,7 +157,7 @@ pub const EYE_LABEL: &str = "Show password while held";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 50] = [
+const ALL: [&str; 51] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -186,6 +189,7 @@ const ALL: [&str; 50] = [
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
     CLIPBOARD_CHANGED,
+    CLIPBOARD_NOT_CLEARED,
     COPY_FAILED,
     PASTE_TOO_LONG,
     UNSAVED_ON_LOCK,
