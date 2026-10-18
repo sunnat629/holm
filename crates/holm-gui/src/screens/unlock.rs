@@ -1,4 +1,5 @@
-//! The unlock screen: one password field, the Unlock button and the throttle line.
+//! The unlock screen: the line about the last lock, one password field, the Unlock
+//! button and the throttle line.
 
 use eframe::egui;
 use holm_core::throttle::ThrottleStatus;
@@ -50,14 +51,19 @@ impl UnlockForm {
             .then(|| self.password.take_master_password())
     }
 
-    /// Draws the form. Returns the password when a try should start.
+    /// Draws the form, with `lock_line` (why the vault locked) under the heading when
+    /// there is one. Returns the password when a try should start.
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
         io: &mut FieldIo<'_>,
         throttle: &ThrottleStatus,
+        lock_line: Option<&str>,
     ) -> Option<MasterPassword> {
         ui.heading("Unlock your vault");
+        if let Some(line) = lock_line {
+            ui.label(line);
+        }
         ui.add_space(8.0);
         let field = io.secret_field(
             ui,

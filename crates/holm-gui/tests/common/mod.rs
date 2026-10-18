@@ -181,3 +181,17 @@ pub fn make_vault(dir: &Path, password: &str) {
         .create(&MasterPassword::new(password.to_owned()), &KdfParams::FLOOR)
         .unwrap();
 }
+
+/// [`make_vault`], then sets the vault's auto-lock time to `auto_lock_secs` and saves.
+pub fn make_vault_with_auto_lock(dir: &Path, password: &str, auto_lock_secs: u32) {
+    make_vault(dir, password);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    let password = MasterPassword::new(password.to_owned());
+    session.unlock(&password).unwrap();
+    let settings = holm_core::settings::Settings {
+        auto_lock_secs,
+        ..session.settings().unwrap().clone()
+    };
+    // A longer time is a weaker setting, so it needs the password.
+    session.update_settings(settings, Some(&password)).unwrap();
+}

@@ -2,7 +2,10 @@
 //! right.
 //!
 //! The rows are built once from the session and owned here, so a frame never walks the
-//! vault. All vault work (add, update, save) leaves as a [`Job`] for the worker thread.
+//! vault. All vault work (add, update, save) leaves as a [`Job`] for the worker thread,
+//! and a lock request leaves as a [`VaultAction`] for the app. Locking drops this view,
+//! so its rows, any open form (whose secret buffer wipes on drop) and the reveal state
+//! all go with it.
 
 use core::fmt;
 use std::time::Duration;
@@ -35,8 +38,28 @@ pub(crate) const HIDE_LABEL: &str = "Hide";
 pub(crate) const COPY_LABEL: &str = "Copy";
 /// Label of the retry-save button.
 pub(crate) const RETRY_LABEL: &str = "Try again";
+/// Label of the lock button.
+pub(crate) const LOCK_LABEL: &str = "Lock";
+/// Label of the lock dialog's save button.
+pub(crate) const SAVE_AND_LOCK_LABEL: &str = "Save and lock";
+/// Label of the lock dialog's discard button.
+pub(crate) const LOCK_ANYWAY_LABEL: &str = "Lock anyway";
+/// Label of the lock dialog's cancel button.
+pub(crate) const LOCK_CANCEL_LABEL: &str = "Cancel";
 /// How a hidden password looks.
 pub(crate) const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
+
+/// What the open vault asks the app to do.
+pub(crate) enum VaultAction {
+    /// Vault work for the worker.
+    Job(Job),
+    /// The Lock button: lock, or ask first when there are unsaved changes.
+    Lock,
+    /// The lock dialog's "Save and lock".
+    SaveAndLock,
+    /// The lock dialog's "Lock anyway": lock and discard unsaved changes.
+    LockAnyway,
+}
 
 /// What the right-hand side shows.
 enum DetailMode {
@@ -69,6 +92,8 @@ pub(crate) struct VaultView {
     save_error: Option<&'static str>,
     /// The fixed line under the password after the Copy button, if any.
     copy_note: Option<&'static str>,
+    /// Whether the unsaved-changes dialog of a manual lock is open.
+    lock_dialog: bool,
 }
 
 impl fmt::Debug for VaultView {
@@ -93,7 +118,21 @@ impl VaultView {
             save_failed: false,
             save_error: None,
             copy_note: None,
+            lock_dialog: false,
         }
+    }
+
+    /// Opens the dialog that asks before a manual lock discards unsaved changes.
+    pub(crate) fn ask_before_lock(&mut self) {
+        self.lock_dialog = true;
+    }
+
+    /// The dialog's "Save and lock" failed: closes the dialog and shows the
+    /// failed-save banner, with its retry button. The vault stays open.
+    pub(crate) fn on_lock_save_failed(&mut self, e: &CoreError) {
+        self.lock_dialog = false;
+        self.save_error = Some(messages::save_error(e));
+        self.save_failed = true;
     }
 
     /// Whether the form holds no characters. True when no form is open.
@@ -110,11 +149,6 @@ impl VaultView {
             DetailMode::Edit(form) => form.password.char_count(),
             DetailMode::Empty | DetailMode::View => 0,
         }
-    }
-
-    /// Whether a password is on screen.
-    pub(crate) fn revealed(&self) -> bool {
-        self.reveal_until.is_some()
     }
 
     /// Hides a revealed password when its time is up or the window lost focus.
@@ -199,14 +233,16 @@ impl VaultView {
         }
     }
 
-    /// Draws the panels and returns a job when the user asked for vault work.
+    /// Draws the panels and returns what the user asked for. `idle_left` is the time
+    /// until the idle lock when it is close enough to warn about.
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        idle_left: Option<Duration>,
         io: &mut FieldIo<'_>,
-    ) -> Option<Job> {
+    ) -> Option<VaultAction> {
         if self.rows_stale
             && let Some(session) = session
         {
@@ -215,19 +251,54 @@ impl VaultView {
                 .map_or_else(|_| Vec::new(), build_rows);
             self.rows_stale = false;
         }
+        let mut action = None;
         egui::Panel::top("vault-top").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Holm");
-                ui.add_enabled(false, egui::Button::new("Lock"));
+                if ui.button(LOCK_LABEL).clicked() {
+                    action = Some(VaultAction::Lock);
+                }
             });
         });
+        if let Some(left) = idle_left {
+            egui::Panel::bottom("vault-status").show(ui, |ui| {
+                let amber = ui.visuals().warn_fg_color;
+                ui.colored_label(amber, messages::idle_warning(left));
+            });
+        }
         egui::Panel::left("vault-list")
             .resizable(false)
             .exact_size(260.0)
             .show(ui, |ui| self.show_list(ui));
-        egui::CentralPanel::default()
+        let job = egui::CentralPanel::default()
             .show(ui, |ui| self.show_detail(ui, session, now, io))
-            .inner
+            .inner;
+        if self.lock_dialog {
+            action = self.show_lock_dialog(ui.ctx()).or(action);
+        }
+        action.or(job.map(VaultAction::Job))
+    }
+
+    /// The dialog a manual lock opens when there are unsaved changes. Nothing is lost
+    /// without a choice: "Save and lock", "Lock anyway" or "Cancel".
+    fn show_lock_dialog(&mut self, ctx: &egui::Context) -> Option<VaultAction> {
+        let mut action = None;
+        egui::Modal::new(egui::Id::unique("vault-lock-dialog")).show(ctx, |ui| {
+            ui.label(messages::UNSAVED_ON_LOCK);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(SAVE_AND_LOCK_LABEL).clicked() {
+                    action = Some(VaultAction::SaveAndLock);
+                }
+                if ui.button(LOCK_ANYWAY_LABEL).clicked() {
+                    action = Some(VaultAction::LockAnyway);
+                }
+                if ui.button(LOCK_CANCEL_LABEL).clicked() {
+                    self.lock_dialog = false;
+                }
+            });
+        });
+        action
     }
 
     /// The left panel: the new-login button and the rows.

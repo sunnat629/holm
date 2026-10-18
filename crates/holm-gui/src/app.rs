@@ -5,6 +5,11 @@
 //! ([`crate::worker`]) and `HolmApp::session` is `None`; the worker hands it back in its
 //! answer. The UI thread never runs Argon2 and never blocks on the worker: it polls the
 //! answer channel with `try_recv` once per frame.
+//!
+//! Locking ([`HolmApp::lock`]) wipes the session's keys and data in the core and
+//! replaces the vault screen with an empty unlock form, which drops the vault view and
+//! everything it holds. [`HolmApp::tick`] runs the idle and minimise checks even in
+//! frames that draw nothing.
 
 use core::fmt;
 use std::path::PathBuf;
@@ -15,6 +20,7 @@ use eframe::egui;
 use holm_core::clock::Clock;
 use holm_core::error::CoreError;
 use holm_core::session::Session;
+use holm_core::settings::{AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS};
 use holm_core::throttle::ThrottleStatus;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
@@ -23,13 +29,22 @@ use holm_platform::paths;
 
 use crate::clipboard::SecretClipboard;
 use crate::messages;
+pub use crate::messages::{LockNote, LockReason};
 use crate::screens::create::CreateForm;
 use crate::screens::unlock::UnlockForm;
+use crate::screens::vault::VaultAction;
 use crate::screens::{FieldFocus, FieldIo, Screen, VaultView};
 use crate::worker::{self, Job, JobKind, Spawner, WorkDone};
 
 /// How often the UI polls a running worker, in case its wake-up repaint is missed.
 const WORKER_POLL: Duration = Duration::from_millis(200);
+/// How long before the idle lock the status bar starts its warning.
+const IDLE_WARNING: Duration = Duration::from_secs(30);
+/// How often an open vault's frame runs without input: the idle check and countdowns.
+const OPEN_TICK: Duration = Duration::from_secs(1);
+/// The lock shortcut, Cmd+L.
+const LOCK_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::L);
 
 /// Everything the app needs from outside: where the vault is, how hard Argon2 works
 /// for a new vault, the clocks, and the clipboard.
@@ -81,6 +96,14 @@ pub struct HolmApp {
     focus: FieldFocus,
     /// Starts the worker: [`worker::spawn`], or a fake in tests.
     spawner: Spawner,
+    /// UI clock time of the last activity noted in the session. Mirrors the session's
+    /// idle timer (monotonic part only) for the warning; the lock itself always asks
+    /// the session.
+    last_activity: Duration,
+    /// Why the vault last locked, until the next unlock.
+    lock_note: Option<LockNote>,
+    /// The unlock screen's line for `lock_note`.
+    lock_line: Option<String>,
 }
 
 impl fmt::Debug for HolmApp {
@@ -126,6 +149,9 @@ impl HolmApp {
             clipboard,
             focus: FieldFocus::None,
             spawner: spawn_worker,
+            last_activity: Duration::ZERO,
+            lock_note: None,
+            lock_line: None,
         };
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
             app.screen = Screen::Fatal(messages::dir_error(e));
@@ -160,9 +186,64 @@ impl HolmApp {
         self
     }
 
-    /// Per-frame work before drawing: takes the worker's answer when it is there, and
-    /// asks for the repaints that keep the screen current without input.
+    /// Locks the vault: the core wipes its keys and data, and the vault screen is
+    /// replaced by an empty unlock form, which drops the vault view (its rows, any open
+    /// form and its secret buffer, and the reveal state). The unlock screen then says
+    /// why it locked. Does nothing unless the vault screen is showing: while the worker
+    /// runs, nothing is open to lock.
+    pub fn lock(&mut self, reason: LockReason) {
+        if !matches!(self.screen, Screen::Vault(_)) {
+            return;
+        }
+        let auto_lock = self.auto_lock_time();
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let outcome = session.lock();
+        self.screen = Screen::Unlock(UnlockForm::new());
+        self.focus = FieldFocus::None;
+        let note = LockNote {
+            reason,
+            discarded_unsaved: outcome.discarded_unsaved,
+        };
+        self.lock_line = Some(messages::lock_line(&note, auto_lock));
+        self.lock_note = Some(note);
+    }
+
+    /// The vault's auto-lock time from its settings, clamped to the settings range as
+    /// the core's idle timer clamps it. The default while no vault is open.
+    #[must_use]
+    pub fn auto_lock_time(&self) -> Duration {
+        let secs = self
+            .session
+            .as_ref()
+            .and_then(|s| s.settings().ok())
+            .map_or(AUTO_LOCK_DEFAULT_SECS, |s| s.auto_lock_secs)
+            .clamp(AUTO_LOCK_MIN_SECS, AUTO_LOCK_MAX_SECS);
+        Duration::from_secs(u64::from(secs))
+    }
+
+    /// Why the vault last locked, until the next unlock. For tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn lock_note(&self) -> Option<LockNote> {
+        self.lock_note
+    }
+
+    /// Per-frame work before drawing. eframe runs it even while the window is hidden,
+    /// so the idle lock never waits for a drawn frame. With the vault open it locks at
+    /// once when the window is minimised, or when the session's idle timer has run
+    /// out (which also covers a Mac waking from sleep, through the wall-clock gap);
+    /// otherwise it asks for a frame every second. It also takes the worker's answer
+    /// when it is there. It never records activity: input seen here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context) {
+        if matches!(self.screen, Screen::Vault(_)) {
+            if ctx.input(|i| i.viewport().minimized == Some(true)) {
+                self.lock(LockReason::Minimised);
+            } else if self.session.as_ref().is_some_and(Session::idle_expired) {
+                self.lock(LockReason::Idle);
+            }
+        }
         let polled = match &mut self.screen {
             Screen::Working { rx, .. } => Some(rx.try_recv()),
             Screen::Unlock(_) => {
@@ -175,9 +256,7 @@ impl HolmApp {
                 let now = self.ui_clock.monotonic();
                 let focused = ctx.input(|i| i.viewport().focused != Some(false));
                 view.tick(now, focused);
-                if view.revealed() {
-                    ctx.request_repaint_after(Duration::from_secs(1));
-                }
+                ctx.request_repaint_after(OPEN_TICK);
                 None
             }
             Screen::Create(_) | Screen::Fatal(_) => None,
@@ -194,22 +273,38 @@ impl HolmApp {
         }
     }
 
-    /// Draws the current screen, and starts the worker when a form submits.
+    /// Draws the current screen, and starts the worker when a form submits. With the
+    /// vault open it first notes activity and handles Cmd+L.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.screen, Screen::Vault(_)) {
+            self.record_activity(ui.ctx());
+            if ui.ctx().input_mut(|i| i.consume_shortcut(&LOCK_SHORTCUT)) {
+                self.request_lock();
+            }
+        }
         let throttle = self.throttle_status();
         let kdf = self.kdf;
         let now = self.ui_clock.monotonic();
+        let idle_left = self.idle_left(now);
         let screen = &mut self.screen;
         let session = self.session.as_ref();
+        let lock_line = self.lock_line.as_deref();
         let mut io = FieldIo {
             clipboard: &mut *self.clipboard,
             focus: FieldFocus::None,
         };
         if let Screen::Vault(view) = screen {
-            let job = view.show(ui, session, now, &mut io);
+            let action = view.show(ui, session, now, idle_left, &mut io);
             self.focus = io.focus;
-            if let Some(job) = job {
-                self.start(ui.ctx(), job);
+            match action {
+                None => return,
+                Some(VaultAction::Job(job)) => self.start(ui.ctx(), job),
+                Some(VaultAction::Lock) => self.request_lock(),
+                Some(VaultAction::SaveAndLock) => self.save_and_lock(),
+                Some(VaultAction::LockAnyway) => self.lock(LockReason::Manual),
+            }
+            // This pass drew the vault; if the screen changed, draw the new one instead.
+            if !matches!(self.screen, Screen::Vault(_)) {
                 ui.ctx().request_discard("the screen changed");
             }
             return;
@@ -219,7 +314,9 @@ impl HolmApp {
                 Screen::Create(form) => form
                     .show(ui, &mut io)
                     .map(|password| Job::Create(password, kdf)),
-                Screen::Unlock(form) => form.show(ui, &mut io, &throttle).map(Job::Unlock),
+                Screen::Unlock(form) => form
+                    .show(ui, &mut io, &throttle, lock_line)
+                    .map(Job::Unlock),
                 Screen::Working { job, .. } => {
                     ui.heading(match job {
                         JobKind::Create => "Creating your vault. This takes a moment.",
@@ -286,6 +383,60 @@ impl HolmApp {
         }
     }
 
+    /// A manual lock (the Lock button or Cmd+L): locks at once, or opens the dialog
+    /// first when the session has unsaved changes.
+    fn request_lock(&mut self) {
+        if self.session.as_ref().is_some_and(Session::is_dirty) {
+            if let Screen::Vault(view) = &mut self.screen {
+                view.ask_before_lock();
+            }
+        } else {
+            self.lock(LockReason::Manual);
+        }
+    }
+
+    /// The lock dialog's "Save and lock": saves, then locks. A failed save closes the
+    /// dialog, shows the failed-save banner and leaves the vault open.
+    fn save_and_lock(&mut self) {
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        match session.save() {
+            Ok(()) => self.lock(LockReason::Manual),
+            Err(e) => {
+                if let Screen::Vault(view) = &mut self.screen {
+                    view.on_lock_save_failed(&e);
+                }
+            }
+        }
+    }
+
+    /// Notes activity in the session when this frame has input events or pointer
+    /// movement and the window is not known to be hidden. Called from `show` only,
+    /// never from `tick`.
+    fn record_activity(&mut self, ctx: &egui::Context) {
+        let active = ctx.input(|i| {
+            i.viewport().visible() != Some(false)
+                && (!i.events.is_empty() || i.pointer.delta() != egui::Vec2::ZERO)
+        });
+        if active && let Some(session) = self.session.as_mut() {
+            session.note_activity();
+            self.last_activity = self.ui_clock.monotonic();
+        }
+    }
+
+    /// Time left before the idle lock, when it is within [`IDLE_WARNING`]. Counted on
+    /// the UI clock from the last noted activity, so a sleep can lock without a warning
+    /// (the session's wall-clock check), never the other way round.
+    fn idle_left(&self, now: Duration) -> Option<Duration> {
+        if !matches!(self.screen, Screen::Vault(_)) {
+            return None;
+        }
+        let idle = now.saturating_sub(self.last_activity);
+        let left = self.auto_lock_time().saturating_sub(idle);
+        (left <= IDLE_WARNING).then_some(left)
+    }
+
     /// The session's throttle status, or no failures while there is no session.
     fn throttle_status(&self) -> ThrottleStatus {
         self.session
@@ -333,6 +484,7 @@ impl HolmApp {
             let mut view = keep.unwrap_or_else(VaultView::new);
             if result.is_ok() {
                 session.note_activity();
+                self.last_activity = self.ui_clock.monotonic();
             }
             view.on_done(kind, &result, added, returned, &session);
             self.screen = Screen::Vault(view);
@@ -342,6 +494,9 @@ impl HolmApp {
         self.screen = match (kind, result) {
             (_, Ok(())) => {
                 session.note_activity();
+                self.last_activity = self.ui_clock.monotonic();
+                self.lock_note = None;
+                self.lock_line = None;
                 Screen::Vault(VaultView::new())
             }
             // Another process made the vault after this app showed Create.

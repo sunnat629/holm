@@ -1,4 +1,4 @@
-//! Every error and status line the create and unlock screens show.
+//! Every error and status line the app's screens show.
 //!
 //! Each line is fixed text written here, never a path, a field value or a library
 //! error's `Display`. The mapping functions take a core error and return one of these
@@ -91,9 +91,13 @@ pub const COPY_FAILED: &str = "Couldn't copy. Try again.";
 /// A paste would not fit the field, so nothing was pasted.
 pub const PASTE_TOO_LONG: &str = "That's too long to paste here, so nothing was pasted.";
 
+/// The lock dialog's question, shown when a manual lock finds unsaved changes.
+pub const UNSAVED_ON_LOCK: &str =
+    "Some changes are not saved yet. Locking now without saving discards them.";
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 32] = [
+const ALL: [&str; 33] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -126,7 +130,28 @@ const ALL: [&str; 32] = [
     COPIED,
     COPY_FAILED,
     PASTE_TOO_LONG,
+    UNSAVED_ON_LOCK,
 ];
+
+/// Why the vault locked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LockReason {
+    /// The Lock button or Cmd+L.
+    Manual,
+    /// No activity for the auto-lock time.
+    Idle,
+    /// The window was minimised.
+    Minimised,
+}
+
+/// What the unlock screen says about the last lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LockNote {
+    /// Why the vault locked.
+    pub reason: LockReason,
+    /// Whether the session had unsaved changes, now discarded.
+    pub discarded_unsaved: bool,
+}
 
 /// The line the unlock screen shows for an unlock error.
 #[must_use]
@@ -212,6 +237,38 @@ pub fn throttle_line(status: &ThrottleStatus) -> Option<String> {
         0 => None,
         1 => Some("1 failed try.".to_owned()),
         n => Some(format!("{n} failed tries.")),
+    }
+}
+
+/// The line the unlock screen shows after a lock. `auto_lock` is the vault's auto-lock
+/// time from its settings, named in the idle line.
+#[must_use]
+pub fn lock_line(note: &LockNote, auto_lock: Duration) -> String {
+    let mut line = match note.reason {
+        LockReason::Manual => "Locked.".to_owned(),
+        LockReason::Idle => format!("Locked after {} without use.", in_words(auto_lock)),
+        LockReason::Minimised => "Locked when the window was minimised.".to_owned(),
+    };
+    if note.discarded_unsaved {
+        line.push_str(" Unsaved changes were discarded.");
+    }
+    line
+}
+
+/// The amber line before an idle lock, with `left` in whole seconds (rounded up).
+#[must_use]
+pub fn idle_warning(left: Duration) -> String {
+    format!("Locking in {} s because of no activity.", ceil_secs(left))
+}
+
+/// `d` as "1 minute", "5 minutes" or, when it is not whole minutes, "90 seconds".
+fn in_words(d: Duration) -> String {
+    let secs = d.as_secs();
+    match (secs / 60, secs % 60) {
+        (1, 0) => "1 minute".to_owned(),
+        (minutes, 0) if minutes > 1 => format!("{minutes} minutes"),
+        _ if secs == 1 => "1 second".to_owned(),
+        _ => format!("{secs} seconds"),
     }
 }
 
@@ -342,6 +399,56 @@ mod tests {
         assert_eq!(
             throttle_line(&status(3, Some(2_000))).as_deref(),
             Some("Too many tries. Try again in 2 s.")
+        );
+    }
+
+    #[test]
+    fn lock_lines() {
+        let note = |reason, discarded_unsaved| LockNote {
+            reason,
+            discarded_unsaved,
+        };
+        let five = Duration::from_secs(300);
+        assert_eq!(lock_line(&note(LockReason::Manual, false), five), "Locked.");
+        assert_eq!(
+            lock_line(&note(LockReason::Idle, false), five),
+            "Locked after 5 minutes without use."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Idle, false), Duration::from_secs(60)),
+            "Locked after 1 minute without use."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Idle, false), Duration::from_secs(90)),
+            "Locked after 90 seconds without use."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Minimised, false), five),
+            "Locked when the window was minimised."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Idle, true), Duration::from_secs(600)),
+            "Locked after 10 minutes without use. Unsaved changes were discarded."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Manual, true), five),
+            "Locked. Unsaved changes were discarded."
+        );
+    }
+
+    #[test]
+    fn idle_warning_rounds_up() {
+        assert_eq!(
+            idle_warning(Duration::from_secs(30)),
+            "Locking in 30 s because of no activity."
+        );
+        assert_eq!(
+            idle_warning(Duration::from_millis(29_001)),
+            "Locking in 30 s because of no activity."
+        );
+        assert_eq!(
+            idle_warning(Duration::ZERO),
+            "Locking in 1 s because of no activity."
         );
     }
 
