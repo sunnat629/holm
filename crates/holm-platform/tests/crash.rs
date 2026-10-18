@@ -108,6 +108,22 @@ fn crash_at_every_save_step_leaves_old_or_new() {
             String::from_utf8_lossy(&out.stderr),
         );
 
+        // Before the temp steps are done the crash must have left a temp behind; this
+        // proves the crash really stopped there and that unlock is what removes it.
+        if matches!(
+            step,
+            SaveStep::TempCreated
+                | SaveStep::TempHalfWritten
+                | SaveStep::TempWritten
+                | SaveStep::TempSynced
+        ) {
+            assert!(
+                !temps(dir.path()).is_empty(),
+                "step {}: no temp left before unlock",
+                step.name()
+            );
+        }
+
         let mut s = Session::new(
             FsStore::new(vault_path(dir.path())),
             Box::new(SystemClock::new()),

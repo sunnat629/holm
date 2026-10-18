@@ -47,11 +47,18 @@ mod macos {
                 .output()
                 .is_ok_and(|o| o.status.success());
             if !ok {
-                let _ = Command::new("hdiutil")
+                let forced = Command::new("hdiutil")
                     .arg("detach")
                     .arg("-force")
                     .arg(&self.0)
-                    .output();
+                    .output()
+                    .is_ok_and(|o| o.status.success());
+                if !forced {
+                    eprintln!(
+                        "warning: could not detach test volume; run `hdiutil detach -force {}`",
+                        self.0.display()
+                    );
+                }
             }
         }
     }
