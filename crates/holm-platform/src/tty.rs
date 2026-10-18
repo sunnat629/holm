@@ -8,9 +8,11 @@
 //! While a prompt is open the terminal is in a raw mode: no echo, no line editing
 //! by the kernel, and no signal keys. The small line editor in this module handles
 //! Backspace, Ctrl-U, Ctrl-C and Ctrl-D itself, so Ctrl-C arrives as a byte, not as a
-//! signal, and the prompt always has the chance to put the terminal back. A guard
-//! restores the saved mode when it drops: on a normal return, on an error, and while
-//! a panic unwinds. A process killed from outside (for example `kill -9`, or a
+//! signal, and the prompt always has the chance to put the terminal back. Ctrl-C is
+//! [`TtyError::Cancelled`]; Ctrl-D on an empty line and a closed terminal are
+//! [`TtyError::EndOfInput`], so a caller can tell a cancel from input that has ended.
+//! A guard restores the saved mode when it drops: on a normal return, on an error,
+//! and while a panic unwinds. A process killed from outside (for example `kill -9`, or a
 //! `SIGINT` sent by another program) never runs the guard, so the terminal keeps
 //! echo off until `stty sane` or a new terminal (`docs/CRYPTO.md`).
 //!
@@ -32,8 +34,11 @@ pub enum TtyError {
     /// There is no controlling terminal (`/dev/tty` could not be opened, or it is not
     /// a terminal).
     NoTerminal,
-    /// The user pressed Ctrl-C, or Ctrl-D on an empty line, or the terminal closed.
+    /// The user pressed Ctrl-C.
     Cancelled,
+    /// The input ended: Ctrl-D on an empty line, or the terminal closed (a read gave
+    /// no bytes).
+    EndOfInput,
     /// The input was longer than the limit. Nothing typed is kept.
     TooLong,
     /// The input was not valid UTF-8. Nothing typed is kept.
@@ -91,8 +96,8 @@ enum Escape {
 /// - CR or LF ends the line ([`EditEnd::Enter`]).
 /// - DEL or BS removes the last character (every byte of it).
 /// - Ctrl-U clears the line.
-/// - Ctrl-C, or Ctrl-D on an empty line, is [`TtyError::Cancelled`]. Ctrl-D on a line
-///   with text is ignored.
+/// - Ctrl-C is [`TtyError::Cancelled`]. Ctrl-D on an empty line is
+///   [`TtyError::EndOfInput`]; on a line with text it is ignored.
 /// - An escape sequence (arrow keys and the like) is skipped. Every other control
 ///   byte is ignored.
 /// - A byte past `opts.max_bytes`, or past the buffer's capacity, is
@@ -165,7 +170,7 @@ pub(crate) fn edit(
             }
             0x04 => {
                 if buf.is_empty() {
-                    return Err(TtyError::Cancelled);
+                    return Err(TtyError::EndOfInput);
                 }
             }
             0x1b => escape = Escape::Start,
@@ -224,7 +229,8 @@ fn is_continuation(byte: u8) -> bool {
 ///
 /// # Errors
 /// [`TtyError::NoTerminal`] without a controlling terminal; [`TtyError::Cancelled`]
-/// for Ctrl-C, Ctrl-D on an empty line, or a closed terminal; [`TtyError::TooLong`];
+/// for Ctrl-C; [`TtyError::EndOfInput`] for Ctrl-D on an empty line or a closed
+/// terminal; [`TtyError::TooLong`];
 /// [`TtyError::NotUtf8`]; [`TtyError::Io`] for any other terminal error; and
 /// [`TtyError::Unsupported`] off Unix.
 pub fn read_line(prompt: &str, opts: LineOpts) -> Result<Option<Zeroizing<String>>, TtyError> {
@@ -433,11 +439,14 @@ mod unix {
                 return match bytes.stop {
                     Some(Stop::Deadline) => Ok(None),
                     Some(Stop::Io(kind)) => Err(TtyError::Io(kind)),
-                    Some(Stop::Closed) | None => Err(TtyError::Cancelled),
+                    Some(Stop::Closed) | None => Err(TtyError::EndOfInput),
                 };
             }
             Err(e) => {
-                if matches!(e, TtyError::TooLong | TtyError::Cancelled) {
+                if matches!(
+                    e,
+                    TtyError::TooLong | TtyError::Cancelled | TtyError::EndOfInput
+                ) {
                     guard.flush_input = true;
                 }
                 return Err(e);
@@ -502,7 +511,7 @@ mod tests {
         assert_eq!(run(b"ab\x08c\n"), (Ok(EditEnd::Enter), b"ac".to_vec()));
         assert_eq!(run(b"xy\x15z\r"), (Ok(EditEnd::Enter), b"z".to_vec()));
         assert_eq!(run(b"a\x03"), (Err(TtyError::Cancelled), Vec::new()));
-        assert_eq!(run(b"\x04"), (Err(TtyError::Cancelled), Vec::new()));
+        assert_eq!(run(b"\x04"), (Err(TtyError::EndOfInput), Vec::new()));
         // Ctrl-D with text on the line does nothing.
         assert_eq!(run(b"a\x04b\r"), (Ok(EditEnd::Enter), b"ab".to_vec()));
         // One DEL removes both bytes of "é".

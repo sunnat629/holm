@@ -67,6 +67,8 @@ enum Step {
     Deadline(u64),
     /// Runs, then the next step answers.
     Run(Box<dyn FnOnce()>),
+    /// Ctrl-C at the prompt.
+    CtrlC,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +79,7 @@ enum Kind {
 }
 
 /// A terminal that answers from `steps` and records every prompt and every line
-/// deadline. An empty queue answers `Cancelled`, as Ctrl-D does.
+/// deadline. An empty queue answers `EndOfInput`, as Ctrl-D does.
 struct ShellTerm {
     steps: VecDeque<Step>,
     clock: TestClock,
@@ -131,7 +133,8 @@ impl Terminal for ShellTerm {
         match self.next() {
             Some(Step::Text(t)) => Ok(Zeroizing::new(t)),
             Some(Step::Deadline(_)) => panic!("a secret prompt has no deadline"),
-            Some(Step::Run(_)) | None => Err(TtyError::Cancelled),
+            Some(Step::CtrlC) => Err(TtyError::Cancelled),
+            Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
         }
     }
 
@@ -150,7 +153,8 @@ impl Terminal for ShellTerm {
                 self.clock.advance(secs);
                 Ok(None)
             }
-            Some(Step::Run(_)) | None => Err(TtyError::Cancelled),
+            Some(Step::CtrlC) => Err(TtyError::Cancelled),
+            Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
         }
     }
 
@@ -169,7 +173,8 @@ impl Terminal for ShellTerm {
                 self.clock.advance(secs);
                 Ok(None)
             }
-            Some(Step::Run(_)) | None => Err(TtyError::Cancelled),
+            Some(Step::CtrlC) => Err(TtyError::Cancelled),
+            Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
         }
     }
 
@@ -986,6 +991,95 @@ fn idle_at_a_confirm_prompt_locks() {
     assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
     assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
     assert!(!file.exists());
+}
+
+/// Ctrl-C at the discard prompt that Ctrl-C (or Ctrl-D) at the shell prompt led to
+/// keeps the vault open with its change: Ctrl-C is a cancel, not a closed terminal.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_at_the_discard_prompt_keeps_the_change() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let folder = dir.path().to_owned();
+    let mode = |m: u32| {
+        let folder = folder.clone();
+        move || std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(m)).unwrap()
+    };
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            Step::Run(Box::new(mode(0o500))),
+            t("add note --title Kept"),
+            t("EXAMPLE unsaved body"),
+            // At the shell prompt, then at "Type discard to lock without saving: ".
+            Step::CtrlC,
+            Step::CtrlC,
+            Step::Run(Box::new(mode(0o700))),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    ok(&ran);
+    assert!(ran.err.contains("Not locked."), "{}", ran.err);
+    assert!(!ran.err.contains("discarded"), "{}", ran.err);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [
+            PROMPT,
+            PROMPT,
+            "Type discard to lock without saving: ",
+            PROMPT,
+        ]
+    );
+    // `exit` saved the change once the folder was writable again.
+    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+}
+
+/// The input ends (Ctrl-D, or the terminal closes) at the shell prompt and again at
+/// the discard prompt: nobody is left to ask, so the change is dropped and said so.
+#[cfg(unix)]
+#[test]
+fn end_of_input_at_the_discard_prompt_discards() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let folder = dir.path().to_owned();
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            Step::Run(Box::new(move || {
+                std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+            })),
+            t("add note --title Dropped"),
+            t("EXAMPLE unsaved body"),
+            // The queue runs out: end of input at both prompts.
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    ok(&ran);
+    assert!(
+        ran.err.contains("Locked. Unsaved changes were discarded."),
+        "{}",
+        ran.err
+    );
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, PROMPT, "Type discard to lock without saving: "]
+    );
+    assert_eq!(session(&path).active_items().unwrap().count(), 0);
 }
 
 /// The idle time passes at the discard prompt of `lock`: the idle lock discards, as

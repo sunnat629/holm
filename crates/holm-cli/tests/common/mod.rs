@@ -37,7 +37,7 @@ pub enum Kind {
 }
 
 /// A terminal that answers from a queue and records every prompt. An empty queue
-/// answers [`TtyError::Cancelled`], as Ctrl-D would. `wait_for_key` answers
+/// answers [`TtyError::EndOfInput`], as Ctrl-D would. `wait_for_key` answers
 /// `wait_answer` at once (true: Enter was pressed; false: the time ran out) after
 /// running `on_wait`.
 #[derive(Default)]
@@ -81,7 +81,7 @@ impl Terminal for FakeTerminal {
         self.answers
             .pop_front()
             .map(Zeroizing::new)
-            .ok_or(TtyError::Cancelled)
+            .ok_or(TtyError::EndOfInput)
     }
 
     fn line(
@@ -94,7 +94,7 @@ impl Terminal for FakeTerminal {
         self.answers
             .pop_front()
             .map(|a| Some(Zeroizing::new(a)))
-            .ok_or(TtyError::Cancelled)
+            .ok_or(TtyError::EndOfInput)
     }
 
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {

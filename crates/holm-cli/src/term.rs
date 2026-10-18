@@ -15,7 +15,8 @@ pub trait Terminal {
     /// Asks for a secret with no echo, waiting as long as it takes.
     ///
     /// # Errors
-    /// [`TtyError`]; a closed terminal is [`TtyError::Cancelled`].
+    /// [`TtyError`]; Ctrl-C is [`TtyError::Cancelled`], and Ctrl-D on an empty line
+    /// or a closed terminal is [`TtyError::EndOfInput`].
     fn secret(&mut self, prompt: &str, max_bytes: usize) -> Result<Zeroizing<String>, TtyError>;
 
     /// Asks for a secret with no echo. `Ok(None)` means `deadline` passed first.

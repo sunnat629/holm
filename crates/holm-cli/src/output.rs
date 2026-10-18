@@ -291,7 +291,7 @@ impl From<TtyError> for CliError {
     fn from(e: TtyError) -> CliError {
         match e {
             TtyError::NoTerminal => CliError::NoTerminal,
-            TtyError::Cancelled => CliError::Cancelled,
+            TtyError::Cancelled | TtyError::EndOfInput => CliError::Cancelled,
             TtyError::TooLong => CliError::InputTooLong,
             TtyError::NotUtf8 => CliError::InputNotText,
             TtyError::Unsupported => CliError::TerminalUnsupported,

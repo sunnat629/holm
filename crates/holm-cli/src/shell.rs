@@ -27,6 +27,7 @@ use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use holm_core::clock::Clock;
+use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::session::Session;
 use holm_core::settings::{
     AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS, CLIPBOARD_DEFAULT_SECS,
@@ -290,8 +291,9 @@ enum Flow {
 enum LockReason {
     /// `lock`, `exit` or `quit`: a refusal at the discard prompt keeps the vault open.
     Command,
-    /// Ctrl-D or Ctrl-C at the prompt: if the discard prompt can't be read either,
-    /// the terminal is gone and the changes are dropped.
+    /// Ctrl-D or Ctrl-C at the prompt: if the input ends at the discard prompt too
+    /// (Ctrl-D, or the terminal is gone), the changes are dropped. Ctrl-C there keeps
+    /// the vault open.
     EndOfInput,
 }
 
@@ -371,9 +373,8 @@ impl Shell<'_> {
                 // The deadline passed; `on_wake` did what was due.
                 Ok(None) => continue,
                 Ok(Some(line)) => line,
-                // Ctrl-D, Ctrl-C (the terminal can't tell them apart), or a closed
-                // terminal: leave, as `exit` does.
-                Err(TtyError::Cancelled) => {
+                // Ctrl-D, Ctrl-C or a closed terminal: leave, as `exit` does.
+                Err(TtyError::Cancelled | TtyError::EndOfInput) => {
                     let mut term = self.idle_term(term);
                     if self.lock(LockReason::EndOfInput, &mut term, err)? {
                         return Ok(());
@@ -552,19 +553,19 @@ impl Shell<'_> {
         }
         if self.session.is_dirty() && self.session.save().is_err() {
             writeln!(err, "holm: {}", CliError::NotSaved)?;
-            match write::confirm(term, DISCARD_PROMPT, "discard") {
-                Ok(()) => {}
+            match term.line(DISCARD_PROMPT, MAX_LINE_BYTES, None) {
+                Ok(Some(typed)) if typed.trim() == "discard" => {}
                 // Nobody answered within the auto-lock time: an idle lock, which
                 // discards without asking.
                 Err(_) if term.timed_out => {
                     self.idle_lock(err)?;
                     return Ok(true);
                 }
-                // The terminal is gone, so nobody can be asked.
-                Err(e)
-                    if reason == LockReason::EndOfInput && !matches!(e, CliError::NotConfirmed) => {
-                }
-                Err(_) => {
+                // The input has ended (Ctrl-D again) or the terminal is gone, so
+                // nobody can be asked. Ctrl-C, a refusal or a bad line keep it open.
+                Err(TtyError::EndOfInput | TtyError::Io(_) | TtyError::NoTerminal)
+                    if reason == LockReason::EndOfInput => {}
+                _ => {
                     writeln!(err, "Not locked.")?;
                     return Ok(false);
                 }
