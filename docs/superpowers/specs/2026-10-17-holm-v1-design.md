@@ -253,18 +253,20 @@ The vault is not excluded from Time Machine or other backups (security decision)
 
 Each phase ends with a security review before merge.
 
+Reordered 2026-10-18 (owner approval): a thin, runnable macOS app comes early (Phase 3) and is hardened later (Phase 5). Search, import and export (planned as part of Phase 2) move to Phase 4 as "2b". The security floor holds in every phase: no plaintext on disk, secrets in wiping types, no logging of secrets, every unlock through the throttle.
+
 | Phase | Output | Done when |
 |---|---|---|
 | 0 | Repo, workspace, local CI gate on macOS (three OSes when Actions returns, see §12), deny/audit/vet gates, open-source files | `scripts/ci-local.sh` green on an empty workspace |
 | 1 | `holm-crypto` plus file format | All known-answer tests pass, fuzzers run, hostile fixtures rejected |
-| 2 | `holm-core`: vault, items, generator, import/export, throttle; plus a std-only durable `FsStore` in a new `holm-platform` crate (still `forbid(unsafe_code)`) so crash tests run on real files | Full round trip; crash tests pass |
-| 3 | `holm-cli` | Daily use possible from the terminal |
-| 4 | `holm-platform`: lock, per-OS durable save hardening (Windows write-through, directory sync), clipboard, OS events, capture exclusion | Per-OS manual checklist passed on real machines |
-| 5 | `holm-gui` (egui) | All v1 features through the GUI |
-| 6 | Hardening and release | Internal review, long fuzz run, outside audit, signed installers, public repo |
+| 2 (2a) | `holm-core`: vault, items, trash, categories, settings, generator, strength check, throttle, session; plus a std-only durable `FsStore` in a new `holm-platform` crate (still `forbid(unsafe_code)`) so crash tests run on real files | Round trip without import/export; crash tests pass; fixed-key open and body fuzzers run |
+| 3 | macOS walking skeleton: a thin `holm-gui` (egui) on `holm-core` and `FsStore`: create (strength meter), unlock (throttle wait shown), item list, add/edit/view a login, copy password, lock, idle auto-lock | `cargo run -p holm-gui --locked` on macOS does create, add, lock, unlock, see item |
+| 4 | 2b: search/filter/sort, import, plaintext export; then `holm-cli` | Daily use possible from the terminal; import/export fuzzers run |
+| 5 | Platform hardening (clipboard auto-clear, memory locking, keychain/Touch ID option, OS lock events, capture exclusion, per-OS durable save: Windows write-through, directory sync, file lock) and GUI polish | All v1 features through a polished macOS app; per-OS manual checklist passed on real machines |
+| 6 | Release | Internal review, long fuzz run, signing certificate, outside audit, signed installers, public repo. Paid and public steps need the owner's approval |
 | Later | Android (`holm-ffi` + Compose), then iOS (SwiftUI) | Separate design |
 
-Team process, from the shared rules: grok CLI writes the code, Sonnet reviews UI, and Opus does the security review that gates every merge.
+Team process, from the shared rules: grok CLI writes the code, Sonnet reviews UI, and Opus does the security review that gates every merge. Review depth follows risk: Opus reviews crypto, password, file-format and `unsafe` work; Sonnet reviews mechanical work.
 
 ## 15. Left to the builder
 
