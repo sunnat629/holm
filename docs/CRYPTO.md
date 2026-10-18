@@ -82,7 +82,7 @@ All integers are little-endian.
 
 ## Opening a vault
 
-`envelope::open` does these steps, in this order:
+`envelope::open` (crate-private; callers outside holm-core use `Session`) does these steps, in this order:
 
 1. `Header::parse`: file size at most 64 MiB, then magic, version, flags, KDF id,
    reserved bytes, the cost policy, and exact framing (`body_len` must match the bytes

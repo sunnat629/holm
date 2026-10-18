@@ -3,7 +3,8 @@
 ## What we built
 
 `crates/holm-core/src/envelope.rs` turns the earlier pieces into a usable vault: `create`,
-`open`, `reseal` (save), `rekey` (change the password) and `verify_password`.
+`open`, `reseal` (save), `rekey` (change the password) and `verify_password`. `open` and
+`verify_password` are `pub(crate)`: only `Session` calls them, so the throttle cannot be skipped.
 `padding.rs` pads the body to a multiple of 16 KiB. `docs/CRYPTO.md` describes the design.
 The key idea: the data key (DEK) lives in a struct whose fields no other module can touch,
 and the compiler enforces that.
