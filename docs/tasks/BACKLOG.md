@@ -62,13 +62,20 @@ Phase 4
 
 - Search in the GUI (Task 9, #21).
 - Import and export in the GUI (Tasks 11 and 12, #23 and #24).
+- `holm-cli` must take the `holm.lock` single-instance lock before opening a vault (today only `holm-gui` does).
 
 Phase 5 (platform hardening and GUI polish)
 
 - Clipboard auto-clear and clear-on-lock. Until then a copied password stays on the clipboard and macOS Universal Clipboard (Handoff) can carry it to other devices; the Copy button says so.
 - macOS Secure Event Input while a password field has focus.
 - Vault folder owner and ACL check (today only the mode is checked).
-- Open `holm.lock` with `O_NOFOLLOW` (today `lstat` before and after the open).
+- Paste of a copied password into a plain field (Title, Username, Web address): refuse or warn (Task 5 M1).
+- Strip a foreign `Event::Paste` (Task 5 M2).
+- Clear egui `TextEdit` undo memory after a lock (Task 6 M9).
+- IME preedit strings while a SecretField has focus.
+- Existing vault folder that others can read (0755, the owner's has an old `harbor.vault`) is accepted and never tightened: warn or tighten.
+- After a minimise lock the last vault frame stays painted and in the Dock thumbnail: paint a locked frame before the window hides (Task 6 M3).
+- Clipboard clear on lock and the Universal Clipboard / Handoff exposure check (see first item).
 - Crash-atomic `create_new` on FAT and exFAT (today an exclusive-create fallback).
 - Keychain and Touch ID option.
 - Memory locking (`mlock`).

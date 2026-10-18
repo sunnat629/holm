@@ -6,7 +6,7 @@ An immediate-mode UI runs the whole screen function about sixty times a second, 
 
 ## What we built
 
-When the vault unlocks, the app builds a list of `ItemRow` values (id, title, username, web address) one time, on the worker thread's result, and the `VaultView` owns them. The list on the left and the detail pane on the right read those rows; neither touches the session. The login form uses fixed-size `LineBuf` buffers that wipe themselves, so typing never reallocates and leaves a copy behind. When a save job starts, the view is moved out of the screen with `mem::replace` and kept inside `Screen::Working`, so the list stays on screen but the form's buffers are gone before the job runs. When the job finishes, `on_done` rebuilds the rows from the returned session.
+When the vault unlocks, the app builds a list of `ItemRow` values (id, title, username, web address) one time, on the next draw after the worker's result arrives, and the `VaultView` owns them. The list on the left and the detail pane on the right read those rows; neither touches the session. The login form uses fixed-size `LineBuf` buffers that wipe themselves, so typing never reallocates and leaves a copy behind. When a save job starts, the view is moved out of the screen with `mem::replace` and kept inside `Screen::Working`, so the screen shows "Saving." while the job runs and the form's buffers are gone before it starts. When the job finishes, `on_done` rebuilds the rows from the returned session.
 
 ## Rust ideas in this task
 
@@ -14,17 +14,17 @@ When the vault unlocks, the app builds a list of `ItemRow` values (id, title, us
 
 ```rust
 pub struct ItemRow { pub id: ItemId, pub title: String, pub username: String, pub url: String }
-pub fn build_rows(session: &Session<FsStore>) -> Vec<ItemRow> { /* ... */ }
+pub fn build_rows<'a>(items: impl Iterator<Item = &'a Item>) -> Vec<ItemRow> { /* ... */ }
 ```
 
-`ItemRow` holds only the non-secret fields, so plain `String` is fine. The password is not in the row at all: the reveal fetches it from the session on demand. Each frame, `show_list` borrows `&self.rows` and draws one selectable label per row.
+`ItemRow` holds only the non-secret fields, but they are still zeroizing `Text` values, not plain `String`: a row is a copy of vault data, and the habit is that every copy wipes on drop. The password is not in the row at all: the reveal fetches it from the session on demand. Each frame, `show_list` borrows `&self.rows` and draws one selectable label per row.
 
 In Kotlin you'd write a `data class ItemRow` inside a `StateFlow<List<ItemRow>>` and let Compose read it. The difference is that Rust makes you say who owns the list: here the view does, and a frame can only borrow it for as long as the frame lasts.
 
 ### `mem::replace` to move out of a borrowed enum
 
 ```rust
-let old = std::mem::replace(&mut self.screen, Screen::Fatal(messages::GENERIC));
+let old = std::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST));
 if let Screen::Vault(view) = old { /* move view into Working */ }
 ```
 

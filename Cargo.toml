@@ -50,6 +50,8 @@ zxcvbn = { version = "3", default-features = false }
 # eframe: `glow` renderer and `accesskit` (spec §10 screen readers) only. Off on purpose:
 # default_fonts, persistence, clipboard (pulls arboard's image decoders), wgpu, wayland,
 # x11, web_screen_reader, links, system_fonts. egui comes through `eframe::egui`.
+# Note: eframe 0.37 always depends on `image` with `png` on non-wasm targets, so a PNG
+# decoder ships in the macOS binary even with `clipboard` off.
 eframe = { version = "=0.37.0", default-features = false, features = ["glow", "accesskit"] }
 # Plain-text clipboard only; Holm calls it itself (no image support).
 arboard = { version = "=3.7.0", default-features = false }

@@ -48,7 +48,7 @@ eframe = { version = "=0.37.0", default-features = false, features = ["glow", "a
 cargo tree -p holm-gui -e features --target aarch64-apple-darwin --locked
 ```
 
-The new macOS runtime graph is 87 crates. Roughly: `winit` and the `objc2-*` family talk to Cocoa; `glutin`, `glow` and `libloading` load OpenGL; `egui`, `epaint`, `emath` and `ecolor` are the UI itself; `skrifa` and `read-fonts` read the font files; `accesskit*` speaks to VoiceOver; `arboard` is the clipboard. The rest are their small helpers (`bitflags`, `smallvec`, `ahash` and similar).
+The new macOS runtime graph is 87 crates. Roughly: `winit` and the `objc2-*` family talk to Cocoa; `glutin`, `glow` and `libloading` load OpenGL; `egui`, `epaint`, `emath` and `ecolor` are the UI itself; `skrifa` and `read-fonts` read the font files; `accesskit*` speaks to VoiceOver; `arboard` is the clipboard. `image` (with its `png` decoder) comes in through `eframe` on every non-web target even with `clipboard` off, so a PNG decoder ships in the binary; Holm never feeds it untrusted images. The rest are their small helpers (`bitflags`, `smallvec`, `ahash` and similar).
 
 ### Bytes in the binary: `include_bytes!`
 

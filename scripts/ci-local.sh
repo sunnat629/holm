@@ -108,6 +108,8 @@ wordlist_gate() {
 gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
+# Without holm-gui, `gui-window` stays off, so this checks the default feature set.
+gate clippy-default cargo clippy -p holm-platform -p holm-cli --locked -- -D warnings
 # holm-core's `fuzzing` feature (seal and open with a raw KEK, no Argon2) only builds with
 # `--cfg fuzzing`, which cargo-fuzz sets by default. A normal build that turns the feature
 # on must stop with holm-core's compile_error!, and this gate proves it does.

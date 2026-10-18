@@ -331,7 +331,8 @@ Known gaps:
   volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
 - Windows write-through and the Windows directory sync wait for Phase 5. The lock that
   stops two Holm processes opening the same vault (`holm.lock`, see below) arrived in
-  Phase 3.
+  Phase 3, but only `holm-gui` takes it; `FsStore` and `Session` do not, so `holm-cli`
+  must take it too (Phase 4).
 
 ## The macOS app (Phase 3)
 
@@ -366,9 +367,23 @@ Known gaps:
   an app with input-monitoring permission can read the keystrokes. Phase 5.
 - The vault folder check refuses a folder that group or others can write, but checks
   neither the folder's owner nor its ACL. Phase 5.
-- `holm.lock` is opened without `O_NOFOLLOW`. An `lstat` before and after the open,
-  plus a device and inode match, refuse a symlink, but one swapped in between can make
-  the open create an empty file at its target first. Phase 5.
+- `holm.lock` is opened with `O_NOFOLLOW` and `O_NONBLOCK` (std only, per-target
+  constants), after an `lstat`, and checked again with a device and inode match. A
+  symlink swapped in is refused. What remains is the owner and ACL check on the folder
+  (above). The lock is advisory, and some network filesystems ignore it.
+- After a minimise lock, the last vault frame stays drawn (GL buffer, AccessKit tree,
+  galley cache) until the window is restored, and the Dock thumbnail shows the vault.
+  Phase 5.
+- A copied password pasted into a plain field (Title, Username, Web address) shows as
+  plain text, lands in the AccessKit value and the `TextEdit` undo state, and is saved
+  as display text. Holm does not guard it. Phase 5.
+- A foreign `Event::Paste` (not made by Holm's own Cmd+V hook) is not stripped. Phase 5.
+- `TextEdit` undo state stays in egui memory after a lock, until the next frame replaces
+  it or the app quits. Phase 5.
+- IME `Event::Ime` preedit strings are not routed to a `SecretField` (IME is off while
+  one has focus), but are not wiped if they reach egui elsewhere. Phase 5.
+- A vault folder that already exists and that others can read (0755) is accepted and
+  never tightened. The files inside stay 0600. Phase 5.
 - On FAT and exFAT, where hard links fail, `create_new` falls back to an exclusive
   create that is not crash-atomic (see `FsStore::create_new`). Phase 5.
 - The Linux and Windows builds are not compiled: local CI runs on macOS and GitHub

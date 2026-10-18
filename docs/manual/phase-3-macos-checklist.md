@@ -16,13 +16,19 @@ and the chip.
 ## Before you start
 
 - The default vault folder is `~/Library/Application Support/Holm`. On the
-  implementer's Mac it already existed on 2026-10-18 with mode `drwxr-xr-x` (0755), an
-  older `harbor.vault` (from the earlier project, mode 0644) and an empty `holm.lock`.
-  Holm accepts a 0755 folder (it refuses only a folder that group or others can write,
-  and never changes a folder's mode), so the folder check at the end would show
-  `drwxr-xr-x` and the extra file. Before run 2, either move `harbor.vault` out and run
-  `chmod 700 ~/Library/Application\ Support/Holm`, or run every step below with
-  `-- --vault "$(mktemp -d)/Holm/holm.vault"` and check that folder instead.
+  folder may already exist from an earlier project or run, with a looser mode (for
+  example 0755) and extra files. Holm accepts such a folder (it refuses only a folder
+  that group or others can write, and never changes a folder's mode), so the folder
+  check at the end would show the looser mode and the extra files. Before run 2, either
+  move the extra files out and run `chmod 700 ~/Library/Application\ Support/Holm`, or
+  use a throwaway vault: set it once, print it, and pass the same value to every
+  command below.
+
+  ```
+  V="$(mktemp -d)/Holm/holm.vault"; echo "$V"
+  cargo run -p holm-gui --locked -- --vault "$V"
+  ls -la "$(dirname "$V")"
+  ```
 - Holm makes a real vault with `KdfParams::DEFAULT`, so create and unlock take about a
   second each.
 - Use only fake data, for example the login below.
@@ -64,7 +70,7 @@ checked from a terminal or by test instead:
 
 ## Run 2: steps for a person at the Mac
 
-Start: `cargo run -p holm-gui --locked` (default path, `KdfParams::DEFAULT`).
+Start: `cargo run -p holm-gui --locked` (default path), or with `-- --vault "$V"` as above (`KdfParams::DEFAULT`). Use the same `$V` for the second copy and the folder check.
 
 Create
 
@@ -93,32 +99,37 @@ Add and copy
 Lock and unlock
 
 - [ ] "Lock" goes to the unlock screen with "Locked."
-- [ ] A wrong password three times: the third try is followed by a live wait ("Too
-  many tries. Try again in N s.") and the Unlock button stays disabled until it ends.
+- [ ] A wrong password three times: the wait after the third is only about 2 s ("Too
+  many tries. Try again in N s."), and the Unlock button stays disabled until it ends.
+  A fourth wrong try at once shows a longer wait.
 - [ ] The right password opens the vault and the login is there.
 - [ ] Minimise the window with Cmd+M, wait 2 s, bring it back from the Dock: it is
   locked, with "Locked when the window was minimised." (Holm reads this from AppKit's
   `isMiniaturized`; headless tests can only drive a fake window.)
+- [ ] Run the two minimise steps (Cmd+M, then the yellow button; the Lock line reads
+  "minimised") straight after the merge and log the result in the Runs table.
 - [ ] Unlock, then minimise with the yellow button in the title bar, wait 2 s, bring it
   back: it is locked the same way.
-- [ ] Unlock and leave Holm alone for the auto-lock time from the settings (5 minutes
-  by default). The amber line "Locking in N s because of no activity." shows 30 s
+- [ ] Unlock and leave Holm alone for the auto-lock time (5 minutes, the default;
+  Phase 3 has no settings screen). The amber line "Locking in N s because of no activity." shows 30 s
   before, then it locks with "Locked after 5 minutes without use."
 
 One window only
 
 - [ ] With Holm open, start a second copy in another terminal
-  (`cargo run -p holm-gui --locked`). It shows "Holm is already open. Close the other
+  (`cargo run -p holm-gui --locked -- --vault "$V"`, same `$V`). It shows "Holm is already open. Close the other
   window first." and no password field.
 - [ ] Close the second window, then the first.
 
 After quitting
 
-- [ ] `ls -la ~/Library/Application\ Support/Holm` shows only `holm.vault` and
+- [ ] `ls -la "$(dirname "$V")"` shows only `holm.vault` and
   `holm.lock`, the folder `drwx------`, both files `-rw-------` (see "Before you
   start").
 - [ ] `ls ~/Library/Saved\ Application\ State | grep -i holm` prints nothing.
 - [ ] The title bar said "Holm" the whole time, never an item title.
 - [ ] Activity Monitor, Network tab: Holm (`holm-gui`) sent and received 0 bytes.
+
+Clean up: delete the fake-data vault with `rm -r "$(dirname "$V")"` for a throwaway one, or the `Holm` folder at the default path if it holds only fake data.
 
 Sign off: ______ (name, date, macOS version, chip)
