@@ -149,13 +149,16 @@ impl PasswordSpec {
     /// The generator is uniform over exactly that set, so this is the real figure.
     ///
     /// Returns 0.0 for a spec that cannot be valid: a length outside 12 to 128, minimums
-    /// that add up to more than the length, or no character sets. The input is checked
-    /// before any counting, so a huge `length` is cheap.
+    /// that add up to more than the length, no character sets, or a minimum for a class
+    /// that is switched off (nothing can meet it). The input is checked before any
+    /// counting, so a huge `length` is cheap.
     #[must_use]
     pub fn entropy_bits(&self) -> f64 {
         if !(MIN_PASSWORD_LEN..=MAX_PASSWORD_LEN).contains(&self.length)
             || u16::from(self.min_digits) + u16::from(self.min_symbols) > self.length
             || self.pool().is_empty()
+            || (self.min_digits > 0 && !self.digits)
+            || (self.min_symbols > 0 && !self.symbols)
         {
             return 0.0;
         }
@@ -716,6 +719,22 @@ mod tests {
             ..PasswordSpec::DEFAULT
         };
         assert!(spec.entropy_bits().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn entropy_bits_is_zero_when_a_minimum_needs_a_disabled_class() {
+        let no_digits = PasswordSpec {
+            digits: false,
+            min_digits: 1,
+            ..PasswordSpec::DEFAULT
+        };
+        assert!(no_digits.entropy_bits().abs() < f64::EPSILON);
+        let no_symbols = PasswordSpec {
+            symbols: false,
+            min_symbols: 1,
+            ..PasswordSpec::DEFAULT
+        };
+        assert!(no_symbols.entropy_bits().abs() < f64::EPSILON);
     }
 
     #[test]
