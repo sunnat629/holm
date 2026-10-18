@@ -23,6 +23,7 @@ pub mod window;
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    #![forbid(unsafe_code)]
     //! Helpers shared by this crate's unit tests.
 
     use std::sync::{Mutex, MutexGuard, PoisonError};

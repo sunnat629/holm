@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Where the vault lives by default, and the folder that holds it.
 //!
 //! On macOS the vault is `~/Library/Application Support/Holm/holm.vault` (spec §8.0).
@@ -153,7 +154,9 @@ mod tests {
 
     #[test]
     fn default_path_is_macos_only() {
-        if !cfg!(target_os = "macos") {
+        if cfg!(target_os = "macos") {
+            assert_eq!(default_vault_path(), from_home(std::env::var_os("HOME")));
+        } else {
             assert_eq!(default_vault_path(), None);
         }
     }

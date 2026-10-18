@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! [`InstanceLock`]: one Holm at a time per vault folder.
 //!
 //! Two Holm windows on one vault could overwrite each other's saves (spec §9). At
@@ -82,17 +83,7 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
         Err(e) if e.kind() == ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-        if let Some(flag) = crate::fs_store::O_NONBLOCK {
-            options.custom_flags(flag);
-        }
-    }
-    let file = options.open(path)?;
+    let file = lock_open_options().open(path)?;
     let opened = file.metadata()?;
     let named = fs::symlink_metadata(path)?;
     if !opened.is_file() || !named.file_type().is_file() {
@@ -106,6 +97,26 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
         }
     }
     Ok(file)
+}
+
+/// How the lock file is opened: write, create, never truncate. On Unix: mode 0600,
+/// non-blocking (a swapped-in FIFO cannot hang the open) and `O_NOFOLLOW` (a symlink
+/// swapped in after the `lstat` is refused by the open itself, not only by the
+/// dev+inode check after it).
+fn lock_open_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        let flags =
+            crate::fs_store::O_NONBLOCK.unwrap_or(0) | crate::fs_store::O_NOFOLLOW.unwrap_or(0);
+        if flags != 0 {
+            options.custom_flags(flags);
+        }
+    }
+    options
 }
 
 /// The error for a lock path that is not a regular file.
@@ -192,7 +203,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn fifo_lock_file_refused_without_blocking() {
+    fn fifo_lock_file_refused() {
         let dir = tempfile::tempdir().unwrap();
         let fifo = dir.path().join(LOCK_FILE_NAME);
         crate::test_support::make_fifo(&fifo);
@@ -200,5 +211,23 @@ mod tests {
             acquire(dir.path()).err(),
             Some(LockError::Io(ErrorKind::InvalidInput))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_open_options_do_not_follow_a_symlink() {
+        // The lstat in `open_lock_file` catches a symlink that is already there; this
+        // checks the open itself refuses one swapped in after that check.
+        if crate::fs_store::O_NOFOLLOW.is_none() {
+            eprintln!("SKIP: O_NOFOLLOW value not known on this target");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, b"x").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(lock_open_options().open(&link).is_err());
+        assert!(lock_open_options().open(&target).is_ok());
     }
 }

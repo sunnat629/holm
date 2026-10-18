@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! [`FsStore`]: the vault as one file on disk, with durable, crash-safe writes.
 //!
 //! A save never writes into the vault file itself. It writes a new temp file in the
@@ -141,6 +142,36 @@ pub(crate) const O_NONBLOCK: Option<i32> = if cfg!(any(
     )
 )) {
     Some(0o4000)
+} else {
+    None
+};
+
+/// `O_NOFOLLOW`, or `None` where its value is not known here (std only, no `libc`).
+/// With it, opening a path whose last part is a symlink fails instead of following
+/// it. [`crate::lock`] adds it to the lock file's open.
+#[cfg(unix)]
+pub(crate) const O_NOFOLLOW: Option<i32> = if cfg!(any(
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)) {
+    Some(0x0100)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(target_arch = "x86_64", target_arch = "x86")
+)) {
+    Some(0o400000)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64"
+    )
+)) {
+    Some(0o100000)
 } else {
     None
 };
