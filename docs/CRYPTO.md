@@ -331,8 +331,8 @@ Known gaps:
   volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
 - Windows write-through and the Windows directory sync wait for Phase 5. The lock that
   stops two Holm processes opening the same vault (`holm.lock`, see below) arrived in
-  Phase 3, but only `holm-gui` takes it; `FsStore` and `Session` do not, so `holm-cli`
-  must take it too (Phase 4).
+  Phase 3. `holm-gui` and `holm-cli` (Phase 4) both take it before asking for a password;
+  `FsStore` and `Session` do not, so any new client must take it too.
 
 ## The macOS app (Phase 3)
 
@@ -392,6 +392,39 @@ Known gaps:
   Phase 5 screen must say the new password may already be needed. Phase 5.
 - 206 `cargo vet` exemptions cover the GUI crates (note `gui-only, pre-release; audit or
   replace before Phase 6`). They must be audited or replaced before Phase 6.
+
+## The command line (Phase 4)
+
+`holm-cli` is one-shot: each command takes `holm.lock`, asks for the master password,
+does its work and locks the vault on exit. There is no background agent.
+
+- Passwords are read only from `/dev/tty`, never from argv, an environment variable,
+  stdin or a pipe. With no controlling terminal the command stops with fixed text. A
+  flag that looks like a password flag is a usage error that never repeats its value.
+- `holm_platform::tty` puts the terminal in raw mode with echo off (safe rustix termios
+  API, no `unsafe`) and edits the line itself into one pre-sized `Zeroizing` buffer that
+  never grows. The bytes are moved into the `String` without a copy and on into
+  `MasterPassword`. The single-byte read buffer is wiped.
+- A guard restores the saved terminal mode on return, on error and on panic. After a
+  refusal or Ctrl-C it flushes unread input first, so the rest of a pasted password
+  does not reach the shell. `ISIG` is off, so Ctrl-C arrives as a byte and takes the
+  same path.
+- `get` prints every secret field as `(hidden)`, never its value or length. Display text
+  goes through a filter that replaces terminal control and bidi characters.
+- Messages are fixed text: never a path, a value or a library message.
+
+Known gaps:
+
+- A process killed by a signal from outside (`kill`, SIGTERM, SIGHUP) skips the guard
+  and can leave the terminal with echo off until `stty sane`. Handling signals would
+  need `unsafe` or a new crate. Phase 5.
+- The unlock throttle lives in the `Session`, so it starts fresh in every process, and
+  three tries in one command never reach its first wait. A script that runs `holm` in a
+  loop is limited only by Argon2 and the instance lock: the same bound as an attacker
+  with a copy of the file.
+- The terminal driver, the shell's line discipline before raw mode starts, and the
+  kernel's tty buffers can hold typed bytes Holm cannot wipe.
+- `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
 
 ## Not claimed
 

@@ -473,7 +473,7 @@ criteria = "safe-to-deploy"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2025-01-08"
 end = "2026-12-31"
-notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+notes = "Desktop clients (holm-gui dependency graph since Phase 3 Task 1; holm-cli via holm-platform's tty feature since Phase 4 Task 5, safe rustix termios API only). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.linux-raw-sys]]
 criteria = "safe-to-run"
@@ -571,7 +571,7 @@ criteria = "safe-to-deploy"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2025-01-21"
 end = "2026-12-31"
-notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+notes = "Desktop clients (holm-gui dependency graph since Phase 3 Task 1; holm-cli via holm-platform's tty feature since Phase 4 Task 5, safe rustix termios API only). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.rustix]]
 criteria = "safe-to-run"

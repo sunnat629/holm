@@ -159,7 +159,7 @@ notes = "gui-only, pre-release; audit or replace before Phase 6"
 [[exemptions.bitflags]]
 version = "2.13.2"
 criteria = "safe-to-deploy"
-notes = "gui-only, pre-release; audit or replace before Phase 6"
+notes = "desktop-only (holm-gui, and holm-cli via rustix), pre-release; audit or replace before Phase 6"
 
 [[exemptions.block2]]
 version = "0.5.1"

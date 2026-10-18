@@ -4,7 +4,9 @@
 //! [`paths`], where the vault lives by default, [`lock`], one Holm at a time per
 //! vault folder, and [`private_file`], the owner-only export file and the capped read
 //! of an import file. All four use the standard library only. On macOS the optional
-//! `gui-window` feature adds `window`, the window's minimised state from AppKit.
+//! `gui-window` feature adds `window`, the window's minimised state from AppKit. The
+//! optional `tty` feature (holm-cli) adds [`tty`]: the no-echo password prompt on the
+//! controlling terminal, through rustix's safe termios API.
 
 // No `unsafe` in the default build: everything there uses safe std APIs, and `unsafe`
 // stays forbidden. The `gui-window` feature on macOS lowers this to `deny` so that the
@@ -20,6 +22,8 @@ pub mod fs_store;
 pub mod lock;
 pub mod paths;
 pub mod private_file;
+#[cfg(feature = "tty")]
+pub mod tty;
 #[cfg(all(feature = "gui-window", target_os = "macos"))]
 pub mod window;
 

@@ -39,6 +39,7 @@ security, three exercises, and what to read next in
 | 30 | [Parsing untrusted text](30-parsing-untrusted-text.md): byte offsets instead of `char` indices in a `&str`, a small state machine with `match`, measuring before allocating so a wiping buffer never grows, errors that carry a line and never content, and a property test against an oracle crate. |
 | 31 | [Hostile input, all or nothing](31-hostile-input-all-or-nothing.md): a `HashMap` header map that stores positions, never text, `mem::take` out of a wiping buffer, an undo closure that makes an import all or nothing, bad rows reported by number only, and why Holm never guesses where a secret goes. |
 | 32 | [Building output safely](32-building-output-safely.md): measure-then-fill so a growing `String` leaves no copy of a password behind, RFC 4180 quoting with `"` doubled, `OpenOptions::create_new` and `OpenOptionsExt::mode(0o600)` for a file nobody else can read, a read that refuses FIFOs and growing files, and why Holm does not escape spreadsheet formulas. |
+| 33 | [A CLI without a framework](33-a-cli-without-a-framework.md): `OsString` and `args_os`, matching on slices of arguments, a `dyn Terminal` trait object so tests swap in a fake, RAII guards that restore the terminal in `Drop`, and `ExitCode` instead of `process::exit`. |
 
 ## Side tracks
 
