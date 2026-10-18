@@ -88,7 +88,7 @@ let bits = valid_count.log2();
 
 - Entropy in bits `b` means an attacker needs up to 2^`b` guesses: a pool of 94 characters gives `log2(94)`, about 6.55 bits per character.
 - `f64::from(u16)` converts without loss. Turning a `usize` into `f64` needs `as`, which clippy flags, so we allow it on that one line.
-- `length * log2(pool)` is only right with no minimums. With "at least 1 digit" we redraw until it holds, so the real count is the number of strings that meet the minimums, and its `log2` is slightly lower (about 130.93 bits for the default, not 131.09). We count them with a small sum in `f64`; 95^128 is about 2^841 and fits.
+- `length * log2(pool)` is only right with no minimums. With "at least 1 digit" we redraw until it holds, so the real count is the number of strings that meet the minimums, and its `log2` is slightly lower (about 130.93 bits for the default, not 131.09). We count them with a small sum in `f64`; 94^128 is about 2^839 and fits. `entropy_bits` returns 0.0 for a length outside 12 to 128 or minimums above the length, so it never builds a big table for bad input.
 - A spec below 64 bits by that exact count is refused. A spec whose minimums would make all 10 000 tries fail with more than a 1 in a billion chance is refused too.
 
 In Kotlin you'd write: `kotlin.math.log2(94.0)`.

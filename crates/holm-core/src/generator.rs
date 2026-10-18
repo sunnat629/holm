@@ -58,8 +58,9 @@ pub enum GeneratorError {
     /// A minimum was set for a character set that is turned off.
     #[error("a minimum is set for a disabled character set")]
     RequiredSetDisabled,
-    /// The minimums add up to more than half the length.
-    #[error("the required digits and symbols are more than half the length")]
+    /// The minimums are too high for this length: more than half of it, or so high that
+    /// a random draw would almost never meet them.
+    #[error("the minimum counts are too high for this length")]
     TooManyRequired,
     /// The spec would give fewer than 64 bits of entropy.
     #[error("the spec gives less than 64 bits of entropy")]
@@ -146,9 +147,16 @@ impl PasswordSpec {
 
     /// Entropy in bits: `log2` of the number of strings that meet the minimums.
     /// The generator is uniform over exactly that set, so this is the real figure.
+    ///
+    /// Returns 0.0 for a spec that cannot be valid: a length outside 12 to 128, minimums
+    /// that add up to more than the length, or no character sets. The input is checked
+    /// before any counting, so a huge `length` is cheap.
     #[must_use]
     pub fn entropy_bits(&self) -> f64 {
-        if self.pool().is_empty() {
+        if !(MIN_PASSWORD_LEN..=MAX_PASSWORD_LEN).contains(&self.length)
+            || u16::from(self.min_digits) + u16::from(self.min_symbols) > self.length
+            || self.pool().is_empty()
+        {
             return 0.0;
         }
         self.counts().0.log2()
@@ -156,7 +164,7 @@ impl PasswordSpec {
 
     /// `(valid, total)` as f64: the number of strings of this length that meet the
     /// minimums, and the number of all strings from the pool. The largest total is
-    /// about 2^841, well inside the f64 range.
+    /// 94^128, about 2^839, well inside the f64 range.
     fn counts(&self) -> (f64, f64) {
         let pool = self.pool();
         let digits = pool.iter().filter(|c| c.is_ascii_digit()).count();
@@ -688,6 +696,26 @@ mod tests {
             generate_password(&spec).err(),
             Some(GeneratorError::TooManyRequired)
         );
+    }
+
+    #[test]
+    fn entropy_bits_is_zero_for_huge_length() {
+        let spec = PasswordSpec {
+            length: u16::MAX,
+            ..PasswordSpec::DEFAULT
+        };
+        assert!(spec.entropy_bits().abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn entropy_bits_is_zero_when_minimums_exceed_length() {
+        let spec = PasswordSpec {
+            length: 12,
+            min_digits: 10,
+            min_symbols: 10,
+            ..PasswordSpec::DEFAULT
+        };
+        assert!(spec.entropy_bits().abs() < f64::EPSILON);
     }
 
     #[test]
