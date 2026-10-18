@@ -862,6 +862,40 @@ mod tests {
     }
 
     #[test]
+    fn change_password_replace_fail_and_readback_fail_adopts_new_keys() {
+        let (mut s, _) = created();
+        let before = stored(&s);
+        // The read before the write works; `replace` fails and changes nothing; the
+        // read-back after it fails, so "unchanged" cannot be proven.
+        s.store.fail_next_write = Some(StoreError::Io(ErrorKind::StorageFull));
+        s.store.fail_reads_after_failed_replace = true;
+        assert_eq!(
+            s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR),
+            Err(CoreError::PasswordChangeUncertain(StoreError::Io(
+                ErrorKind::StorageFull
+            )))
+        );
+        assert!(s.store().fail_reads, "the read-back failed");
+        assert_eq!(s.store().bytes.as_deref(), Some(&before[..]));
+        // In memory: the new keys, and the session is dirty.
+        assert!(s.is_dirty());
+        assert_eq!(s.check_password(&pw(NEW_PW)), Ok(()));
+        assert_eq!(s.check_password(&pw(PW)), Err(CoreError::WrongPassword));
+        // With the store working again, the next save writes under the new password.
+        s.store.fail_reads_after_failed_replace = false;
+        s.store.fail_reads = false;
+        s.save().unwrap();
+        assert!(!s.is_dirty());
+        let file = stored(&s);
+        assert_ne!(file, before);
+        assert!(envelope::open(&file, &pw(PW)).is_err());
+        let _ = open_file(&file, NEW_PW);
+        s.lock();
+        assert_eq!(s.unlock(&pw(PW)), Err(OPAQUE));
+        s.unlock(&pw(NEW_PW)).unwrap();
+    }
+
+    #[test]
     fn backup_opens_with_same_password() {
         let (mut s, _) = created();
         let before = stored(&s);

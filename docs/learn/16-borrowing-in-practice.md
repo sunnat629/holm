@@ -60,7 +60,7 @@ A doc comment can hold a code block marked `compile_fail,E0624`. The test passes
    Check: `cargo test -p holm-core empty_phrase_on_update_keeps_phrase --locked`
 2. Make `GatedSecret::expose` `pub` and run the doctests. Which ones fail, and with what message? Undo the change.
    Check: `cargo test -p holm-core --doc GatedSecret --locked`
-3. In `delete_forever`, add `let _ = data.items.len();` after the `commit_or_undo` call and build. Read the error (`cannot borrow *self as mutable more than once at a time`): `data` borrows `self`, and `commit_or_undo` needs `self` again, so `data` must be finished before the call. Remove the line again. (Removing `move` from the undo closures does not fail here, because `commit_or_undo` takes `impl FnOnce` with no `'static` bound; `move` is only a habit that makes the ownership visible.)
+3. In `delete_forever`, replace the last line with three: `let result = self.commit_or_undo(move |d| d.items.insert(pos, item));`, then `let _ = data.items.len();`, then `result`. Build. The compiler says ``error[E0499]: cannot borrow `*self` as mutable more than once at a time``. It marks `self.unlocked_mut()` (held by `data`) as the first mutable borrow, `self.commit_or_undo` as the second, and `data.items.len()` as "first borrow later used here". Without that later use, the borrow in `data` ends before the call, so the original code compiles. Undo the change. (Removing `move` from that closure also compiles. The closure takes `item` by value anyway, because `insert` consumes it. It may borrow `pos`, because `commit_or_undo` takes `impl FnOnce` with no `'static` bound and is done with the closure before it returns. Here `move` only makes the ownership visible.)
    Check: `cargo build -p holm-core --locked`
 
 ## Read next

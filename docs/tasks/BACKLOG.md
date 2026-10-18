@@ -40,6 +40,7 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 - `--all-features` release guard (`test-vectors` and `fuzzing` must not ship). Closes in Phase 6.
 - Linux and Windows are untested until Actions returns. Trigger: Actions re-enabled.
 - Upstream `chacha20` does not wipe its HChaCha20 subkey. Track an upstream issue or PR; revisit on each chacha20 bump.
+- NFD stale-temp: a stale temp file left by a name that differs only by Unicode normalisation (NFD) is not found by the stale-temp sweep. Trigger: Phase 5 platform hardening.
 - `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.
 - Remove the oracle-only `cargo audit` ignores (RUSTSEC-2026-0367, -0368, -0369, zip 8.6.0). Trigger: `libsodium-sys-stable` moves to zip 9.
 - Optional: a separate `deny.toml` for `fuzz/` and `oracle/`. Trigger: if their dependency graphs drift from the product's.
