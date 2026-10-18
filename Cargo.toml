@@ -31,6 +31,7 @@ blake2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 zeroize = { version = "1.9", features = ["derive"] }
 getrandom = "0.4"
 unicode-normalization = "0.1"
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
 thiserror = "2"
 subtle = "2.6"
 

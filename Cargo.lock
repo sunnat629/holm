@@ -273,9 +273,12 @@ version = "0.0.0"
 dependencies = [
  "holm-crypto",
  "proptest",
+ "serde",
+ "serde_json",
  "static_assertions",
  "subtle",
  "thiserror",
+ "unicode-normalization",
  "zeroize",
 ]
 

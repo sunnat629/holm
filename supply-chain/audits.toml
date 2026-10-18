@@ -225,21 +225,21 @@ notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in fu
 
 [[audits.serde]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_core]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_derive]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
+notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
 
 [[audits.serde_json]]
 who = "Holm maintainers (AI-assisted audit)"
