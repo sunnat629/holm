@@ -3,7 +3,7 @@ Old = harbor/harbor-ui/ (the earlier Kotlin project; path relative to its repo r
 
 | Screen | Old Compose source | Change and why | Spec |
 |---|---|---|---|
-| Create vault | unlock/UnlockScreen.kt, CreateUnlockCopy.kt | Char-class checklist replaced by strength meter; weak refused (zxcvbn>=3, len>=12). Sync/cloud copy dropped. Path chooser added. | passwords, GUI first run |
+| Create vault | unlock/UnlockScreen.kt, CreateUnlockCopy.kt | Char-class checklist replaced by strength meter; weak refused (score 4, 1e10 guesses; 12 to 1,024 chars). Sync/cloud copy dropped. Path chooser added. | passwords, GUI first run |
 | Open or create file | none (old had one fixed vault) | New. One vault at a time, open/create file anywhere, native dialog. | vault paths |
 | Unlock + errors | UnlockScreen.kt | "N of M attempts left" and minutes lockout replaced by in-memory wait (3 fails, 2/4/8..60 s). Added cost-rejected message (not "wrong password") and working state on worker thread. | throttle, KDF cost bounds |
 | Locked | HarborApp.kt overlays | No separate Locked screen. "Locking vault"/"Restart required" overlays replaced by the unlock screen with a reason line; data dropped from memory. | auto-lock, GUI (locked state shows only the unlock screen) |

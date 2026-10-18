@@ -82,7 +82,7 @@ All integers are little-endian.
 
 ## Opening a vault
 
-`envelope::open` does these steps, in this order:
+`envelope::open` (crate-private; callers outside holm-core use `Session`) does these steps, in this order:
 
 1. `Header::parse`: file size at most 64 MiB, then magic, version, flags, KDF id,
    reserved bytes, the cost policy, and exact framing (`body_len` must match the bytes
@@ -177,6 +177,123 @@ The `From` conversions into `VaultError` are written by hand instead of with thi
 `verify_password` derives the KEK again, unwraps the DEK and compares it with the DEK
 held in `VaultKeys` using `subtle::ConstantTimeEq`.
 
+## Master password strength
+
+`holm_core::strength::check` decides whether a new master password is accepted. It is
+Holm's own code (no production dependency), a port of zxcvbn's guess model:
+
+- The NFC form must have from 12 to 1,024 `char`s, and the estimate must reach 1e10
+  guesses (score 4, zxcvbn's top band). There is no override. Score 3 (1e8) was the
+  first rule; it accepted word + year + symbol shapes such as `Summer2026!!`, which
+  rule-based cracking reaches in far fewer guesses, so the COS raised it to score 4.
+- Input over 1,024 characters (after NFC) is refused with fixed text before it is scored.
+  Input over 4,096 raw characters is refused first, before NFC copies it, so a huge paste
+  costs one pass to count it (about 10 ms for 1,000,000 characters).
+- Pieces it recognises: words from zxcvbn's MIT frequency lists (30,000 leaked passwords,
+  30,000 English Wikipedia words, 19,160 TV and film words, 10,000 surnames, 4,695 first
+  names; `NOTICE` has the provenance and SHA-256, and `scripts/ci-local.sh` checks the
+  hash), in any case, reversed or with l33t symbols; the word `holm` at rank 1; keyboard
+  walks on QWERTY, Dvorak and two keypads; repeats, found at every start inside a run;
+  letter and digit sequences; years and dates.
+- The estimate is the cheapest way to build the whole password from those pieces, with
+  any gap priced as random characters (`10^length`), using zxcvbn's formula
+  `l! x product + 10000^(l-1)`. Holm finds that minimum exactly for the pieces it found.
+  Every matcher aims to find at least what zxcvbn finds and price it no higher, but that
+  is checked by tests, not proved: a piece Holm misses can make its estimate higher than
+  zxcvbn's. The first version of the repeat matcher did exactly that (`yoyohellohello`
+  was accepted), and the generated oracle corpus below now covers that shape.
+- Work is bounded. Two bounds cannot change the result: at most 4 pieces, and random
+  gaps of at most 10 characters (more pieces or a longer gap cost over 1e10 on their
+  own). One errs towards refusing: after 16,384 characters of repeat units have been
+  priced in depth, later units count as 1 guess (ordinary passwords use a tiny
+  fraction of it; only long, crafted repeats run it out). One can miss a pattern: the
+  dictionary search stops after 4,096 steps per start position (realistic input never
+  reaches it). Repeat units up to 512 characters
+  are searched, which is every unit with two copies in 1,024 characters. The worst case
+  measured at 1,024 characters is about 28 ms and 12 MB (release build, Apple silicon).
+- Years are priced from a fixed reference year (2026), so results never depend on the
+  clock. Years after 2026 get the minimum price.
+- Feedback is fixed text chosen from the cheapest split; it never contains the password.
+- A dev-only test (`crates/holm-core/tests/strength_oracle.rs`) runs the `zxcvbn` crate
+  as an oracle on two corpora under 100 characters: about 12,000 weak candidates built
+  from word lists and suffixes, and 6,000 generated compositions from a fixed seed
+  (doubled words, prefix + repeat, walks and dates in the middle, l33t + year,
+  capitalised word + digits + symbols, three-piece mixes). Every candidate zxcvbn scores
+  below 4 must be refused, and Holm's score must never be above zxcvbn's. Strong
+  passphrases, random strings and a few passwords just over zxcvbn's 1e10 line must be
+  accepted, and the generator's default password and passphrase must pass.
+
+Limits, honestly: this is an estimate of one attacker model, not a proof. The lists are
+English-centric, so words from other languages, local names and newer leaks are priced as
+random characters. The oracle bounds disagreement with zxcvbn on its corpora only. Score
+4 still accepts some guessable shapes, for example word + date + word, because zxcvbn's
+model prices them just over 1e10. The model also prices a repeat by its copy count, so a
+long run of copies (a 10-character date repeated 100 times) can score 4 although an
+attacker who tries repeats would find it sooner; the 1,024-character limit caps this.
+
+## The vault body (schema v1)
+
+The padded plaintext is the body: inside the padding, a `u16` little-endian schema
+version (1), then the `postcard` encoding of the settings, the categories, the items and the next category id.
+`VaultData::decode` treats it as hostile even though the AEAD has authenticated it,
+because a buggy or newer writer is enough to produce bad bytes:
+
+- a newer schema is refused (`NewerSchema`), never rewritten, so its fields are not lost;
+  version 0 is `UnknownSchema`;
+- every string and list length is capped while parsing (a string at most 64 KiB, the
+  item and category counts at their limits), and no list reserves more than 1024 slots
+  up front, so a huge declared length costs no memory;
+- trailing bytes are refused;
+- every field rule and cross-check (unique ids and names, known categories, the next
+  category id above every id in use) runs again before anything is returned;
+- out-of-range settings are clamped toward strict, not refused, so a vault never becomes
+  unopenable over a setting.
+
+`VaultData::encode` runs the same checks first, so Holm never writes a body it would
+refuse to open. A property test (`body_roundtrip_any`) checks that any valid body
+survives `decode(encode())`, and the `decode_body` and `open_fixed_key` fuzz targets
+run the decoder on hostile bytes with a 64 MiB per-allocation limit.
+
+## Storing the file
+
+`VaultStore` is the only way the core touches storage. Its contract: `read` refuses a
+file over 64 MiB before reading any of it; `replace` is atomic against a crash (old bytes
+or new bytes, never a mix); `create_new` never overwrites; `remove_stale_temps` removes
+only the store's own temp files.
+
+`holm-platform::FsStore` keeps it on disk with a durable save: write a new temp file
+(`<file>.tmp-<16 hex>`, exclusive create, mode 0600 on Unix) in the same directory, sync
+it, rename it over the vault, then sync the directory. The vault must be a regular file;
+a symlink is refused, never followed. A `replace` error after the rename may leave the new
+bytes in place, so the session treats any `replace` error as "old or new" and stays dirty.
+Every change in a `Session` is saved at once. A change too large to save is undone in
+memory; after any other save error the change is kept and the session stays dirty, so a
+later save retries.
+
+## Unlock throttle
+
+`Session` keeps an in-memory throttle: two free failures, then waits of 2, 4, 8, 16 and
+32 s, then 60 s for every later failure, measured on the monotonic clock. Every unlock
+error counts, except a missing file and KDF costs refused on public bytes (neither runs
+Argon2). It also guards phrase reveal, password change and weakening a setting. The
+throttle slows a person at the keyboard. It does nothing against a stolen file: an
+attacker with a copy runs Argon2 offline, as fast as their hardware allows, so the
+Argon2 cost and the strength check are the real defence.
+
+## Recovery phrase gate
+
+A recovery phrase is stored as a `GatedSecret`, which has no public accessor.
+`Session::reveal_phrase` re-checks the master password through the throttle every time
+before it returns the phrase, so a UI bug cannot show one by accident.
+
+## Generator sampling
+
+The password, passphrase and username generators take every choice from OS randomness
+through `uniform_below`, which uses rejection sampling: a 32-bit draw in the biased tail
+is thrown away and drawn again, so no value is more likely than another. Minimum digit
+and symbol counts are met by redrawing the whole password, so the output is uniform over
+the passwords that meet the spec. There is no userspace PRNG to seed.
+
 ## Memory hygiene
 
 Wiped when dropped: the KEK, the DEK, the master password and its NFC bytes, the Argon2
@@ -194,12 +311,26 @@ Known gaps:
   can be swapped to disk by the OS while they are in use.
 - The upstream `chacha20` crate does not wipe its HChaCha20 subkey, so a short-lived copy
   can remain after each seal or open.
-- The `argon2` crate's own small temporaries (its BLAKE2b state and a 1 KiB stack
-  buffer) are not wiped.
+- `argon2` and BLAKE2b leave password-derived stack temporaries unwiped: 1 KiB blocks
+  in argon2's first-block init and in every compression (`r`, `q` and the result), the
+  64-byte `blake2b_long` outputs (one holds a copy of the KEK), and BLAKE2b's 128-byte
+  padded final block and its message words. The BLAKE2b hash state itself
+  (`Blake2bVarCore` and the block buffer inside `Blake2b512`) wipes on drop, because
+  Holm's direct `blake2` dependency turns on its `zeroize` feature.
 - Copies made before a secret reaches Holm's types (for example, the caller's `String`
   for the password, or the normaliser's scratch space) are outside our control.
 - The plaintext body passed to `create`, `reseal` and `rekey` belongs to the caller, who
   must wipe it.
+- The strength check wipes every heap buffer it derives from the candidate password
+  (characters, lower-cased copy, matches, search stack, split table), but like the rest of
+  Holm it cannot wipe stack slots and registers that briefly hold characters or prices.
+- The crash tests stop a child process with `exit` at each save step. That models a
+  killed process, not a power loss: what a disk does with data still in its cache when
+  power fails is not tested.
+- A directory sync that the volume does not support (some FAT, exFAT and network
+  volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
+- Windows write-through, the Windows directory sync and the file lock that stops two
+  Holm processes saving the same vault wait for Phase 5.
 
 ## Not claimed
 

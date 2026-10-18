@@ -77,13 +77,16 @@ impl KdfParams {
 ///
 /// The Argon2 work area (64 MiB to 1 GiB of password-derived data) is wiped
 /// before it is freed. It is not locked in RAM, so the OS may still swap it
-/// out while the derivation runs. The argon2 crate's own small temporaries
-/// (its BLAKE2b state and a 1 KiB stack buffer) are outside our control and
-/// are not wiped.
+/// out while the derivation runs. The BLAKE2b hash state inside argon2 wipes
+/// on drop (our direct `blake2` dependency turns on its `zeroize` feature).
+/// Stack temporaries are not wiped: 1 KiB blocks in argon2's block init and
+/// compression, the 64-byte `blake2b_long` outputs (one holds a copy of the
+/// KEK), and BLAKE2b's 128-byte padded final block and message words.
 ///
 /// # Errors
 /// Returns [`CryptoError::KdfParams`] if `params` break the policy, and
-/// [`CryptoError::Kdf`] if the work area cannot be allocated or Argon2 fails.
+/// [`CryptoError::OutOfMemory`] if the work area cannot be reserved, and
+/// [`CryptoError::Kdf`] if Argon2 fails.
 pub fn derive_kek(
     password: &MasterPassword,
     salt: &[u8; 32],
@@ -103,11 +106,11 @@ pub fn derive_kek(
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
 
     // We own the work area so we can wipe it: the argon2 crate frees its own
-    // without wiping. try_reserve_exact turns "not enough memory" into an
-    // error instead of aborting the process.
+    // without wiping. try_reserve_exact turns "not enough memory" into
+    // CryptoError::OutOfMemory instead of aborting the process.
     let mut area = Vec::new();
     area.try_reserve_exact(block_count)
-        .map_err(|_| CryptoError::Kdf)?;
+        .map_err(|_| CryptoError::OutOfMemory)?;
     area.resize(block_count, Block::default());
     let mut blocks = Zeroizing::new(area);
 
@@ -164,6 +167,22 @@ pub fn argon2id_raw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // argon2 hashes with `Blake2bVarCore` and `Blake2b512`. Our direct `blake2`
+    // dependency turns on its `zeroize` feature, so their state wipes on drop.
+    // `Blake2b512` has no `ZeroizeOnDrop` marker of its own, but its only two
+    // fields (the core wrapper and the block buffer) both have it. That layout
+    // comes from digest 0.11.3's `buffer_ct_variable!`, and these assertions
+    // would still pass if a new field appeared: re-check the macro on every
+    // digest or blake2 bump.
+    static_assertions::assert_impl_all!(blake2::Blake2bVarCore: zeroize::ZeroizeOnDrop);
+    static_assertions::assert_impl_all!(
+        blake2::digest::block_api::CtOutWrapper<blake2::Blake2bVarCore, blake2::digest::consts::U64>:
+            zeroize::ZeroizeOnDrop
+    );
+    static_assertions::assert_impl_all!(
+        blake2::digest::block_api::Buffer<blake2::Blake2bVarCore>: zeroize::ZeroizeOnDrop
+    );
 
     #[test]
     fn default_and_floor_are_valid() {

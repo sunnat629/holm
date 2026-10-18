@@ -227,19 +227,19 @@ notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in fu
 who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_core]]
 who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_derive]]
 who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
 
 [[audits.serde_json]]
 who = "Holm maintainers (AI-assisted audit)"
@@ -306,3 +306,311 @@ who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-run"
 delta = "1.0.21 -> 1.0.23"
 notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed for safe-to-run: float formatting rewrite with new NEON/SSE paths and table lookups using pointer adds and get_unchecked; empty asm! comments used as optimisation barriers only. build.rs now also reads OPT_LEVEL and prints a cfg, nothing else. No filesystem, network or process access. The SIMD and table-index unsafe was skimmed, not proven in bounds; not suitable as a safe-to-deploy basis."
+
+[[trusted.aho-corasick]]
+criteria = "safe-to-run"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2026-08-03"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.android_system_properties]]
+criteria = "safe-to-run"
+user-id = 1281 # Nicolas Silva (nical)
+start = "2026-08-05"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.cc]]
+criteria = "safe-to-run"
+trusted-publisher = "github:rust-lang/cc-rs"
+start = "2026-10-11"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.chrono]]
+criteria = "safe-to-run"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2026-06-04"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.deranged]]
+criteria = "safe-to-run"
+trusted-publisher = "github:jhpratt/deranged"
+start = "2026-10-13"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.either]]
+criteria = "safe-to-run"
+user-id = 539 # Josh Stone (cuviper)
+start = "2026-10-06"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.fancy-regex]]
+criteria = "safe-to-run"
+user-id = 308963 # Keith Hall (keith-hall)
+start = "2026-04-24"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.find-msvc-tools]]
+criteria = "safe-to-run"
+trusted-publisher = "github:rust-lang/cc-rs"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.futures-task]]
+criteria = "safe-to-run"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2026-08-11"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.futures-util]]
+criteria = "safe-to-run"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2026-08-11"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.iana-time-zone]]
+criteria = "safe-to-run"
+trusted-publisher = "github:strawlab/iana-time-zone"
+start = "2026-01-28"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.itertools]]
+criteria = "safe-to-run"
+user-id = 1442 # Jack Wrenn (jswrenn)
+start = "2024-12-31"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.js-sys]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.lazy_static]]
+criteria = "safe-to-run"
+user-id = 55123 # rust-lang-owner
+start = "2026-10-01"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.libc]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:rust-lang/libc"
+start = "2026-10-02"
+end = "2027-10-17"
+notes = "Runtime FFI bindings used by getrandom and cpufeatures. 0.2.190 onward are published by crates.io trusted publishing from the official rust-lang/libc repository; earlier versions came from rust-lang-owner, whom isrg, mozilla, ariel-os and others trust. Replaces the libc exemption (Phase 2 Task 1, #13)."
+
+[[trusted.linux-raw-sys]]
+criteria = "safe-to-run"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-06-12"
+end = "2027-10-17"
+notes = "Dev-only: rustix -> tempfile -> proptest, never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.log]]
+criteria = "safe-to-run"
+user-id = 3204 # Ashley Mannix (KodrAus)
+start = "2026-08-22"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.pin-project-lite]]
+criteria = "safe-to-run"
+trusted-publisher = "github:taiki-e/pin-project-lite"
+start = "2026-02-27"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.powerfmt]]
+criteria = "safe-to-run"
+user-id = 15682 # Jacob Pratt (jhpratt)
+start = "2026-10-05"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.regex]]
+criteria = "safe-to-run"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2026-07-15"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.regex-automata]]
+criteria = "safe-to-run"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2026-08-04"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.rustix]]
+criteria = "safe-to-run"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-10-29"
+end = "2027-10-17"
+notes = "Dev-only: tempfile -> proptest (holm-core dev-dependency), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.rustversion]]
+criteria = "safe-to-run"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2026-07-07"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.serde]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
+
+[[trusted.serde_core]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
+
+[[trusted.serde_derive]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
+
+[[trusted.slab]]
+criteria = "safe-to-run"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2026-01-31"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.syn]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Build-time only: the parser behind zeroize_derive and thiserror-impl, whose generated impls are compiled into Holm. isrg, mozilla, ariel-os and others trust dtolnay. Replaces the syn 2 and 3 exemptions (Phase 2 Task 1, #13)."
+
+[[trusted.time]]
+criteria = "safe-to-run"
+trusted-publisher = "github:time-rs/time"
+start = "2026-08-01"
+end = "2027-10-18"
+notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.toml_edit]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2021-09-13"
+end = "2027-10-17"
+notes = "Dev-only: proc-macro-crate (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.toml_parser]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-10-17"
+notes = "Dev-only: toml_edit (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.web-sys]]
+criteria = "safe-to-run"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-09-25"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-core]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-implement]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-interface]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-result]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-strings]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2027-10-18"
+notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-sys]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2027-10-17"
+notes = "Dev-only: errno, rustix and tempfile (proptest dev tree); Holm's Windows RNG path does not use it. Never in a shipped binary, so safe-to-run only. isrg, zcash, mozilla, ariel-os and others trust kennykerr. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.winnow]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2023-02-22"
+end = "2027-10-17"
+notes = "Dev-only: toml_edit and toml_parser (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.zxcvbn]]
+criteria = "safe-to-run"
+user-id = 3357 # Josh Holmer (shssoichiro)
+start = "2026-04-24"
+end = "2027-10-18"
+notes = "Dev-only: test oracle for holm-core's own strength check (tests/strength_oracle.rs, Phase 2 Task 4, #16); a holm-core dev-dependency, built for tests only and never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."

@@ -93,8 +93,41 @@ gate() { # name, command...
   fi
 }
 
+# The EFF wordlist and the zxcvbn common-password lists are include_str!'d into the binary.
+# Their pinned SHA-256 values (also in NOTICE) must match, and a missing shasum or file fails
+# the gate, so this fails closed.
+wordlist_gate() {
+  command -v shasum >/dev/null 2>&1 || { echo "MISSING shasum" >&2; return 1; }
+  printf '%s\n' \
+    "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e  crates/holm-core/src/eff_large_wordlist.txt" \
+    "664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276  crates/holm-core/src/strength/frequency_lists.coffee" \
+    | shasum -a 256 -c -
+}
+gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
+# holm-core's `fuzzing` feature (seal and open with a raw KEK, no Argon2) only builds with
+# `--cfg fuzzing`, which cargo-fuzz sets by default. A normal build that turns the feature
+# on must stop with holm-core's compile_error!, and this gate proves it does.
+FUZZING_GUARD_MSG="the fuzzing feature is only for cargo-fuzz builds"
+fuzzing_guard_gate() {
+  local out
+  # Clear inherited RUSTFLAGS, so a shell that already sets --cfg fuzzing cannot hide a failure.
+  if out=$(env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS cargo check -p holm-core --features fuzzing --locked 2>&1); then
+    echo "holm-core built with --features fuzzing and no --cfg fuzzing" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -qF "$FUZZING_GUARD_MSG" || {
+    printf '%s\n' "$out" >&2
+    echo "the build failed, but not on the fuzzing guard" >&2
+    return 1
+  }
+}
+gate fuzzing-guard fuzzing_guard_gate
+# No other gate compiles holm-core's `fuzzing` module (test-only API for fuzz/) with clippy.
+# Its own target dir, so the changed RUSTFLAGS do not force the other gates to rebuild.
+gate clippy-fuzzing env RUSTFLAGS="--cfg fuzzing" CARGO_TARGET_DIR=target/cfg-fuzzing \
+  cargo clippy -p holm-core --features fuzzing --all-targets --locked -- -D warnings
 gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit
@@ -116,7 +149,8 @@ oracle_gate() {
 # gate is skipped, and only on an archive it has minisign-verified first. Remove the
 # ignores once libsodium-sys-stable moves to zip 9.
 # The fuzz targets are their own workspace (fuzz/Cargo.toml) and need nightly Rust and
-# cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target;
+# cargo-fuzz (libFuzzer), so the root gates do not cover them. A 30 s smoke run per target,
+# and any single allocation over 64 MiB counts as a crash (the decoders must stay bounded);
 # new corpus entries land in the git-ignored fuzz/corpus/, so the tree stays clean.
 # Dated nightly, so a gate result does not drift with the day. Bump it on purpose.
 FUZZ_NIGHTLY="nightly-2026-10-12"
@@ -132,12 +166,12 @@ fuzz_gate() {
   cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
   cargo audit --file fuzz/Cargo.lock || return 1
   local t seeds
-  for t in parse_header parse_header_structured unpad; do
+  for t in parse_header parse_header_structured unpad open_fixed_key decode_body; do
     mkdir -p "fuzz/corpus/$t"
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi
     # shellcheck disable=SC2086 # $seeds is empty or one path without spaces
-    cargo "+$FUZZ_NIGHTLY" fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 || return 1
+    cargo "+$FUZZ_NIGHTLY" fuzz run "$t" "fuzz/corpus/$t" $seeds -- -max_total_time=30 -malloc_limit_mb=64 || return 1
   done
 }
 case "$(uname -s)" in

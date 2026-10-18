@@ -81,9 +81,11 @@ Rules:
 | Randomness | OS random source | `getrandom` / `rand_core::OsRng` |
 | Wiping memory | Zero on drop | `zeroize`, `secrecy` |
 | Unicode cleanup | NFC normalisation | `unicode-normalization` |
-| Password strength | zxcvbn estimate | `zxcvbn` |
+| Password strength | zxcvbn's guess model (dictionaries, l33t, keyboard walks, repeats, sequences, dates, minimum-guesses split) | none: Holm's own `holm_core::strength`, with zxcvbn's MIT word lists embedded; the `zxcvbn` crate is a test-only oracle |
 
 The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in the local CI gate (`scripts/ci-local.sh`). GitHub Actions is manual-only for now (project decision, see §12); the cross-check moves back into Actions when Actions is re-enabled for the public repo. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
+
+- Security decision (2026-10-18, #16): the master password strength check is written in `holm-core`, not taken from the `zxcvbn` crate. The crate would add 17 unreviewed production crates to the vault-format crate, read the clock, and leave un-wiped copies of the master password (every substring, lowercase and l33t variants) in a long-running process. Holm's check ports zxcvbn's matchers and minimum-guesses search, embeds zxcvbn's MIT frequency lists (SHA-256 pinned and gated in `scripts/ci-local.sh`), keeps every derived buffer in `Zeroizing`, and accepts only an estimate of at least 1e10 guesses (score 4) plus 12 to 1,024 NFC characters. A dev-only test (`crates/holm-core/tests/strength_oracle.rs`) uses the `zxcvbn` crate as an oracle: on a fixed corpus and a fixed-seed generated corpus every password zxcvbn scores below 4 must be refused, and Holm's score is never above zxcvbn's. Cost if wrong: a bug in our estimator could accept a password zxcvbn would refuse outside the oracle corpus; the oracle bounds this but does not prove it.
 
 ### 5.2 Keys
 
@@ -136,6 +138,7 @@ One file, default name `holm.vault`. Little-endian, fixed-size header, exact fra
 - There's no CRC. The AEAD tag is the only integrity check, so nobody can mistake a CRC for authentication.
 - Opening order: check file size is at most 64 MiB; read and check the fixed header; check KDF costs against floor and ceiling; check length fields with checked arithmetic; only then run Argon2.
 - Body plaintext is `postcard` (serde) with its own schema version, padded to a multiple of 16 KiB so the file size reveals little about the item count.
+- Security decision: the public item types (`Item`, `ItemData`, `GatedSecret`, `Text`, `SecretText`, `Category`) have no `Serialize` or `Deserialize`. Only crate-private wire types in `holm-core` have serde, and each one re-runs every field rule when converting back to a domain value. This keeps any outside code from writing a secret to bytes or building an unchecked item from bytes. Cost if wrong: the body codec must go through the wire types, which is a little more code. `compile_fail` doctests guard it.
 - A wrong password and a tampered file give the same error. That's unavoidable and correct.
 
 The exact field layout is the builder's to finalise. The rules above are not.
@@ -147,7 +150,7 @@ The exact field layout is the builder's to finalise. The rules above are not.
 - **Recovery phrase**: title, phrase, notes. Showing or copying the phrase needs the master password again; it is never copied by default.
 - **Secure note**: title, body.
 - Shared fields: id (random 128-bit), category, favourite, created and updated times, trashed time.
-- **Categories**: built-in Personal, Work, Community, plus user-made. Rename and delete; deleting moves items to "Uncategorised".
+- **Categories**: built-in Personal, Work, Community, plus user-made. Rename and delete; deleting moves items to "Uncategorised". Clarified 2026-10-18 (owner answer, relayed by the COS): the built-in categories can be renamed and deleted exactly like user-made ones.
 - **Trash**: delete moves to trash. Restore, delete forever, empty trash. Because the whole body is rewritten on every save, deleted-forever items are gone from the new file (not from old copies or backups).
 - **Search**: title, username, URL, chain, category. Never secret fields.
 
@@ -156,14 +159,14 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 ## 8. Feature list (v1)
 
 0. **Vault location** (owner decision): one vault open at a time. A default path per OS (macOS `~/Library/Application Support/Holm/holm.vault`, Windows `%APPDATA%\Holm\holm.vault`, Linux `~/.local/share/Holm/holm.vault`), and the user can also create or open a vault file anywhere, such as a USB stick. The last-used path is remembered in the UI config file. No vault switcher or vault list in v1.
-1. Create vault, with strength check (zxcvbn score at least 3 and at least 12 characters). Weak passwords are refused outright; no override.
+1. Create vault, with strength check (score 4 on zxcvbn's scale, that is at least 1e10 estimated guesses from Holm's own estimator (§5.1), and from 12 to 1,024 characters of the NFC form). Weak passwords are refused outright; no override. Security decision (2026-10-18, COS, fix round 1 of #16): the line moved from score 3 (1e8) to score 4, because score 3 accepts word + year + symbol shapes such as `Summer2026!!` that rule-based cracking reaches quickly. Input over 1,024 characters is refused with fixed text before it is scored, so a huge paste cannot freeze the app; 1,024 is twice the longest repeat unit searched for, so every repeat is found. Cost if wrong: some people must pick a longer password; score 4 still accepts some guessable shapes (word + date + word).
 2. Unlock, lock, auto-lock on idle (default 5 min), lock on OS sleep and screen lock, lock on quit.
 3. Add, edit, view, search, sort and filter items across all four types. Categories, favourites, trash.
 4. Copy to clipboard with auto-clear (default 30 s). It clears only if the clipboard still holds what Holm put there. Recovery phrases are never copied without re-entering the master password.
 5. Generator: passwords (length, character sets, avoid look-alikes, minimum digits and symbols), passphrases (EFF large word list, separator, capitals, number), usernames. Uniform sampling by rejection, OS randomness only.
 6. Change master password (rotates DEK; section 5.2).
-7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards.
-8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool).
+7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards. Clarified 2026-10-18 (owner answer): an item keeps its source category when the name matches an existing category; otherwise it goes to Uncategorised. Import never creates categories. Clarified 2026-10-18 (owner answer, relayed by the COS): import skips a row that duplicates an existing item (same type, title, username and URLs after canonicalisation: trimmed, NFC and case-folded), and the import summary reports how many duplicates were skipped. Import also reads the `favourite`, `created` and `updated` columns when present (see 8).
+8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool). Clarified 2026-10-18 (owner answer, relayed by the COS): the CSV has the 11 import columns of item 7, then `favourite`, `created` and `updated`, so an export re-imports without losing favourites or dates.
 9. Settings: auto-lock time, clipboard time, lock on sleep, generator defaults. These security settings live **inside the encrypted body** (security decision), so nobody can weaken them by editing a file; making any of them weaker needs the master password again. A separate plain config file holds only harmless UI preferences (window size, theme, last vault path).
 10. CLI: `holm init`, `list`, `get`, `add`, `edit`, `rm`, `gen`, `import`, `export`, `passwd`, `shell`. Passwords are read from the terminal with no echo, never from flags. There is **no background agent** (security decision): each one-shot command asks for the password and opens the vault, and `holm shell` keeps one unlocked session inside a single interactive process, with the same throttle and auto-lock as the GUI. An agent would add IPC and client-authentication surface for little gain in v1.
 
@@ -250,18 +253,20 @@ The vault is not excluded from Time Machine or other backups (security decision)
 
 Each phase ends with a security review before merge.
 
+Reordered 2026-10-18 (owner approval): a thin, runnable macOS app comes early (Phase 3) and is hardened later (Phase 5). Search, import and export (planned as part of Phase 2) move to Phase 4 as "2b". The security floor holds in every phase: no plaintext on disk, secrets in wiping types, no logging of secrets, every unlock through the throttle.
+
 | Phase | Output | Done when |
 |---|---|---|
 | 0 | Repo, workspace, local CI gate on macOS (three OSes when Actions returns, see §12), deny/audit/vet gates, open-source files | `scripts/ci-local.sh` green on an empty workspace |
 | 1 | `holm-crypto` plus file format | All known-answer tests pass, fuzzers run, hostile fixtures rejected |
-| 2 | `holm-core`: vault, items, generator, import/export, throttle | Full round trip; crash tests pass |
-| 3 | `holm-cli` | Daily use possible from the terminal |
-| 4 | `holm-platform`: lock, durable save, clipboard, OS events, capture exclusion | Per-OS manual checklist passed on real machines |
-| 5 | `holm-gui` (egui) | All v1 features through the GUI |
-| 6 | Hardening and release | Internal review, long fuzz run, outside audit, signed installers, public repo |
+| 2 (2a) | `holm-core`: vault, items, trash, categories, settings, generator, strength check, throttle, session; plus a std-only durable `FsStore` in a new `holm-platform` crate (still `forbid(unsafe_code)`) so crash tests run on real files | Round trip without import/export; crash tests pass; fixed-key open and body fuzzers run |
+| 3 | macOS walking skeleton: a thin `holm-gui` (egui) on `holm-core` and `FsStore`: create (strength meter), unlock (throttle wait shown), item list, add/edit/view a login, copy password, lock, idle auto-lock | `cargo run -p holm-gui --locked` on macOS does create, add, lock, unlock, see item |
+| 4 | 2b: search/filter/sort, import, plaintext export; then `holm-cli` | Daily use possible from the terminal; import/export fuzzers run |
+| 5 | Platform hardening (clipboard auto-clear, memory locking, keychain/Touch ID option, OS lock events, capture exclusion, per-OS durable save: Windows write-through, directory sync, file lock) and GUI polish | All v1 features through a polished macOS app; per-OS manual checklist passed on real machines |
+| 6 | Release | Internal review, long fuzz run, signing certificate, outside audit, signed installers, public repo. Paid and public steps need the owner's approval |
 | Later | Android (`holm-ffi` + Compose), then iOS (SwiftUI) | Separate design |
 
-Team process, from the shared rules: grok CLI writes the code, Sonnet reviews UI, and Opus does the security review that gates every merge.
+Team process, from the shared rules: grok CLI writes the code, Sonnet reviews UI, and Opus does the security review that gates every merge. Review depth follows risk: Opus reviews crypto, password, file-format and `unsafe` work; Sonnet reviews mechanical work.
 
 ## 15. Left to the builder
 

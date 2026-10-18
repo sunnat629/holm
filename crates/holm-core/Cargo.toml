@@ -10,12 +10,28 @@ description = "Holm core: vault file format and key hierarchy"
 [lints]
 workspace = true
 
+[features]
+# Exposes `holm_core::fuzzing`: vault files sealed and opened with a raw KEK,
+# no Argon2 and a fixed salt. Only the test-only `fuzz/` workspace turns this
+# on. Never enable it in a shipping build: without `--cfg fuzzing` (set by
+# cargo-fuzz) the crate stops with a compile_error!.
+fuzzing = []
+
 [dependencies]
 holm-crypto.workspace = true
 thiserror.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
+serde.workspace = true
+postcard.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 static_assertions.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
+# Test only: tests/golden_vault.rs seals the golden vault with fixed nonces, which
+# holm-crypto's API never allows. Already in the graph through holm-crypto.
+chacha20poly1305.workspace = true
+# Test oracle only: tests/strength_oracle.rs checks Holm's own estimator against it.
+zxcvbn.workspace = true

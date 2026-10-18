@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-cli"]
+members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-platform", "crates/holm-cli"]
 # Separate workspaces (own lockfiles): libsodium oracle tests and cargo-fuzz.
 exclude = ["oracle", "fuzz"]
 
@@ -13,11 +13,14 @@ repository = "https://github.com/sunnat629/holm"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# cargo-fuzz sets `--cfg fuzzing`; holm-core checks it to forbid its `fuzzing` feature elsewhere.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.dependencies]
 # Internal crates
 holm-crypto = { path = "crates/holm-crypto", version = "0.0.0" }
 holm-core = { path = "crates/holm-core", version = "0.0.0" }
+holm-platform = { path = "crates/holm-platform", version = "0.0.0" }
 
 # Runtime
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
@@ -25,17 +28,25 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 # Direct dep only to unify features: chacha20poly1305 does not enable poly1305/zeroize
 # itself, so the MAC key and state would not be wiped. Keep this line.
 poly1305 = { version = "0.9", default-features = false, features = ["zeroize"] }
+# Direct dep only to unify features: argon2 does not enable blake2/zeroize itself,
+# so its BLAKE2b hash state would not be wiped. Keep this line.
+blake2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 zeroize = { version = "1.9", features = ["derive"] }
 getrandom = "0.4"
 unicode-normalization = "0.1"
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = "2"
 subtle = "2.6"
+zxcvbn = { version = "3", default-features = false }
 
 # Dev and test only
 proptest = "1.12"
 hex = "0.4"
 serde_json = "1"
 static_assertions = "1.1"
+# Throwaway directories for holm-platform tests. Already in the graph through proptest.
+tempfile = "3"
 
 # Argon2 is slow in unoptimised builds. Optimise dependencies even in dev
 # so tests that derive keys stay fast. Our own code stays easy to debug.

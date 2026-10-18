@@ -15,6 +15,10 @@ pub enum CryptoError {
     /// The key-derivation function itself failed.
     #[error("key derivation failed")]
     Kdf,
+    /// The memory for the key derivation could not be reserved. The work area is
+    /// reserved up front, so the process gets this error instead of aborting.
+    #[error("not enough memory for key derivation")]
+    OutOfMemory,
     /// Decryption failed. Deliberately says nothing about why: a wrong key, a
     /// changed ciphertext and a changed header must look the same.
     #[error("decryption failed")]

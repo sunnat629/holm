@@ -128,6 +128,13 @@ impl MasterPassword {
         MasterPassword(Zeroizing::new(s))
     }
 
+    /// Number of Unicode scalar values as typed, before any NFC normalising. One pass,
+    /// no copy. Used to refuse huge input before it is normalised.
+    #[must_use]
+    pub fn raw_char_count(&self) -> usize {
+        self.0.chars().count()
+    }
+
     /// The password in Unicode NFC form, as UTF-8 bytes, ready for the KDF.
     ///
     /// NFC makes "caf\u{e9}" and "cafe\u{301}" produce the same key.

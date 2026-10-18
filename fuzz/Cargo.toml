@@ -17,7 +17,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-holm-core = { path = "../crates/holm-core" }
+holm-core = { path = "../crates/holm-core", features = ["fuzzing"] }
 holm-crypto = { path = "../crates/holm-crypto" }
 
 [[bin]]
@@ -37,6 +37,20 @@ bench = false
 [[bin]]
 name = "unpad"
 path = "fuzz_targets/unpad.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "open_fixed_key"
+path = "fuzz_targets/open_fixed_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_body"
+path = "fuzz_targets/decode_body.rs"
 test = false
 doc = false
 bench = false

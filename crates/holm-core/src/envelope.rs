@@ -22,7 +22,7 @@ use holm_crypto::{
 use subtle::ConstantTimeEq;
 
 use crate::format::{FormatError, HEADER_LEN, Header, WRAP_AAD_LEN};
-use crate::padding::{pad, unpad};
+use crate::padding::{MAX_BODY_LEN, pad, unpad};
 
 /// Everything that can go wrong creating, opening or saving a vault.
 ///
@@ -51,6 +51,10 @@ pub enum VaultError {
     /// The OS random source or the key derivation failed.
     #[error("a cryptographic operation failed")]
     Crypto,
+    /// The memory for the key derivation could not be reserved (the unlock
+    /// screen's "not enough memory"). Never a password problem.
+    #[error("not enough memory to derive the vault key")]
+    OutOfMemory,
 }
 
 /// Hand-written instead of `#[from]`: a cost-policy failure found by the
@@ -73,6 +77,7 @@ impl From<CryptoError> for VaultError {
         match e {
             CryptoError::KdfParams(k) => VaultError::KdfPolicy(k),
             CryptoError::Aead => VaultError::WrongPasswordOrCorrupt,
+            CryptoError::OutOfMemory => VaultError::OutOfMemory,
             CryptoError::Rng | CryptoError::Kdf | CryptoError::InvalidKeyLength => {
                 VaultError::Crypto
             }
@@ -121,10 +126,28 @@ pub fn create(
     body: &[u8],
 ) -> Result<(VaultKeys, Vec<u8>), VaultError> {
     params.validate().map_err(VaultError::KdfPolicy)?;
-    let padded = pad(body)?;
-
+    // The size cap comes before Argon2, so an oversized body costs no KDF run.
+    if body.len() > MAX_BODY_LEN {
+        return Err(VaultError::TooLargeToSave);
+    }
     let salt = random_array::<32>()?;
     let kek = derive_kek(password, &salt, params)?;
+    create_with_kek(&kek, salt, params, body)
+}
+
+/// Everything [`create`] does after key derivation: pad, draw the DEK and
+/// nonces, wrap the DEK under `kek`, seal the body.
+///
+/// `salt` and `params` are only written into the header; they are not checked
+/// against `kek`. Separate so the fuzzing build can make vault files without
+/// an Argon2 run per input.
+pub(crate) fn create_with_kek(
+    kek: &SecretKey,
+    salt: [u8; 32],
+    params: &KdfParams,
+    body: &[u8],
+) -> Result<(VaultKeys, Vec<u8>), VaultError> {
+    let padded = pad(body)?;
     let dek = SecretKey::generate()?;
 
     let wrap_nonce = Nonce::random()?;
@@ -138,11 +161,10 @@ pub fn create(
         body_len: 0,
     };
     let wrap_aad = header.encode();
-    let wrapped = aead::seal(&kek, wrap_nonce, &wrap_aad[..WRAP_AAD_LEN], dek.expose())?;
+    let wrapped = aead::seal(kek, wrap_nonce, &wrap_aad[..WRAP_AAD_LEN], dek.expose())?;
     // Unreachable: sealing 32 bytes always gives 32 + 16 = 48.
     header.wrapped_dek =
         <[u8; 48]>::try_from(wrapped.as_slice()).map_err(|_| VaultError::Crypto)?;
-    drop(kek);
 
     let (header, file) = seal_body(&dek, &header, &padded)?;
     Ok((VaultKeys { dek, header }, file))
@@ -159,7 +181,10 @@ pub fn create(
 /// password or any change to the file; [`VaultError::BadPadding`] for an
 /// authenticated body with malformed padding; [`VaultError::Crypto`] if key
 /// derivation fails.
-pub fn open(file: &[u8], password: &MasterPassword) -> Result<(VaultKeys, SecretBuf), VaultError> {
+pub(crate) fn open(
+    file: &[u8],
+    password: &MasterPassword,
+) -> Result<(VaultKeys, SecretBuf), VaultError> {
     let (header, _) = Header::parse(file)?;
     let kek = derive_kek(password, &header.salt, &header.kdf)?;
     open_with_kek(file, &kek)
@@ -240,7 +265,10 @@ pub fn rekey(
 /// # Errors
 /// [`VaultError::WrongPasswordOrCorrupt`] if the password is wrong;
 /// [`VaultError::Crypto`] if key derivation fails.
-pub fn verify_password(keys: &VaultKeys, password: &MasterPassword) -> Result<(), VaultError> {
+pub(crate) fn verify_password(
+    keys: &VaultKeys,
+    password: &MasterPassword,
+) -> Result<(), VaultError> {
     let header = &keys.header;
     let kek = derive_kek(password, &header.salt, &header.kdf)?;
     let encoded = header.encode();
@@ -442,15 +470,34 @@ mod tests {
     }
 
     /// A committed v1 vault, so a future change cannot silently strand
-    /// existing files. Made once with
-    /// `create(&pw("caf\u{e9} golden"), &KdfParams::FLOOR, GOLDEN_BODY)`;
-    /// the salt, DEK and nonces were random, so it cannot be regenerated
-    /// byte for byte. Opening it with the decomposed form of the password also
-    /// pins NFC normalisation.
+    /// existing files. Locked with `"caf\u{e9} golden"` at `KdfParams::FLOOR`
+    /// and holding the default vault body. It is built deterministically (fixed
+    /// salt, DEK and nonces) by `tests/golden_vault.rs`, which also checks that it
+    /// regenerates byte for byte. Opening it with the decomposed form of the
+    /// password also pins NFC normalisation.
     #[test]
     fn golden_vault_opens() {
-        const GOLDEN_BODY: &[u8] = b"Holm golden vault v1\n";
         let file = include_bytes!("../tests/vectors/golden-v1.vault");
+        assert_eq!(file.len(), HEADER_LEN + PAD_BLOCK + TAG_LEN);
+        let (h, _) = Header::parse(file).unwrap();
+        assert_eq!(h.kdf, KdfParams::FLOOR);
+        let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
+        let default_body = crate::body::VaultData::new_default().encode().unwrap();
+        assert_eq!(body.expose(), default_body.expose());
+        assert_eq!(keys.header, h);
+        assert_eq!(
+            open(file, &pw("cafe golden")).unwrap_err(),
+            VaultError::WrongPasswordOrCorrupt
+        );
+    }
+
+    /// The pre-schema golden vault (Phase 1): its body is plain bytes, not a vault
+    /// body, so it is a second regression vector that only the envelope layer can open.
+    /// Password `"caf\u{e9} golden"` at `KdfParams::FLOOR`; random salt, DEK and nonces.
+    #[test]
+    fn golden_envelope_vault_opens() {
+        const GOLDEN_BODY: &[u8] = b"Holm golden vault v1\n";
+        let file = include_bytes!("../tests/vectors/golden-v1-envelope.vault");
         assert_eq!(file.len(), HEADER_LEN + PAD_BLOCK + TAG_LEN);
         let (h, _) = Header::parse(file).unwrap();
         assert_eq!(h.kdf, KdfParams::FLOOR);
@@ -714,6 +761,14 @@ mod tests {
     }
 
     #[test]
+    fn out_of_memory_maps_to_vault_error() {
+        assert_eq!(
+            VaultError::from(CryptoError::OutOfMemory),
+            VaultError::OutOfMemory
+        );
+    }
+
+    #[test]
     fn crypto_errors_map_as_specified() {
         assert_eq!(
             VaultError::from(CryptoError::Aead),
@@ -741,6 +796,7 @@ mod tests {
             VaultError::BadPadding,
             VaultError::TooLargeToSave,
             VaultError::Crypto,
+            VaultError::OutOfMemory,
         ];
         let mut seen = std::collections::HashSet::new();
         for e in &all {
