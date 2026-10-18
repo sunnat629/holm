@@ -21,14 +21,16 @@ use std::process::ExitCode;
 
 use holm_core::clock::Clock;
 use holm_crypto::kdf::KdfParams;
+use holm_platform::clipboard::ClipboardError;
 
 use crate::args::{Command, Invocation, UsageError};
-use crate::commands::read;
+pub use crate::commands::copy::Clip;
+use crate::commands::{copy, read, transfer, write};
 pub use crate::output::CliError;
 use crate::term::Terminal;
 
 /// What a run needs from outside: the key-derivation costs for a new vault, a clock
-/// for each session, and the default vault path.
+/// for each session, the default vault path, and the clipboard.
 pub struct Env {
     /// The costs `init` uses. `KdfParams::DEFAULT` in the app; tests use the floor.
     pub kdf: KdfParams,
@@ -36,6 +38,9 @@ pub struct Env {
     pub clock: Box<dyn Fn() -> Box<dyn Clock>>,
     /// The vault used when `--vault` is not given.
     pub default_vault: Option<PathBuf>,
+    /// Opens the clipboard for `--copy`. The app opens the macOS pasteboard; tests
+    /// pass a fake.
+    pub clip: Box<dyn Fn() -> Result<Box<dyn Clip>, ClipboardError>>,
 }
 
 /// The help text.
@@ -56,12 +61,36 @@ Commands:
   holm get ID               Show an item. Secret fields show as (hidden).
                             ID is the item's id, or its first 6 or more
                             characters, as holm list shows it.
-  holm gen [KIND]           Make a new password (default), passphrase or
+      --copy FIELD          Copy one field instead: password, username, url,
+                            address, memo, notes, body or phrase. Holm clears
+                            the clipboard after the vault's clear time, or
+                            when you press Enter. macOS only.
+  holm gen [KIND] [--copy]  Make a new password (default), passphrase or
                             username. No vault needed.
+  holm add TYPE --title T   Add a login, crypto, phrase or note. Secrets are
+                            asked for at hidden prompts.
+      --username U          Login: the username.
+      --url URL             Login: a web address (repeat for more).
+      --chain C             Crypto: the chain.
+      --category NAME       Put it in this category.
+      --favourite           Mark it a favourite.
+      --generate            Login: generate the password.
+      --with-notes          Ask for notes too.
+  holm edit ID [options]    Change an item. Anything not given stays.
+      --title T, --username U, --url URL (adds one), --clear-urls,
+      --category NAME, --uncategorised, --favourite, --no-favourite,
+      --new-password, --generate, --new-notes
+  holm rm ID                Move an item to the Trash.
+  holm rm --forever ID      Delete an item in the Trash for good.
+  holm passwd               Change the master password.
+  holm import FILE          Add items from a CSV or JSON file.
+      --format csv|json     The file's format (default: from its name).
+  holm export FILE          Write every item to a new CSV file, in plain text.
+  holm export --backup FILE Write an encrypted copy of the vault.
   holm help                 Show this help.
   holm version              Show the version.
 
-Coming next: add, edit, rm, import, export, passwd and shell.
+Coming next: shell.
 
 Holm asks for the master password at a hidden prompt on the terminal. It never
 takes a password from the command line, the environment or a pipe.
@@ -110,6 +139,7 @@ fn dispatch(
             writeln!(out, "holm {}", env!("CARGO_PKG_VERSION"))?;
             Ok(())
         }
+        Command::Gen(args) if args.copy => copy::gen_copy(&args, env, term, err),
         Command::Gen(args) => read::gen_value(&args, out),
         Command::Init => read::init(&vault_path(vault, env)?, env, term, out, err),
         Command::List(args) => {
@@ -117,8 +147,22 @@ fn dispatch(
             read::list(&opened.session, &args, out)
         }
         Command::Get(args) => {
-            let opened = vault::open(&vault_path(vault, env)?, env, term, err)?;
+            let path = vault_path(vault, env)?;
+            if let Some(field) = args.copy {
+                return copy::get_copy(&path, &args.reference, field, env, term, err);
+            }
+            let opened = vault::open(&path, env, term, err)?;
             read::get(&opened.session, &args, out)
+        }
+        Command::Add(args) => write::add(&vault_path(vault, env)?, args, env, term, out, err),
+        Command::Edit(args) => write::edit(&vault_path(vault, env)?, args, env, term, out, err),
+        Command::Rm(args) => write::rm(&vault_path(vault, env)?, &args, env, term, out, err),
+        Command::Passwd => write::passwd(&vault_path(vault, env)?, env, term, out, err),
+        Command::Import(args) => {
+            transfer::import(&vault_path(vault, env)?, &args, env, term, out, err)
+        }
+        Command::Export(args) => {
+            transfer::export(&vault_path(vault, env)?, &args, env, term, out, err)
         }
         Command::Pending(_) => Err(CliError::NotReady),
     }

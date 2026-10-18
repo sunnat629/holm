@@ -40,6 +40,7 @@ security, three exercises, and what to read next in
 | 31 | [Hostile input, all or nothing](31-hostile-input-all-or-nothing.md): a `HashMap` header map that stores positions, never text, `mem::take` out of a wiping buffer, an undo closure that makes an import all or nothing, bad rows reported by number only, and why Holm never guesses where a secret goes. |
 | 32 | [Building output safely](32-building-output-safely.md): measure-then-fill so a growing `String` leaves no copy of a password behind, RFC 4180 quoting with `"` doubled, `OpenOptions::create_new` and `OpenOptionsExt::mode(0o600)` for a file nobody else can read, a read that refuses FIFOs and growing files, and why Holm does not escape spreadsheet formulas. |
 | 33 | [A CLI without a framework](33-a-cli-without-a-framework.md): `OsString` and `args_os`, matching on slices of arguments, a `dyn Terminal` trait object so tests swap in a fake, RAII guards that restore the terminal in `Drop`, and `ExitCode` instead of `process::exit`. |
+| 34 | [Moving secrets in and out](34-moving-secrets-in-and-out.md): `std::mem::take` to move a typed password into an item without a copy, `to_owned()` straight into a wiping type when a copy can't be avoided, a `Box<dyn Fn>` factory so tests swap in a fake clipboard, and one monotonic `Instant` deadline for the clipboard clear, which runs before any error is returned. |
 
 ## Side tracks
 

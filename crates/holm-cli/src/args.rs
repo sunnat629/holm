@@ -12,6 +12,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::PathBuf;
 
+use holm_core::import::ImportFormat;
 use holm_core::item::ItemType;
 use holm_core::search::Sort;
 use zeroize::Zeroizing;
@@ -59,6 +60,24 @@ pub const CATEGORY_CONFLICT: UsageError =
     UsageError("Choose either --category or --uncategorised, not both.");
 /// `--vault` with an empty path.
 pub const EMPTY_VAULT: UsageError = UsageError("The vault path is empty.");
+/// `add` without a type.
+pub const MISSING_ADD_TYPE: UsageError =
+    UsageError("Say what to add: login, crypto, phrase or note.");
+/// `add` without `--title`.
+pub const MISSING_TITLE: UsageError = UsageError("Give the item a title with --title.");
+/// An `add` option that the chosen type does not take.
+pub const WRONG_TYPE_OPTION: UsageError = UsageError("That option doesn't fit this type of item.");
+/// `edit` with nothing to change.
+pub const NOTHING_TO_CHANGE: UsageError = UsageError("Say what to change.");
+/// Two options that contradict each other.
+pub const CONFLICT: UsageError = UsageError("Two of those options contradict each other.");
+/// `--copy` with an unknown field.
+pub const BAD_FIELD: UsageError =
+    UsageError("Copy one of: password, username, url, address, memo, notes, body or phrase.");
+/// `import` or `export` without a file.
+pub const MISSING_FILE: UsageError = UsageError("Give the file's path.");
+/// `--format` with an unknown value.
+pub const BAD_FORMAT: UsageError = UsageError("The format must be csv or json.");
 
 /// A parsed command line.
 pub struct Invocation {
@@ -90,8 +109,20 @@ pub enum Command {
     List(ListArgs),
     /// `holm get REF`: one item's public fields.
     Get(GetArgs),
-    /// `holm gen [KIND]`: a new random value; no vault.
+    /// `holm gen [KIND] [--copy]`: a new random value; no vault.
     Gen(GenArgs),
+    /// `holm add TYPE --title T …`: a new item.
+    Add(AddArgs),
+    /// `holm edit REF …`: change an item.
+    Edit(EditArgs),
+    /// `holm rm [--forever] REF`: to the Trash, or out of it for good.
+    Rm(RmArgs),
+    /// `holm passwd`: change the master password.
+    Passwd,
+    /// `holm import FILE [--format csv|json]`.
+    Import(ImportArgs),
+    /// `holm export [--backup] FILE`.
+    Export(ExportArgs),
     /// A command whose handler comes in a later task. Its flags are not parsed yet.
     Pending(Pending),
 }
@@ -106,27 +137,21 @@ impl fmt::Debug for Command {
             Command::List(_) => "list",
             Command::Get(_) => "get",
             Command::Gen(_) => "gen",
+            Command::Add(_) => "add",
+            Command::Edit(_) => "edit",
+            Command::Rm(_) => "rm",
+            Command::Passwd => "passwd",
+            Command::Import(_) => "import",
+            Command::Export(_) => "export",
             Command::Pending(p) => p.name(),
         };
         f.write_str(name)
     }
 }
 
-/// The commands parsed but not run yet (Tasks 6 and 7).
+/// The commands parsed but not run yet (Task 7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pending {
-    /// `holm add`.
-    Add,
-    /// `holm edit`.
-    Edit,
-    /// `holm rm`.
-    Rm,
-    /// `holm import`.
-    Import,
-    /// `holm export`.
-    Export,
-    /// `holm passwd`.
-    Passwd,
     /// `holm shell`.
     Shell,
 }
@@ -136,12 +161,6 @@ impl Pending {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Pending::Add => "add",
-            Pending::Edit => "edit",
-            Pending::Rm => "rm",
-            Pending::Import => "import",
-            Pending::Export => "export",
-            Pending::Passwd => "passwd",
             Pending::Shell => "shell",
         }
     }
@@ -173,11 +192,34 @@ pub enum CategoryArg {
     Uncategorised,
 }
 
-/// `get`'s reference.
+/// `get`'s reference, and the field to copy instead of printing the item.
 #[derive(Clone)]
 pub struct GetArgs {
     /// 6 to 32 lowercase hex digits, checked by [`parse`].
     pub reference: String,
+    /// `--copy FIELD`.
+    pub copy: Option<CopyField>,
+}
+
+/// The field `--copy` puts on the clipboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyField {
+    /// A login's password.
+    Password,
+    /// A login's username.
+    Username,
+    /// A login's first web address.
+    Url,
+    /// A crypto item's address.
+    Address,
+    /// A crypto item's memo.
+    Memo,
+    /// The notes of a login, crypto item or recovery phrase.
+    Notes,
+    /// A secure note's body.
+    Body,
+    /// A recovery phrase (asks for the master password again).
+    Phrase,
 }
 
 /// What `gen` makes.
@@ -197,6 +239,86 @@ pub enum GenKind {
 pub struct GenArgs {
     /// What to make.
     pub kind: GenKind,
+    /// `--copy`: copy the value instead of printing it.
+    pub copy: bool,
+}
+
+/// `add`'s arguments. Only public fields come from the command line; every secret is
+/// asked for at a hidden prompt.
+pub struct AddArgs {
+    /// The item type.
+    pub item_type: ItemType,
+    /// `--title`.
+    pub title: String,
+    /// `--username` (login).
+    pub username: Option<String>,
+    /// `--url`, in order (login).
+    pub urls: Vec<String>,
+    /// `--chain` (crypto).
+    pub chain: Option<String>,
+    /// `--category NAME`.
+    pub category: Option<String>,
+    /// `--favourite`.
+    pub favourite: bool,
+    /// `--generate`: a password from the vault's generator settings (login).
+    pub generate: bool,
+    /// `--with-notes`: ask for notes too (not a secure note).
+    pub with_notes: bool,
+}
+
+/// A new login password for `edit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewPassword {
+    /// `--new-password`: typed twice at hidden prompts.
+    Typed,
+    /// `--generate`: from the vault's generator settings.
+    Generate,
+}
+
+/// `edit`'s arguments. Anything not given stays as it is.
+pub struct EditArgs {
+    /// The item's reference.
+    pub reference: String,
+    /// `--title`.
+    pub title: Option<String>,
+    /// `--username` (login).
+    pub username: Option<String>,
+    /// `--url`, appended (login).
+    pub urls: Vec<String>,
+    /// `--clear-urls`: drop the stored web addresses first (login).
+    pub clear_urls: bool,
+    /// `--category NAME` or `--uncategorised`.
+    pub category: Option<CategoryArg>,
+    /// `--favourite` or `--no-favourite`.
+    pub favourite: Option<bool>,
+    /// `--new-password` or `--generate` (login).
+    pub new_password: Option<NewPassword>,
+    /// `--new-notes`: ask for new notes (a secure note: a new body).
+    pub new_notes: bool,
+}
+
+/// `rm`'s arguments.
+pub struct RmArgs {
+    /// The item's reference.
+    pub reference: String,
+    /// `--forever`: delete a trashed item for good.
+    pub forever: bool,
+}
+
+/// `import`'s arguments.
+pub struct ImportArgs {
+    /// The file to read.
+    pub file: PathBuf,
+    /// `--format`; otherwise `.json` means JSON and anything else CSV.
+    pub format: Option<ImportFormat>,
+}
+
+/// `export`'s arguments.
+pub struct ExportArgs {
+    /// The new file to write.
+    pub file: PathBuf,
+    /// `--backup`: an encrypted copy of the vault instead of plain CSV.
+    pub backup: bool,
 }
 
 /// Parses the arguments after the program name.
@@ -243,12 +365,12 @@ pub fn parse_command(args: &[OsString]) -> Result<Command, UsageError> {
         "list" => parse_list(rest).map(Command::List),
         "get" => parse_get(rest).map(Command::Get),
         "gen" => parse_gen(rest).map(Command::Gen),
-        "add" => pending(Pending::Add),
-        "edit" => pending(Pending::Edit),
-        "rm" => pending(Pending::Rm),
-        "import" => pending(Pending::Import),
-        "export" => pending(Pending::Export),
-        "passwd" => no_more(rest).and_then(|()| pending(Pending::Passwd)),
+        "add" => parse_add(rest).map(Command::Add),
+        "edit" => parse_edit(rest).map(Command::Edit),
+        "rm" => parse_rm(rest).map(Command::Rm),
+        "import" => parse_import(rest).map(Command::Import),
+        "export" => parse_export(rest).map(Command::Export),
+        "passwd" => no_more(rest).map(|()| Command::Passwd),
         "shell" => no_more(rest).and_then(|()| pending(Pending::Shell)),
         _ => Err(UNKNOWN_COMMAND),
     }
@@ -402,18 +524,330 @@ fn sort_of(value: &str) -> Result<Sort, UsageError> {
     }
 }
 
-fn parse_get(rest: &[OsString]) -> Result<GetArgs, UsageError> {
-    match rest {
-        [] => Err(MISSING_REF),
-        [reference] => {
-            let reference = text(reference)?;
-            check_reference(reference)?;
-            Ok(GetArgs {
-                reference: reference.to_owned(),
-            })
-        }
-        [_, extra, ..] => Err(unexpected(extra)),
+fn parse_get(mut rest: &[OsString]) -> Result<GetArgs, UsageError> {
+    let mut reference = None;
+    let mut copy = None;
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, value, tail @ ..] if flag == "--copy" => {
+                set_once(&mut copy, copy_field_of(text(value)?)?)?;
+                tail
+            }
+            [flag] if flag == "--copy" => return Err(MISSING_VALUE),
+            [word, tail @ ..] => {
+                set_reference(&mut reference, word)?;
+                tail
+            }
+        };
     }
+    Ok(GetArgs {
+        reference: reference.ok_or(MISSING_REF)?,
+        copy,
+    })
+}
+
+/// Takes `word` as the one reference: a flag is [`UNKNOWN_FLAG`], a second word
+/// [`TOO_MANY`], a malformed one [`BAD_REF`].
+fn set_reference(slot: &mut Option<String>, word: &OsStr) -> Result<(), UsageError> {
+    if word.as_encoded_bytes().starts_with(b"-") {
+        return Err(UNKNOWN_FLAG);
+    }
+    if slot.is_some() {
+        return Err(TOO_MANY);
+    }
+    let reference = text(word)?;
+    check_reference(reference)?;
+    *slot = Some(reference.to_owned());
+    Ok(())
+}
+
+fn copy_field_of(value: &str) -> Result<CopyField, UsageError> {
+    match value {
+        "password" => Ok(CopyField::Password),
+        "username" => Ok(CopyField::Username),
+        "url" => Ok(CopyField::Url),
+        "address" => Ok(CopyField::Address),
+        "memo" => Ok(CopyField::Memo),
+        "notes" => Ok(CopyField::Notes),
+        "body" => Ok(CopyField::Body),
+        "phrase" => Ok(CopyField::Phrase),
+        _ => Err(BAD_FIELD),
+    }
+}
+
+/// The flags `add` and `edit` share, as typed.
+#[derive(Default)]
+struct ItemFlags {
+    title: Option<String>,
+    username: Option<String>,
+    urls: Vec<String>,
+    chain: Option<String>,
+    category: Option<CategoryArg>,
+    favourite: Option<bool>,
+    generate: bool,
+    new_password: bool,
+    with_notes: bool,
+    new_notes: bool,
+    clear_urls: bool,
+}
+
+/// Which flags a command takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ItemCommand {
+    Add,
+    Edit,
+}
+
+/// Parses the flags of `add` or `edit`; any other word is handed to `word`.
+fn parse_item_flags(
+    mut rest: &[OsString],
+    command: ItemCommand,
+    word: &mut dyn FnMut(&OsStr) -> Result<(), UsageError>,
+) -> Result<ItemFlags, UsageError> {
+    let edit = command == ItemCommand::Edit;
+    let mut f = ItemFlags::default();
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, value, tail @ ..] if flag == "--title" => {
+                set_once(&mut f.title, text(value)?.to_owned())?;
+                tail
+            }
+            [flag, value, tail @ ..] if flag == "--username" => {
+                set_once(&mut f.username, text(value)?.to_owned())?;
+                tail
+            }
+            [flag, value, tail @ ..] if flag == "--url" => {
+                f.urls.push(text(value)?.to_owned());
+                tail
+            }
+            [flag, value, tail @ ..] if flag == "--chain" && !edit => {
+                set_once(&mut f.chain, text(value)?.to_owned())?;
+                tail
+            }
+            [flag, value, tail @ ..] if flag == "--category" => {
+                set_category(&mut f.category, CategoryArg::Named(text(value)?.to_owned()))?;
+                tail
+            }
+            [flag, tail @ ..]
+                if edit && (flag == "--uncategorised" || flag == "--uncategorized") =>
+            {
+                set_category(&mut f.category, CategoryArg::Uncategorised)?;
+                tail
+            }
+            [flag, tail @ ..] if flag == "--favourite" || flag == "--favorite" => {
+                set_favourite(&mut f.favourite, true)?;
+                tail
+            }
+            [flag, tail @ ..] if edit && (flag == "--no-favourite" || flag == "--no-favorite") => {
+                set_favourite(&mut f.favourite, false)?;
+                tail
+            }
+            [flag, tail @ ..] if flag == "--generate" => {
+                set_flag(&mut f.generate)?;
+                tail
+            }
+            [flag, tail @ ..] if edit && flag == "--new-password" => {
+                set_flag(&mut f.new_password)?;
+                tail
+            }
+            [flag, tail @ ..] if !edit && flag == "--with-notes" => {
+                set_flag(&mut f.with_notes)?;
+                tail
+            }
+            [flag, tail @ ..] if edit && flag == "--new-notes" => {
+                set_flag(&mut f.new_notes)?;
+                tail
+            }
+            [flag, tail @ ..] if edit && flag == "--clear-urls" => {
+                set_flag(&mut f.clear_urls)?;
+                tail
+            }
+            [flag]
+                if ["--title", "--username", "--url", "--chain", "--category"]
+                    .iter()
+                    .any(|n| flag == *n) =>
+            {
+                return Err(MISSING_VALUE);
+            }
+            [first, tail @ ..] => {
+                word(first)?;
+                tail
+            }
+        };
+    }
+    Ok(f)
+}
+
+/// `--favourite` and `--no-favourite`: once, and not both.
+fn set_favourite(slot: &mut Option<bool>, value: bool) -> Result<(), UsageError> {
+    match slot {
+        None => {
+            *slot = Some(value);
+            Ok(())
+        }
+        Some(old) if *old == value => Err(REPEATED_FLAG),
+        Some(_) => Err(CONFLICT),
+    }
+}
+
+fn parse_add(rest: &[OsString]) -> Result<AddArgs, UsageError> {
+    let Some((kind, rest)) = rest.split_first() else {
+        return Err(MISSING_ADD_TYPE);
+    };
+    let item_type = match text(kind)? {
+        "login" => ItemType::Login,
+        "crypto" => ItemType::CryptoAddress,
+        "phrase" => ItemType::RecoveryPhrase,
+        "note" => ItemType::SecureNote,
+        k if k.starts_with('-') => return Err(MISSING_ADD_TYPE),
+        _ => return Err(BAD_TYPE),
+    };
+    let f = parse_item_flags(rest, ItemCommand::Add, &mut |w| Err(unexpected(w)))?;
+    let login = item_type == ItemType::Login;
+    let fits = (login || (f.username.is_none() && f.urls.is_empty() && !f.generate))
+        && (item_type == ItemType::CryptoAddress || f.chain.is_none())
+        && (item_type != ItemType::SecureNote || !f.with_notes);
+    if !fits {
+        return Err(WRONG_TYPE_OPTION);
+    }
+    let category = match f.category {
+        None => None,
+        Some(CategoryArg::Named(name)) => Some(name),
+        // Not accepted by `add`'s flag parser.
+        Some(CategoryArg::Uncategorised) => return Err(UNKNOWN_FLAG),
+    };
+    Ok(AddArgs {
+        item_type,
+        title: f.title.ok_or(MISSING_TITLE)?,
+        username: f.username,
+        urls: f.urls,
+        chain: f.chain,
+        category,
+        favourite: f.favourite.unwrap_or(false),
+        generate: f.generate,
+        with_notes: f.with_notes,
+    })
+}
+
+fn parse_edit(rest: &[OsString]) -> Result<EditArgs, UsageError> {
+    let mut reference = None;
+    let f = parse_item_flags(rest, ItemCommand::Edit, &mut |w| {
+        set_reference(&mut reference, w)
+    })?;
+    let new_password = match (f.new_password, f.generate) {
+        (false, false) => None,
+        (true, false) => Some(NewPassword::Typed),
+        (false, true) => Some(NewPassword::Generate),
+        (true, true) => return Err(CONFLICT),
+    };
+    let args = EditArgs {
+        reference: reference.ok_or(MISSING_REF)?,
+        title: f.title,
+        username: f.username,
+        urls: f.urls,
+        clear_urls: f.clear_urls,
+        category: f.category,
+        favourite: f.favourite,
+        new_password,
+        new_notes: f.new_notes,
+    };
+    let nothing = args.title.is_none()
+        && args.username.is_none()
+        && args.urls.is_empty()
+        && !args.clear_urls
+        && args.category.is_none()
+        && args.favourite.is_none()
+        && args.new_password.is_none()
+        && !args.new_notes;
+    if nothing {
+        return Err(NOTHING_TO_CHANGE);
+    }
+    Ok(args)
+}
+
+fn parse_rm(mut rest: &[OsString]) -> Result<RmArgs, UsageError> {
+    let mut reference = None;
+    let mut forever = false;
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, tail @ ..] if flag == "--forever" => {
+                set_flag(&mut forever)?;
+                tail
+            }
+            [word, tail @ ..] => {
+                set_reference(&mut reference, word)?;
+                tail
+            }
+        };
+    }
+    Ok(RmArgs {
+        reference: reference.ok_or(MISSING_REF)?,
+        forever,
+    })
+}
+
+/// Takes `word` as the one file path. Any word starting with `-` is a flag.
+fn set_file(slot: &mut Option<PathBuf>, word: &OsStr) -> Result<(), UsageError> {
+    if word.as_encoded_bytes().starts_with(b"-") {
+        return Err(UNKNOWN_FLAG);
+    }
+    if word.is_empty() {
+        return Err(MISSING_FILE);
+    }
+    set_once(slot, PathBuf::from(word)).map_err(|_| TOO_MANY)
+}
+
+fn parse_import(mut rest: &[OsString]) -> Result<ImportArgs, UsageError> {
+    let mut file = None;
+    let mut format = None;
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, value, tail @ ..] if flag == "--format" => {
+                let f = match text(value)? {
+                    "csv" => ImportFormat::Csv,
+                    "json" => ImportFormat::Json,
+                    _ => return Err(BAD_FORMAT),
+                };
+                set_once(&mut format, f)?;
+                tail
+            }
+            [flag] if flag == "--format" => return Err(MISSING_VALUE),
+            [word, tail @ ..] => {
+                set_file(&mut file, word)?;
+                tail
+            }
+        };
+    }
+    Ok(ImportArgs {
+        file: file.ok_or(MISSING_FILE)?,
+        format,
+    })
+}
+
+fn parse_export(mut rest: &[OsString]) -> Result<ExportArgs, UsageError> {
+    let mut file = None;
+    let mut backup = false;
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, tail @ ..] if flag == "--backup" => {
+                set_flag(&mut backup)?;
+                tail
+            }
+            [word, tail @ ..] => {
+                set_file(&mut file, word)?;
+                tail
+            }
+        };
+    }
+    Ok(ExportArgs {
+        file: file.ok_or(MISSING_FILE)?,
+        backup,
+    })
 }
 
 /// Checks a reference's form: 6 to 32 lowercase hex digits.
@@ -428,19 +862,34 @@ pub fn check_reference(reference: &str) -> Result<(), UsageError> {
     if ok { Ok(()) } else { Err(BAD_REF) }
 }
 
-fn parse_gen(rest: &[OsString]) -> Result<GenArgs, UsageError> {
-    let kind = match rest {
-        [] => GenKind::Password,
-        [kind] => match text(kind)? {
-            "password" => GenKind::Password,
-            "passphrase" => GenKind::Passphrase,
-            "username" => GenKind::Username,
-            k if k.starts_with('-') => return Err(UNKNOWN_FLAG),
-            _ => return Err(BAD_GEN),
-        },
-        [_, extra, ..] => return Err(unexpected(extra)),
-    };
-    Ok(GenArgs { kind })
+fn parse_gen(mut rest: &[OsString]) -> Result<GenArgs, UsageError> {
+    let mut kind = None;
+    let mut copy = false;
+    loop {
+        rest = match rest {
+            [] => break,
+            [flag, tail @ ..] if flag == "--copy" => {
+                set_flag(&mut copy)?;
+                tail
+            }
+            [word, tail @ ..] => {
+                let k = match text(word)? {
+                    "password" => GenKind::Password,
+                    "passphrase" => GenKind::Passphrase,
+                    "username" => GenKind::Username,
+                    k if k.starts_with('-') => return Err(UNKNOWN_FLAG),
+                    _ if kind.is_some() => return Err(TOO_MANY),
+                    _ => return Err(BAD_GEN),
+                };
+                set_once(&mut kind, k).map_err(|_| TOO_MANY)?;
+                tail
+            }
+        };
+    }
+    Ok(GenArgs {
+        kind: kind.unwrap_or_default(),
+        copy,
+    })
 }
 
 #[cfg(test)]
@@ -479,7 +928,8 @@ mod tests {
         assert!(matches!(
             parse_strs(&["gen", "password"]).unwrap().command,
             Command::Gen(GenArgs {
-                kind: GenKind::Password
+                kind: GenKind::Password,
+                copy: false,
             })
         ));
     }
@@ -579,7 +1029,8 @@ mod tests {
             (&["get", "abcdeg"], BAD_REF),
             (&["get", "abcdef", "more"], TOO_MANY),
             (&["gen", "pin"], BAD_GEN),
-            (&["gen", "--copy"], UNKNOWN_FLAG),
+            (&["gen", "--copy", "--copy"], REPEATED_FLAG),
+            (&["gen", "--colour"], UNKNOWN_FLAG),
             (&["gen", "password", "username"], TOO_MANY),
             (&["init", "now"], TOO_MANY),
             (&["--vault"], MISSING_VALUE),
@@ -596,6 +1047,161 @@ mod tests {
             use std::os::unix::ffi::OsStringExt;
             let bad = OsString::from_vec(vec![b'l', 0xff]);
             assert_eq!(parse(&[bad]).map(|_| ()).unwrap_err(), NOT_TEXT);
+        }
+    }
+
+    #[test]
+    fn write_command_flags() {
+        // `--copy` before or after the reference.
+        for line in [
+            &["get", "abcdef", "--copy", "phrase"][..],
+            &["get", "--copy", "phrase", "abcdef"],
+        ] {
+            let Command::Get(g) = parse_strs(line).unwrap().command else {
+                panic!("not get");
+            };
+            assert_eq!(
+                (g.reference.as_str(), g.copy),
+                ("abcdef", Some(CopyField::Phrase))
+            );
+        }
+        let Command::Gen(g) = parse_strs(&["gen", "--copy", "username"]).unwrap().command else {
+            panic!("not gen");
+        };
+        assert_eq!(
+            g,
+            GenArgs {
+                kind: GenKind::Username,
+                copy: true
+            }
+        );
+
+        let Command::Add(a) = parse_strs(&[
+            "add",
+            "login",
+            "--title",
+            "T",
+            "--url",
+            "u1",
+            "--url",
+            "u2",
+            "--favourite",
+            "--generate",
+            "--category",
+            "Work",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("not add");
+        };
+        assert_eq!(a.item_type, ItemType::Login);
+        assert_eq!(a.urls, ["u1", "u2"]);
+        assert!(a.favourite && a.generate && !a.with_notes);
+        assert_eq!(a.category.as_deref(), Some("Work"));
+
+        let Command::Edit(e) = parse_strs(&[
+            "edit",
+            "--clear-urls",
+            "abcdef",
+            "--no-favourite",
+            "--uncategorised",
+            "--new-notes",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("not edit");
+        };
+        assert!(e.clear_urls && e.new_notes && e.favourite == Some(false));
+        assert!(e.category == Some(CategoryArg::Uncategorised));
+
+        let Command::Import(i) = parse_strs(&["import", "--format", "json", "x.txt"])
+            .unwrap()
+            .command
+        else {
+            panic!("not import");
+        };
+        assert_eq!(i.format, Some(ImportFormat::Json));
+        let Command::Export(x) = parse_strs(&["export", "b.holm", "--backup"])
+            .unwrap()
+            .command
+        else {
+            panic!("not export");
+        };
+        assert!(x.backup && x.file == std::path::Path::new("b.holm"));
+        let Command::Rm(r) = parse_strs(&["rm", "--forever", "abcdef"]).unwrap().command else {
+            panic!("not rm");
+        };
+        assert!(r.forever);
+
+        for (line, want) in [
+            (&["get", "abcdef", "--copy", "pin"][..], BAD_FIELD),
+            (&["get", "abcdef", "--copy"], MISSING_VALUE),
+            (&["add"], MISSING_ADD_TYPE),
+            (&["add", "--title", "T"], MISSING_ADD_TYPE),
+            (&["add", "login"], MISSING_TITLE),
+            (&["add", "login", "--title"], MISSING_VALUE),
+            (&["add", "login", "--title", "T", "extra"], TOO_MANY),
+            (
+                &["add", "login", "--title", "T", "--clear-urls"],
+                UNKNOWN_FLAG,
+            ),
+            (
+                &["add", "login", "--title", "T", "--new-password"],
+                UNKNOWN_FLAG,
+            ),
+            (
+                &["add", "login", "--title", "T", "--chain", "C"],
+                WRONG_TYPE_OPTION,
+            ),
+            (
+                &["add", "crypto", "--title", "T", "--username", "u"],
+                WRONG_TYPE_OPTION,
+            ),
+            (&["edit", "abcdef"], NOTHING_TO_CHANGE),
+            (&["edit", "--title", "T"], MISSING_REF),
+            (&["edit", "abcdef", "--chain", "C"], UNKNOWN_FLAG),
+            (
+                &["edit", "abcdef", "--new-password", "--generate"],
+                CONFLICT,
+            ),
+            (
+                &["edit", "abcdef", "--favourite", "--no-favourite"],
+                CONFLICT,
+            ),
+            (
+                &["edit", "abcdef", "--favourite", "--favourite"],
+                REPEATED_FLAG,
+            ),
+            (
+                &["edit", "abcdef", "--category", "W", "--uncategorised"],
+                CATEGORY_CONFLICT,
+            ),
+            (&["rm"], MISSING_REF),
+            (&["rm", "abcdef", "abcdee"], TOO_MANY),
+            (&["rm", "--force", "abcdef"], UNKNOWN_FLAG),
+            (&["import"], MISSING_FILE),
+            (&["import", ""], MISSING_FILE),
+            (&["import", "a.csv", "b.csv"], TOO_MANY),
+            (&["import", "a.csv", "--format", "xml"], BAD_FORMAT),
+            (&["export"], MISSING_FILE),
+            (&["export", "a.csv", "--backup", "--backup"], REPEATED_FLAG),
+            (&["passwd", "now"], TOO_MANY),
+        ] {
+            assert_eq!(parse_strs(line).map(|_| ()).unwrap_err(), want, "{line:?}");
+        }
+        // A password is never a flag, on any command.
+        for line in [
+            &["add", "login", "--title", "T", "--password", "x"][..],
+            &["edit", "abcdef", "--pass=x"],
+            &["import", "a.csv", "-p", "x"],
+        ] {
+            assert_eq!(
+                parse_strs(line).map(|_| ()).unwrap_err(),
+                PASSWORD_FLAG,
+                "{line:?}"
+            );
         }
     }
 }

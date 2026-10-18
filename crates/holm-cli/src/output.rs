@@ -8,7 +8,9 @@ use std::io::ErrorKind;
 use holm_core::body::BodyError;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::import::ImportError;
 use holm_core::item::Timestamp;
+use holm_core::rules::{Field, FieldError};
 use holm_core::store::StoreError;
 use holm_platform::lock::LockError;
 use holm_platform::tty::TtyError;
@@ -93,6 +95,64 @@ pub enum CliError {
     NotReady,
     /// Any other error.
     Failed,
+    /// A password typed again to confirm an action is wrong.
+    WrongPassword,
+    /// A typed confirmation was not the word asked for.
+    NotConfirmed,
+    /// An option that only fits another item type.
+    TypeChange,
+    /// A field breaks an item rule.
+    Field(FieldError),
+    /// Two entries of a new secret differ.
+    SecretsDiffer,
+    /// The item is in the Trash.
+    InTrash,
+    /// `rm --forever` on an item outside the Trash.
+    NotInTrash,
+    /// The vault is at its item limit.
+    TooManyItems,
+    /// The vault would be too big to save; the change was undone.
+    TooLargeToSave,
+    /// A save failed after the change was made in memory.
+    NotSaved,
+    /// `import`: the file is not there.
+    ImportFileMissing,
+    /// `import`: the path is a folder, FIFO, device or socket.
+    ImportNotAFile,
+    /// `import`: the file is over the import limit.
+    ImportTooLarge,
+    /// `import`: no permission to read the file.
+    ImportNoAccess,
+    /// `import`: any other read error.
+    ImportReadFailed,
+    /// `import`: the whole file was refused.
+    Import(ImportError),
+    /// `import`: the items would take the vault over its item limit.
+    ImportTooManyItems,
+    /// `import`: the vault would be too big to save with the items.
+    ImportTooLargeToSave,
+    /// `import`: the items were added in memory but the save failed.
+    ImportNotSaved,
+    /// `export`: something is already at the path.
+    FileExists,
+    /// `export`: writing the file failed.
+    ExportWriteFailed,
+    /// `export --backup`: writing the backup failed.
+    BackupFailed,
+    /// `--copy` on a system with no supported clipboard.
+    NoClipboard,
+    /// The clipboard did not take the value.
+    CopyFailed,
+    /// The clipboard still holds the value after the clear.
+    ClearFailed,
+    /// `--copy` names a field this item type does not have.
+    NoSuchField,
+    /// `--copy` names an empty field.
+    EmptyField,
+    /// `passwd`: the change failed and the old password still opens the vault.
+    PasswordChangeKept,
+    /// `passwd`: the new password may now be needed.
+    PasswordChangeUncertain,
 }
 
 impl fmt::Display for CliError {
@@ -160,6 +220,65 @@ impl fmt::Display for CliError {
             CliError::Output => "Holm couldn't write its output.",
             CliError::NotReady => "That command isn't ready yet.",
             CliError::Failed => "Something went wrong. Nothing was changed.",
+            CliError::WrongPassword => "That password is wrong. Nothing was done.",
+            CliError::NotConfirmed => "Not confirmed. Nothing was changed.",
+            CliError::TypeChange => {
+                "That option doesn't fit this item's type, and an item's type can't be changed. Nothing was changed."
+            }
+            CliError::Field(e) => return field_message(*e, f),
+            CliError::SecretsDiffer => "The two entries don't match. Nothing was changed.",
+            CliError::InTrash => "That item is in the Trash. Nothing was changed.",
+            CliError::NotInTrash => {
+                "That item isn't in the Trash. Run holm rm without --forever first."
+            }
+            CliError::TooManyItems => "The vault is full (50000 items). Nothing was changed.",
+            CliError::TooLargeToSave => {
+                "The vault would be too large to save. Nothing was changed."
+            }
+            CliError::NotSaved => {
+                "Holm couldn't confirm the save, so the change may not be in the vault file. Run holm list to check."
+            }
+            CliError::ImportFileMissing => "Holm found no file to import there.",
+            CliError::ImportNotAFile => "That isn't a regular file, so Holm won't import it.",
+            CliError::ImportTooLarge => {
+                "That file is over Holm's 16 MiB import limit. Nothing was imported."
+            }
+            CliError::ImportNoAccess => "Holm isn't allowed to read that file.",
+            CliError::ImportReadFailed => "Holm couldn't read that file. Nothing was imported.",
+            CliError::Import(e) => return import_message(e, f),
+            CliError::ImportTooManyItems => {
+                "These items would take the vault over 50000 items. Nothing was imported."
+            }
+            CliError::ImportTooLargeToSave => {
+                "The vault would be too large to save with these items. Nothing was imported."
+            }
+            CliError::ImportNotSaved => {
+                "Holm couldn't confirm the save, so the imported items may not be in the vault file. Run holm list to check, and keep the file until they are there."
+            }
+            CliError::FileExists => {
+                "Something is already at that path. Holm never writes over a file. Choose a new name."
+            }
+            CliError::ExportWriteFailed => {
+                "Holm couldn't write the file. Check the folder, and delete any partial file left there."
+            }
+            CliError::BackupFailed => {
+                "Holm couldn't write the backup. Check the folder, and delete any partial file left there."
+            }
+            CliError::NoClipboard => {
+                "Holm can only copy to the clipboard on macOS. Nothing was copied."
+            }
+            CliError::CopyFailed => "Holm couldn't put the value on the clipboard.",
+            CliError::ClearFailed => {
+                "Holm couldn't clear the clipboard. Copy something else to replace the value."
+            }
+            CliError::NoSuchField => "This item has no such field. Nothing was copied.",
+            CliError::EmptyField => "That field is empty. Nothing was copied.",
+            CliError::PasswordChangeKept => {
+                "Holm couldn't save the new master password. The old one still opens the vault."
+            }
+            CliError::PasswordChangeUncertain => {
+                "Holm couldn't confirm the change. The new master password may now be needed to open the vault. If it doesn't work, try the old one."
+            }
         };
         f.write_str(text)
     }
@@ -238,6 +357,112 @@ pub fn create_error(e: &CoreError, maybe_saved: bool) -> CliError {
         CoreError::Vault(VaultError::OutOfMemory) => CliError::NotEnoughMemory,
         CoreError::Store(_) => CliError::SaveFailed,
         _ => CliError::CreateFailed,
+    }
+}
+
+/// A field's name in a sentence.
+fn field_word(field: Field) -> &'static str {
+    match field {
+        Field::Title => "title",
+        Field::Username => "username",
+        Field::Password => "password",
+        Field::Url => "web address",
+        Field::Notes => "notes",
+        Field::Chain => "chain",
+        Field::Address => "address",
+        Field::Memo => "memo",
+        Field::Phrase => "recovery phrase",
+        Field::Body => "note",
+        Field::CategoryName => "category name",
+    }
+}
+
+fn field_message(e: FieldError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match e {
+        FieldError::Empty(field) => {
+            write!(
+                f,
+                "The {} can't be empty. Nothing was changed.",
+                field_word(field)
+            )
+        }
+        FieldError::TooLong(field) => {
+            write!(
+                f,
+                "The {} is too long. Nothing was changed.",
+                field_word(field)
+            )
+        }
+        FieldError::ForbiddenChar(field) => write!(
+            f,
+            "The {} has a character Holm doesn't allow there. Nothing was changed.",
+            field_word(field)
+        ),
+        FieldError::TooManyUrls => {
+            f.write_str("A login can have at most 32 web addresses. Nothing was changed.")
+        }
+        FieldError::Reserved(field) => {
+            write!(
+                f,
+                "That {} is reserved. Nothing was changed.",
+                field_word(field)
+            )
+        }
+    }
+}
+
+fn import_message(e: &ImportError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match e {
+        ImportError::TooLarge => {
+            f.write_str("That file is over Holm's 16 MiB import limit. Nothing was imported.")
+        }
+        ImportError::NotUtf8 => f.write_str("That file isn't UTF-8 text. Nothing was imported."),
+        ImportError::Empty => f.write_str("That file is empty. Nothing was imported."),
+        ImportError::UnknownColumns { count: 0 } => {
+            f.write_str("That file has no title column. Nothing was imported.")
+        }
+        ImportError::UnknownColumns { count } => write!(
+            f,
+            "That file has {count} column names Holm doesn't know. Nothing was imported."
+        ),
+        ImportError::DuplicateColumn => {
+            f.write_str("That file names the same column twice. Nothing was imported.")
+        }
+        ImportError::TooManyColumns => {
+            f.write_str("That file has more than 64 columns. Nothing was imported.")
+        }
+        ImportError::TooManyRows => {
+            f.write_str("That file has more than 50000 rows. Nothing was imported.")
+        }
+        ImportError::Malformed { line } => write!(
+            f,
+            "That file isn't valid CSV or JSON at line {line}. Nothing was imported."
+        ),
+    }
+}
+
+/// An error from a change to the vault (add, edit, rm, import and so on), as fixed
+/// text. A save error other than "too large" means the change was made in memory and
+/// may not be on disk: [`CliError::NotSaved`], never "nothing was changed".
+#[must_use]
+pub fn write_error(e: &CoreError) -> CliError {
+    match e {
+        CoreError::Field(f) => CliError::Field(*f),
+        CoreError::TypeChange => CliError::TypeChange,
+        CoreError::InTrash => CliError::InTrash,
+        CoreError::NotInTrash => CliError::NotInTrash,
+        CoreError::NotFound | CoreError::NotAPhrase => CliError::NotFound,
+        CoreError::UnknownCategory => CliError::UnknownCategory,
+        CoreError::TooManyItems => CliError::TooManyItems,
+        CoreError::Vault(VaultError::TooLargeToSave) => CliError::TooLargeToSave,
+        CoreError::Store(_) | CoreError::Body(_) | CoreError::Vault(_) => CliError::NotSaved,
+        CoreError::WrongPassword => CliError::WrongPassword,
+        CoreError::Throttled { retry_after_secs } => CliError::Throttled {
+            retry_after_secs: *retry_after_secs,
+        },
+        CoreError::WeakPassword(_) => CliError::WeakPassword,
+        CoreError::VaultExists => CliError::FileExists,
+        _ => CliError::Failed,
     }
 }
 

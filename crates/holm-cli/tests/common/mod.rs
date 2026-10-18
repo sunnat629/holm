@@ -1,20 +1,25 @@
-//! Shared helpers for holm-cli's integration tests: a fake terminal, a test `Env`,
-//! and a way to run one command against a vault in a temporary folder.
+//! Shared helpers for holm-cli's integration tests: a fake terminal, a fake
+//! clipboard, a test `Env`, and a way to run one command against a vault in a
+//! temporary folder.
 
 #![allow(dead_code, reason = "each test file uses a different subset")]
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::OsString;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::Instant;
 
-use holm_cli::Env;
 use holm_cli::term::Terminal;
+use holm_cli::{Clip, Env};
 use holm_core::clock::SystemClock;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
+use holm_platform::clipboard::ClipboardError;
 use holm_platform::fs_store::FsStore;
 use holm_platform::tty::TtyError;
 use zeroize::Zeroizing;
@@ -27,22 +32,42 @@ pub const PW: &str = "correct-Horse-battery-staple-EXAMPLE-9";
 pub enum Kind {
     Secret,
     Line,
+    /// `wait_for_key`; the text is the wait in whole seconds.
+    Wait,
 }
 
 /// A terminal that answers from a queue and records every prompt. An empty queue
-/// answers [`TtyError::Cancelled`], as Ctrl-D would.
+/// answers [`TtyError::Cancelled`], as Ctrl-D would. `wait_for_key` answers
+/// `wait_answer` at once (true: Enter was pressed; false: the time ran out) after
+/// running `on_wait`.
 #[derive(Default)]
 pub struct FakeTerminal {
     answers: VecDeque<String>,
     pub prompts: Vec<(Kind, String)>,
+    pub wait_answer: bool,
+    pub on_wait: Option<Box<dyn FnMut()>>,
+    /// If set, every prompt is also appended here, as `[prompt]`.
+    pub transcript: Option<Rc<RefCell<String>>>,
 }
 
 impl FakeTerminal {
     pub fn new(answers: &[&str]) -> FakeTerminal {
         FakeTerminal {
             answers: answers.iter().map(|a| (*a).to_owned()).collect(),
-            prompts: Vec::new(),
+            ..FakeTerminal::default()
         }
+    }
+
+    fn record(&mut self, kind: Kind, prompt: &str) {
+        if let Some(t) = &self.transcript {
+            t.borrow_mut().push_str(&format!("[{prompt}]"));
+        }
+        self.prompts.push((kind, prompt.to_owned()));
+    }
+
+    /// The prompts' kinds, in order.
+    pub fn kinds(&self) -> Vec<Kind> {
+        self.prompts.iter().map(|p| p.0).collect()
     }
 
     pub fn unused(&self) -> usize {
@@ -52,7 +77,7 @@ impl FakeTerminal {
 
 impl Terminal for FakeTerminal {
     fn secret(&mut self, prompt: &str, _max_bytes: usize) -> Result<Zeroizing<String>, TtyError> {
-        self.prompts.push((Kind::Secret, prompt.to_owned()));
+        self.record(Kind::Secret, prompt);
         self.answers
             .pop_front()
             .map(Zeroizing::new)
@@ -65,24 +90,99 @@ impl Terminal for FakeTerminal {
         _max_bytes: usize,
         _deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
-        self.prompts.push((Kind::Line, prompt.to_owned()));
+        self.record(Kind::Line, prompt);
         self.answers
             .pop_front()
             .map(|a| Some(Zeroizing::new(a)))
             .ok_or(TtyError::Cancelled)
     }
 
-    fn wait_for_key(&mut self, _until: Instant) -> Result<bool, TtyError> {
-        Ok(false)
+    fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
+        let secs = until
+            .saturating_duration_since(Instant::now())
+            .as_secs_f64()
+            .round();
+        self.record(Kind::Wait, &format!("{secs}"));
+        if let Some(f) = &mut self.on_wait {
+            f();
+        }
+        Ok(self.wait_answer)
     }
 }
 
-/// An `Env` with the floor KDF costs (fast) and no default vault.
+/// What the fake clipboard saw.
+#[derive(Default)]
+pub struct ClipState {
+    /// What is on the clipboard now.
+    pub contents: Option<String>,
+    /// How many times a value was set.
+    pub sets: usize,
+    /// How many times it was cleared.
+    pub clears: usize,
+    /// Another app's copy, put on the clipboard right after Holm's `set`.
+    pub replaced_by: Option<String>,
+}
+
+/// A clipboard over shared [`ClipState`].
+pub struct FakeClip(pub Rc<RefCell<ClipState>>);
+
+impl Clip for FakeClip {
+    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
+        let mut s = self.0.borrow_mut();
+        s.sets += 1;
+        s.contents = Some(s.replaced_by.clone().unwrap_or_else(|| text.to_owned()));
+        Ok(())
+    }
+
+    fn holds(&mut self, text: &str) -> bool {
+        self.0.borrow().contents.as_deref() == Some(text)
+    }
+
+    fn clear(&mut self) {
+        let mut s = self.0.borrow_mut();
+        s.clears += 1;
+        s.contents = None;
+    }
+}
+
+/// An `Env` with the floor KDF costs (fast), no default vault and no clipboard (as
+/// on a system other than macOS).
 pub fn env() -> Env {
     Env {
         kdf: KdfParams::FLOOR,
         clock: Box::new(|| Box::new(SystemClock::new())),
         default_vault: None,
+        clip: Box::new(|| Err(ClipboardError::Unavailable)),
+    }
+}
+
+/// [`env`] with a fake clipboard over `state`.
+pub fn env_with_clip(state: &Rc<RefCell<ClipState>>) -> Env {
+    let state = Rc::clone(state);
+    Env {
+        clip: Box::new(move || Ok(Box::new(FakeClip(Rc::clone(&state))) as Box<dyn Clip>)),
+        ..env()
+    }
+}
+
+/// An output stream that keeps its own bytes and also appends them to a shared
+/// transcript, if one is given.
+struct Tee {
+    own: Vec<u8>,
+    transcript: Option<Rc<RefCell<String>>>,
+}
+
+impl Write for Tee {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.own.extend_from_slice(buf);
+        if let Some(t) = &self.transcript {
+            t.borrow_mut().push_str(&String::from_utf8_lossy(buf));
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -102,18 +202,30 @@ pub struct Ran {
 
 /// Parses `args` (after `holm --vault <path>`) and runs them with `term`.
 pub fn run(path: &Path, args: &[&str], term: &mut FakeTerminal) -> Ran {
+    run_env(path, args, term, &env())
+}
+
+/// [`run`] with a given `Env`. Output also goes to the terminal's transcript, if it
+/// has one.
+pub fn run_env(path: &Path, args: &[&str], term: &mut FakeTerminal, env: &Env) -> Ran {
     let mut full: Vec<OsString> = vec!["--vault".into(), path.as_os_str().to_owned()];
     full.extend(args.iter().map(OsString::from));
-    let mut out = Vec::new();
-    let mut err = Vec::new();
+    let mut out = Tee {
+        own: Vec::new(),
+        transcript: term.transcript.clone(),
+    };
+    let mut err = Tee {
+        own: Vec::new(),
+        transcript: term.transcript.clone(),
+    };
     let code = match holm_cli::args::parse(&full) {
-        Ok(inv) => holm_cli::run(inv, &env(), term, &mut out, &mut err),
+        Ok(inv) => holm_cli::run(inv, env, term, &mut out, &mut err),
         Err(e) => holm_cli::usage_error(&e, &mut err),
     };
     Ran {
         code,
-        out: String::from_utf8(out).unwrap(),
-        err: String::from_utf8(err).unwrap(),
+        out: String::from_utf8(out.own).unwrap(),
+        err: String::from_utf8(err.own).unwrap(),
     }
 }
 

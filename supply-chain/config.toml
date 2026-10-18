@@ -89,7 +89,7 @@ notes = "gui-only, pre-release; audit or replace before Phase 6"
 [[exemptions.arboard]]
 version = "3.7.0"
 criteria = "safe-to-deploy"
-notes = "gui-only, pre-release; audit or replace before Phase 6"
+notes = "desktop clients (holm-gui, holm-cli --copy), pre-release; audit or replace before Phase 6"
 
 [[exemptions.arrayvec]]
 version = "0.7.8"
@@ -594,7 +594,7 @@ notes = "gui-only, pre-release; audit or replace before Phase 6"
 [[exemptions.objc2-app-kit]]
 version = "0.3.2"
 criteria = "safe-to-deploy"
-notes = "gui-only, pre-release; audit or replace before Phase 6"
+notes = "desktop clients (holm-gui, holm-cli --copy), pre-release; audit or replace before Phase 6"
 
 [[exemptions.objc2-cloud-kit]]
 version = "0.2.2"

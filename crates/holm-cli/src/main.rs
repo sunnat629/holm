@@ -6,10 +6,11 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use holm_cli::Env;
 use holm_cli::term::RealTerminal;
+use holm_cli::{Clip, Env};
 use holm_core::clock::SystemClock;
 use holm_crypto::kdf::KdfParams;
+use holm_platform::clipboard::ConcealedClipboard;
 use holm_platform::paths::default_vault_path;
 
 fn main() -> ExitCode {
@@ -25,6 +26,8 @@ fn main() -> ExitCode {
         kdf: KdfParams::DEFAULT,
         clock: Box::new(|| Box::new(SystemClock::new())),
         default_vault: default_vault_path(),
+        // Opened only by a `--copy` command, not at start-up.
+        clip: Box::new(|| Ok(Box::new(ConcealedClipboard::open()?) as Box<dyn Clip>)),
     };
     let stdout = io::stdout();
     let mut out = stdout.lock();
