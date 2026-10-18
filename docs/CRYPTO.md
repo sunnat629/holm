@@ -329,8 +329,54 @@ Known gaps:
   power fails is not tested.
 - A directory sync that the volume does not support (some FAT, exFAT and network
   volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
-- Windows write-through, the Windows directory sync and the file lock that stops two
-  Holm processes saving the same vault wait for Phase 5.
+- Windows write-through and the Windows directory sync wait for Phase 5. The lock that
+  stops two Holm processes opening the same vault (`holm.lock`, see below) arrived in
+  Phase 3.
+
+## The macOS app (Phase 3)
+
+`holm-gui` reaches the vault only through `Session<FsStore>`. Master passwords and item
+passwords are typed into Holm's own `SecretField`, which keeps them in a pre-allocated
+`SecretInput` that never grows and wipes on drop, paints dots instead of laying out
+text, and gives AccessKit a fixed label with no value. Create and unlock move the
+password out of the field before Argon2 starts. Title, username and URL are display
+text, not secrets (spec §8), and use egui's `TextEdit` with a capped, pre-allocated
+`Zeroizing<String>`. A second Holm on the same vault folder finds `holm.lock` held
+(std `File::try_lock`) and shows fixed text without reading the vault.
+
+Known gaps:
+
+- A revealed password reaches egui's text layout (galley) cache and the AccessKit tree.
+  While it is shown, the reveal label's AccessKit node holds the password as its label,
+  until the next frame without it replaces the node (review finding F11). Neither copy
+  is wiped. Reveal hides after `REHIDE_PASSWORD_SECS`, on focus loss and on lock; the
+  label is not selectable.
+- `TextEdit` keeps an undo history of the title, username and URL in plain `String`s,
+  which are not wiped.
+- Paste makes copies Holm cannot wipe: arboard reads the pasteboard into a `String`
+  (Holm moves it into `Zeroizing` at once, but the OS and arboard may keep their own),
+  and a paste into a plain field becomes an egui `Event::Paste(String)`.
+- Typed text arrives from winit as `Event::Text(String)` before `SecretField` copies it
+  into its buffer; those event strings are not wiped.
+- No clipboard auto-clear yet. A copied password stays on the clipboard until something
+  else is copied, and macOS Universal Clipboard (Handoff) can carry it to the user's
+  other Apple devices. The copy is marked `org.nspasteboard.ConcealedType`, which
+  clipboard managers may honour; that is a request, not a control. Phase 5.
+- Holm does not turn on macOS Secure Event Input while a password field has focus, so
+  an app with input-monitoring permission can read the keystrokes. Phase 5.
+- The vault folder check refuses a folder that group or others can write, but checks
+  neither the folder's owner nor its ACL. Phase 5.
+- `holm.lock` is opened without `O_NOFOLLOW`. An `lstat` before and after the open,
+  plus a device and inode match, refuse a symlink, but one swapped in between can make
+  the open create an empty file at its target first. Phase 5.
+- On FAT and exFAT, where hard links fail, `create_new` falls back to an exclusive
+  create that is not crash-atomic (see `FsStore::create_new`). Phase 5.
+- The Linux and Windows builds are not compiled: local CI runs on macOS and GitHub
+  Actions is off. Phase 5.
+- `PasswordChangeUncertain` has no GUI: there is no change-password screen yet, and the
+  Phase 5 screen must say the new password may already be needed. Phase 5.
+- 206 `cargo vet` exemptions cover the GUI crates (note `gui-only, pre-release; audit or
+  replace before Phase 6`). They must be audited or replaced before Phase 6.
 
 ## Not claimed
 

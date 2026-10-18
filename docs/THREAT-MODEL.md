@@ -19,7 +19,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
 | Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser, padding, body decode and the full open with a fixed key are fuzzed (`fuzz/`). |
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on sleep and screen lock, password re-entry for recovery phrases and settings changes. |
-| Clipboard snooping and clipboard history | Partly | Auto-clear, plus OS hints that ask clipboard managers not to record. |
+| Clipboard snooping and clipboard history | Partly | Auto-clear (from Phase 5), plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
 | Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Planned: signed releases, reproducible builds, SBOM. |
 | Malware running as the same user while unlocked | No | Cannot be defended against. Documented plainly. |
@@ -33,6 +33,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 - A deleted item is gone from the new file, not from old copies or backups of it.
 - Wiping memory is best effort. See the claims below.
 - Holm cannot see or stop what the operating system, other programs or hardware do.
+- In Phase 3 builds a copied password stays on the clipboard until something else replaces it. Holm does not clear it, any app can read it, and macOS Universal Clipboard (Handoff) can send it to the user's other Apple devices. The Copy button says so. Auto-clear and clear-on-lock come in Phase 5.
 
 ## Never claim
 

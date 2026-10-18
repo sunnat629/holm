@@ -53,3 +53,38 @@ Phase 2a ships the core, the durable store and the fuzzing above. These keep the
 - Task 11 (#23): import from CSV and JSON. Lesson 19.
 - Task 12 (#24): plaintext CSV export. Lesson 20.
 - The moved parts of Task 13 (#25): the `import_csv` and `import_json` fuzz targets, `tests/import_props.rs`, the `csv_roundtrip_any_fields` property test, and the export and import half of the full round trip.
+
+## Deferred from Phase 3 (macOS walking skeleton)
+
+From the Phase 3 plan's Deferred list and the Task 7 known gaps (`docs/CRYPTO.md`, "The macOS app (Phase 3)"). Phase 3 ships the single-instance lock and the 30 s idle warning; they are not deferred.
+
+Phase 4
+
+- Search in the GUI (Task 9, #21).
+- Import and export in the GUI (Tasks 11 and 12, #23 and #24).
+
+Phase 5 (platform hardening and GUI polish)
+
+- Clipboard auto-clear and clear-on-lock. Until then a copied password stays on the clipboard and macOS Universal Clipboard (Handoff) can carry it to other devices; the Copy button says so.
+- macOS Secure Event Input while a password field has focus.
+- Vault folder owner and ACL check (today only the mode is checked).
+- Open `holm.lock` with `O_NOFOLLOW` (today `lstat` before and after the open).
+- Crash-atomic `create_new` on FAT and exFAT (today an exclusive-create fallback).
+- Keychain and Touch ID option.
+- Memory locking (`mlock`).
+- OS sleep, screen-lock and logout events.
+- Screen-capture exclusion (`with_content_protected`).
+- Per-OS durable save.
+- Windows and Linux GUI (winit `x11` and `wayland` features), and compiling the Linux and Windows builds at all (nothing compiles them while Actions is off).
+- A change-password screen that handles `PasswordChangeUncertain` (the session may already hold the new keys; say so, don't just report failure).
+- The three-pane layout, categories, trash, settings, generator UI and the other 16 screens.
+- Recovery phrase, crypto address and secure note items; notes on logins (an edit keeps existing notes unchanged until then).
+- Icons (Phosphor subset).
+- Latin subsetting of the fonts.
+- The spec §8.0 last-used vault path (Phase 3 uses the default path or `--vault`).
+- Revealed text: drop egui's galley and AccessKit copies sooner, if egui allows it (F11).
+
+Phase 6 (release)
+
+- Clear the 206 `cargo vet` exemptions noted `gui-only, pre-release; audit or replace before Phase 6`, and renew or drop the 49 GUI `trusted` entries that end 2026-12-31.
+- Code signing and notarisation (owner approval).

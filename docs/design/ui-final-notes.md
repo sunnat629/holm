@@ -120,8 +120,8 @@ Neutrals lean slightly blue, towards the accent. Every text pair passes WCAG AA,
 - AccessKit role PasswordInput, with no value.
 
 **StrengthMeter** (custom, small)
-- A 4-segment painter bar, a word label ("Weak · refused", "Strong", "Very strong") and the zxcvbn tip.
-- A password is accepted only if zxcvbn scores it 3 or more and it has at least 12 characters.
+- A 4-segment painter bar, a word label ("Too short", "Very weak", "Weak", "Fair", "Strong", "Too long") and the strength check's warning as fixed text.
+- A password is accepted only if Holm's strength check (`holm_core::strength`, zxcvbn-style, Holm's own code) scores it 4 (`MIN_MASTER_SCORE`) and it has 12 to 1,024 characters. Score 4 is the only "Strong"; a score of 3 shows "Fair" and is refused. Example: `q7#Vt9!mZ2@rL5$w` scores 4 (four segments, "Strong").
 
 **Buttons** (stock)
 - Primary: accent fill.
