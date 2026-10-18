@@ -136,8 +136,8 @@ Secrets leak through side doors: a debug print, a log line, an error message, a 
 
 ## Read next
 
-- [Lesson 07: Modules and encapsulation](07-modules-and-encapsulation.md), for how a private field keeps a secret in one place.
-- [Lesson 03: Errors and results](03-errors-and-results.md), for `Result` and the `?` operator.
+- [The Rust book, ch07: packages, crates and modules](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html), for how a private field keeps a secret in one place.
+- [The Rust book, ch09: error handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html), for `Result` and the `?` operator.
 - [The Rust book on enums and `match`](https://doc.rust-lang.org/book/ch06-00-enums.html)
 
 Next lesson: none yet. Lesson 11 arrives with the next task.
