@@ -353,7 +353,6 @@ impl VaultView {
         let mut action = None;
         egui::Panel::top("vault-top").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("Holm");
                 if ui.button(LOCK_LABEL).clicked() {
                     action = Some(VaultAction::Lock);
                 }
@@ -369,6 +368,10 @@ impl VaultView {
                     .clicked()
                 {
                     self.transfer = Some(Transfer::export());
+                }
+                // A later task adds its button here, on the same row.
+                if ui.button(NEW_LABEL).clicked() {
+                    self.start_new_login();
                 }
             });
         });
@@ -442,14 +445,16 @@ impl VaultView {
     }
 
     /// The left panel: the new-login button and the rows.
+    /// Opens a blank login form in the detail pane.
+    fn start_new_login(&mut self) {
+        self.selected = None;
+        self.reveal_until = None;
+        self.status = None;
+        self.copy_note = None;
+        self.mode = DetailMode::Edit(LoginForm::new_blank());
+    }
+
     fn show_list(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) {
-        if ui.button(NEW_LABEL).clicked() {
-            self.selected = None;
-            self.reveal_until = None;
-            self.status = None;
-            self.copy_note = None;
-            self.mode = DetailMode::Edit(LoginForm::new_blank());
-        }
         if line_field(ui, io, SEARCH_LABEL, &mut self.search) {
             self.rows_stale = true;
         }

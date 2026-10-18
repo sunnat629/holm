@@ -43,6 +43,7 @@ security, three exercises, and what to read next in
 | 34 | [Moving secrets in and out](34-moving-secrets-in-and-out.md): `std::mem::take` to move a typed password into an item without a copy, `to_owned()` straight into a wiping type when a copy can't be avoided, a `Box<dyn Fn>` factory so tests swap in a fake clipboard, and one monotonic `Instant` deadline for the clipboard clear, which runs before any error is returned. |
 | 35 | [A read-eval loop with a deadline](35-a-read-eval-loop-with-a-deadline.md): a `loop` with `match` on an outcome enum, the earlier of two `Option` deadlines with `into_iter().chain().min()`, a quote-aware tokenizer as a small state machine over `(mode, char)`, and keeping per-line secrets in loop locals so they are wiped every turn. |
 | 36 | [Thin screens over the core](36-thin-screens-over-the-core.md): moving owned data through a worker `Job` and back, a GUI flow as a state-machine enum, and why a warning is a core constant the screens only show. |
+| 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 
 ## Side tracks
 
