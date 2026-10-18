@@ -273,14 +273,21 @@ impl<S: VaultStore> Session<S> {
     ///
     /// Order: `current` is checked through the throttle, then the strength of `new`,
     /// then a whole new vault (new salt, costs, data key and nonces) is built with
-    /// [`envelope::create`] and written with [`VaultStore::replace`]. Only after the
-    /// write succeeds are the keys swapped and the dirty flag cleared, so a failed
-    /// write leaves the old password working in memory and on disk.
+    /// [`envelope::create`] and written with [`VaultStore::replace`]. On success the
+    /// keys are swapped and the dirty flag cleared.
+    ///
+    /// A failed `replace` may still have left the new file in place (see its doc), so
+    /// the file is read back. If it still holds the old bytes, the old keys stay and
+    /// the old password keeps working in memory and on disk. Otherwise (new bytes,
+    /// other bytes, or a failed read) the session adopts the new keys and marks
+    /// itself dirty, so memory never stays on a password the disk may no longer use,
+    /// and the next save writes the vault under the new password.
     ///
     /// # Errors
     /// [`CoreError::Locked`], [`CoreError::Throttled`], [`CoreError::WrongPassword`],
-    /// [`CoreError::WeakPassword`], [`CoreError::Body`], [`CoreError::Vault`], or
-    /// [`CoreError::Store`].
+    /// [`CoreError::WeakPassword`], [`CoreError::Body`], [`CoreError::Vault`],
+    /// [`CoreError::Store`] if the old file is known to be unchanged, or
+    /// [`CoreError::PasswordChangeUncertain`] if the new password may now be needed.
     pub fn change_password(
         &mut self,
         current: &MasterPassword,
@@ -296,10 +303,25 @@ impl<S: VaultStore> Session<S> {
         // different passwords. Build, write, then swap.
         let (new_keys, file) = envelope::create(new, params, body.expose())?;
         drop(body);
-        self.store.replace(&file)?;
-        open.keys = new_keys;
-        open.dirty = false;
-        Ok(())
+        // The old file, to tell "unchanged" from "maybe changed" if `replace` fails.
+        // A failed read here only means an unchanged file cannot be proven later.
+        let before = self.store.read().ok();
+        match self.store.replace(&file) {
+            Ok(()) => {
+                open.keys = new_keys;
+                open.dirty = false;
+                Ok(())
+            }
+            Err(e) => {
+                let after = self.store.read().ok();
+                if before.is_some() && after == before {
+                    return Err(CoreError::Store(e));
+                }
+                open.keys = new_keys;
+                open.dirty = true;
+                Err(CoreError::PasswordChangeUncertain(e))
+            }
+        }
     }
 
     /// Records user activity, restarting the auto-lock timer. Does nothing when locked.
@@ -782,6 +804,55 @@ mod tests {
         s.lock();
         assert_eq!(s.unlock(&pw(NEW_PW)), Err(OPAQUE));
         s.unlock(&pw(PW)).unwrap();
+    }
+
+    #[test]
+    fn change_password_error_after_write_adopts_new_password() {
+        let (mut s, _) = created();
+        let before = stored(&s);
+        s.store.fail_after_write = Some(StoreError::Io(ErrorKind::Other));
+        let err = s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR).unwrap_err();
+        assert_eq!(
+            err,
+            CoreError::PasswordChangeUncertain(StoreError::Io(ErrorKind::Other))
+        );
+        let text = err.to_string();
+        assert!(text.contains("may still have been saved"), "{text}");
+        assert!(
+            text.contains("new master password may now be required"),
+            "{text}"
+        );
+        assert_ne!(stored(&s), before, "the new file is in place");
+        // In memory: the new keys, and the session is dirty.
+        assert!(s.is_dirty());
+        assert_eq!(s.check_password(&pw(NEW_PW)), Ok(()));
+        assert_eq!(s.check_password(&pw(PW)), Err(CoreError::WrongPassword));
+        // The next save writes under the new password again.
+        s.save().unwrap();
+        assert!(!s.is_dirty());
+        s.lock();
+        assert_eq!(s.unlock(&pw(PW)), Err(OPAQUE));
+        s.unlock(&pw(NEW_PW)).unwrap();
+    }
+
+    #[test]
+    fn change_password_error_with_unreadable_file_adopts_new_password() {
+        let (mut s, _) = created();
+        s.store.fail_after_write = Some(StoreError::Io(ErrorKind::Other));
+        s.store.fail_reads = true;
+        assert_eq!(
+            s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR),
+            Err(CoreError::PasswordChangeUncertain(StoreError::Io(
+                ErrorKind::Other
+            )))
+        );
+        assert!(s.is_dirty());
+        assert_eq!(s.check_password(&pw(NEW_PW)), Ok(()));
+        s.store.fail_reads = false;
+        s.save().unwrap();
+        s.lock();
+        assert_eq!(s.unlock(&pw(PW)), Err(OPAQUE));
+        s.unlock(&pw(NEW_PW)).unwrap();
     }
 
     #[test]

@@ -118,6 +118,47 @@ const ENOTSUP: Option<i32> = if cfg!(any(target_os = "linux", target_os = "andro
 #[cfg(unix)]
 const EINVAL: i32 = 22;
 
+/// `O_NONBLOCK` for [`open_for_read`], or `None` where its value is not known here
+/// (std only, no `libc`). It makes opening a FIFO return at once instead of waiting
+/// for a writer. A regular file ignores it.
+#[cfg(unix)]
+const O_NONBLOCK: Option<i32> = if cfg!(any(
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)) {
+    Some(0x0004)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64"
+    )
+)) {
+    Some(0o4000)
+} else {
+    None
+};
+
+/// Opens `path` for reading without blocking on a FIFO (Unix, see [`O_NONBLOCK`]),
+/// so a FIFO or device swapped in after the `lstat` check cannot hang the open
+/// before the type and dev+ino checks refuse it.
+fn open_for_read(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if let Some(flag) = O_NONBLOCK {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(flag);
+    }
+    options.open(path)
+}
+
 /// True if a **directory** sync failed only because the volume cannot sync a
 /// directory: `ErrorKind::Unsupported`, or raw `ENOTSUP` or `EINVAL` (some FAT,
 /// exFAT and network volumes). Such a failure counts as success (Security decision,
@@ -314,7 +355,7 @@ impl VaultStore for FsStore {
         if before.len() > MAX_LEN_U64 {
             return Err(StoreError::TooLarge);
         }
-        let file = File::open(&self.path).map_err(|e| match e.kind() {
+        let file = open_for_read(&self.path).map_err(|e| match e.kind() {
             ErrorKind::NotFound => StoreError::NotFound,
             _ => io_err(&e),
         })?;
@@ -456,6 +497,35 @@ impl VaultStore for FsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn open_for_read_does_not_block_on_a_fifo() {
+        if O_NONBLOCK.is_none() {
+            eprintln!("SKIP: O_NONBLOCK value not known on this target");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("fifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let opened = open_for_read(&fifo).map(|f| f.metadata().unwrap().is_file());
+            let _ = tx.send(opened.map_err(|e| e.kind()));
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("opening a FIFO with no writer blocked");
+        assert_eq!(
+            result,
+            Ok(false),
+            "opened at once, and is not a regular file"
+        );
+    }
 
     #[test]
     fn hex_is_lowercase_two_digits_per_byte() {

@@ -88,6 +88,11 @@ pub(crate) struct MemStore {
     pub(crate) bytes: Option<Vec<u8>>,
     /// The next `replace` or `create_new` fails with this error and changes nothing.
     pub(crate) fail_next_write: Option<StoreError>,
+    /// The next `replace` stores the new bytes in full and then fails with this
+    /// error, like a directory sync that fails after the rename.
+    pub(crate) fail_after_write: Option<StoreError>,
+    /// Makes every `read` fail.
+    pub(crate) fail_reads: bool,
     /// Makes every `remove_stale_temps` fail.
     pub(crate) fail_temp_cleanup: bool,
     /// How many times `remove_stale_temps` was called.
@@ -111,6 +116,9 @@ impl MemStore {
 #[cfg(test)]
 impl VaultStore for MemStore {
     fn read(&mut self) -> Result<Vec<u8>, StoreError> {
+        if self.fail_reads {
+            return Err(StoreError::Io(std::io::ErrorKind::PermissionDenied));
+        }
         let bytes = self.bytes.as_ref().ok_or(StoreError::NotFound)?;
         if bytes.len() > MAX_FILE_LEN {
             return Err(StoreError::TooLarge);
@@ -121,7 +129,10 @@ impl VaultStore for MemStore {
     fn replace(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
         self.check_write(bytes)?;
         self.bytes = Some(bytes.to_vec());
-        Ok(())
+        match self.fail_after_write.take() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 
     fn create_new(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
@@ -174,6 +185,26 @@ mod tests {
         assert_eq!(s.read(), Ok(b"old".to_vec()));
         s.bytes = Some(big);
         assert_eq!(s.read(), Err(StoreError::TooLarge));
+    }
+
+    #[test]
+    fn mem_store_can_fail_after_writing() {
+        let mut s = MemStore {
+            bytes: Some(b"old".to_vec()),
+            fail_after_write: Some(StoreError::Io(std::io::ErrorKind::Other)),
+            ..MemStore::default()
+        };
+        assert_eq!(
+            s.replace(b"new"),
+            Err(StoreError::Io(std::io::ErrorKind::Other))
+        );
+        assert_eq!(s.read(), Ok(b"new".to_vec()));
+        assert_eq!(s.replace(b"newer"), Ok(()));
+        s.fail_reads = true;
+        assert_eq!(
+            s.read(),
+            Err(StoreError::Io(std::io::ErrorKind::PermissionDenied))
+        );
     }
 
     #[test]

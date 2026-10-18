@@ -35,6 +35,14 @@ pub enum CoreError {
     /// Reading or writing the vault file failed.
     #[error("{0}")]
     Store(StoreError),
+    /// Writing the vault under the new master password reported this error, but the
+    /// new file may be in place anyway. The session now holds the new keys and is
+    /// dirty, so the next save writes the vault under the new password again.
+    #[error(
+        "{0}; the password change may still have been saved, so the new master \
+         password may now be required"
+    )]
+    PasswordChangeUncertain(StoreError),
     /// The decrypted body could not be decoded, or the data could not be encoded.
     #[error("{0}")]
     Body(BodyError),

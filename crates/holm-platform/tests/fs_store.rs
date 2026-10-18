@@ -194,7 +194,7 @@ fn stale_temp_cleanup_is_exact() {
 #[cfg(unix)]
 mod unix {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     use std::path::{Path, PathBuf};
 
     use holm_core::store::{StoreError, VaultStore};
@@ -253,6 +253,35 @@ mod unix {
         assert_eq!(s.create_new(b"new"), Err(StoreError::AlreadyExists));
         assert_eq!(s.replace(b"new"), Err(StoreError::NotARegularFile));
         assert!(!target.exists());
+        assert!(temps(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn fifo_vault_refused_quickly() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = vault_in(&dir);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut s = FsStore::new(fifo);
+            let _ = tx.send((s.read(), s.replace(b"new"), s.create_new(b"new")));
+        });
+        let (read, replace, create) = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("a FIFO at the vault path blocked");
+        assert_eq!(read, Err(StoreError::NotARegularFile));
+        assert_eq!(replace, Err(StoreError::NotARegularFile));
+        assert_eq!(create, Err(StoreError::AlreadyExists));
+        assert!(
+            fs::symlink_metadata(vault_in(&dir))
+                .unwrap()
+                .file_type()
+                .is_fifo()
+        );
         assert!(temps(dir.path()).is_empty());
     }
 
