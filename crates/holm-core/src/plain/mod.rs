@@ -22,6 +22,10 @@ pub(crate) use json::JsonObject;
 use zeroize::Zeroizing;
 
 /// One decoded CSV cell, JSON key or JSON string value. Wiped when dropped.
+///
+/// `Debug` shows no text: zeroize's `Zeroizing` prints only `Zeroizing { .. }`
+/// (pinned by `cell_debug_hides_the_text`, so a zeroize change that prints the
+/// content fails the build's tests).
 pub(crate) type Cell = Zeroizing<String>;
 
 /// Why a CSV or JSON source was refused. No variant carries any of the input.
@@ -37,4 +41,17 @@ pub(crate) enum PlainError {
     TooManyRows,
     /// More keys in one JSON object than the caller allows.
     TooManyColumns,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cell;
+
+    #[test]
+    fn cell_debug_hides_the_text() {
+        let cell = Cell::new(String::from("EXAMPLE-cell-secret"));
+        let shown = format!("{cell:?} {cell:#?}");
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
+        assert!(!shown.contains("secret"), "{shown}");
+    }
 }
