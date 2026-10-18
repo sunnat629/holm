@@ -16,6 +16,7 @@ thiserror.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
 serde.workspace = true
+postcard.workspace = true
 unicode-normalization.workspace = true
 
 [dev-dependencies]

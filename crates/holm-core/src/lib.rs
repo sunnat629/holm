@@ -5,7 +5,8 @@
 //! exact body size. [`text`], [`item`] and [`category`] hold the item model: wiping
 //! text types, items and categories. [`rules`] holds the field rules, and [`generator`]
 //! makes passwords, passphrases and usernames. [`strength`] checks a candidate master
-//! password.
+//! password. [`settings`] holds the security settings, and [`body`] encodes and decodes
+//! the versioned vault body that the envelope encrypts.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -37,6 +38,18 @@
 //! needs_serialize::<holm_core::generator::UsernameSpec>();
 //! ```
 //!
+//! So do the settings and the vault body:
+//!
+//! ```compile_fail
+//! fn needs_serialize<T: serde::Serialize>() {}
+//! needs_serialize::<holm_core::settings::Settings>();
+//! ```
+//!
+//! ```compile_fail
+//! fn needs_deserialize<T: serde::de::DeserializeOwned>() {}
+//! needs_deserialize::<holm_core::body::VaultData>();
+//! ```
+//!
 //! The same check passes for a type that does implement the trait, so the failures
 //! above come from the missing impl and not from a typo:
 //!
@@ -48,6 +61,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod body;
 pub mod category;
 pub mod envelope;
 pub mod format;
@@ -55,6 +69,7 @@ pub mod generator;
 pub mod item;
 pub mod padding;
 pub mod rules;
+pub mod settings;
 pub mod strength;
 pub mod text;
 pub(crate) mod wire;

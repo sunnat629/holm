@@ -22,6 +22,7 @@ security, three exercises, and what to read next in
 | 10 | [Enums, newtypes and validation](10-enums-newtypes-and-validation.md): items as an enum with data, wiping secret text types, and field errors that name the field but never the value. |
 | 11 | [Randomness without bias](11-randomness-without-bias.md): why `% n` is biased, rejection sampling, `NonZeroU32`, a `dyn Trait` test seam and a built-in wordlist. |
 | 12 | [Owning the check](12-owning-the-strength-check.md): why Holm wrote its own strength check instead of wrapping zxcvbn, a length cap that refuses before it copies, `Zeroizing` scratch buffers, a cheapest-split table over `&[char]`, and a dev-only oracle test with a seeded generator. |
+| 13 | [Serde and a versioned binary format](13-serde-and-versioned-formats.md): serde derive on private wire types only, a format that does not describe itself, a schema version prefix, decode then validate with bounded lengths, rejecting trailing bytes, and measuring before allocating. |
 
 ## Side tracks
 

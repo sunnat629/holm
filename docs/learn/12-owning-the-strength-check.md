@@ -127,4 +127,4 @@ The cost is that our estimator could have bugs. The oracle test bounds that risk
 - [str::chars](https://doc.rust-lang.org/std/primitive.str.html#method.chars)
 - [zeroize::Zeroizing](https://docs.rs/zeroize/latest/zeroize/struct.Zeroizing.html)
 
-Next lesson: none yet. Lesson 13 arrives with the next task.
+Next lesson: [13: Serde and a versioned binary format](13-serde-and-versioned-formats.md).
