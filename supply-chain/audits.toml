@@ -225,21 +225,21 @@ notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed in fu
 
 [[audits.serde]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: same changes as serde_core 1.0.229 (build.rs MSRV cfg, seq_impl reborrow, lint rename, never_type gated on docsrs). No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_core]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: build.rs only moves the serde_derive MSRV cfg from 1.61 to 1.71 (prints cfgs, no I/O); seq_impl uses &mut *self.0; lint rename. No new unsafe, filesystem, network or process access. No secrets handled."
 
 [[audits.serde_derive]]
 who = "Holm maintainers (AI-assisted audit)"
-criteria = "safe-to-deploy"
+criteria = "safe-to-run"
 delta = "1.0.228 -> 1.0.229"
-notes = "Now a normal dependency of holm-core, certified safe-to-deploy. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
+notes = "Delta audit at safe-to-run; the safe-to-deploy claim for shipped builds comes from the dtolnay trust entry. Delta reviewed in full: port to syn 3 (FnPtr, TraitBoundModifiers, attrs fields), iterator chains rewritten as loops, generated code matches Result explicitly instead of using ?, field_i helper reused. Generated code still contains no unsafe. Proc macro does no filesystem, network, env or process access."
 
 [[audits.serde_json]]
 who = "Holm maintainers (AI-assisted audit)"
@@ -327,6 +327,27 @@ user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
 end = "2027-10-17"
 notes = "Dev-only: tempfile -> proptest (holm-core dev-dependency), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.serde]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
+
+[[trusted.serde_core]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
+
+[[trusted.serde_derive]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
 
 [[trusted.syn]]
 criteria = "safe-to-deploy"

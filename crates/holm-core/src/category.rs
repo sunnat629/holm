@@ -1,6 +1,6 @@
 //! Categories and the category-name rules.
 
-use crate::item::{Field, FieldError, is_forbidden_display_char};
+use crate::rules::{Field, FieldError, is_forbidden_display_char};
 use crate::text::{Text, fold};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -19,7 +19,6 @@ pub const MAX_CATEGORY_NAME_CHARS: usize = 64;
 pub struct CategoryId(pub(crate) u32);
 
 /// A named category.
-#[derive(Serialize, Deserialize)]
 pub struct Category {
     pub(crate) id: CategoryId,
     pub(crate) name: Text,
@@ -67,7 +66,9 @@ pub fn validate_category_name(name: &str) -> Result<(), FieldError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::{Field, FieldError};
+    use static_assertions::assert_not_impl_any;
+
+    assert_not_impl_any!(Category: serde::Serialize, serde::de::DeserializeOwned);
 
     #[test]
     fn category_name_rules() {

@@ -136,6 +136,7 @@ One file, default name `holm.vault`. Little-endian, fixed-size header, exact fra
 - There's no CRC. The AEAD tag is the only integrity check, so nobody can mistake a CRC for authentication.
 - Opening order: check file size is at most 64 MiB; read and check the fixed header; check KDF costs against floor and ceiling; check length fields with checked arithmetic; only then run Argon2.
 - Body plaintext is `postcard` (serde) with its own schema version, padded to a multiple of 16 KiB so the file size reveals little about the item count.
+- Security decision: the public item types (`Item`, `ItemData`, `GatedSecret`, `Text`, `SecretText`, `Category`) have no `Serialize` or `Deserialize`. Only crate-private wire types in `holm-core` have serde, and each one re-runs every field rule when converting back to a domain value. This keeps any outside code from writing a secret to bytes or building an unchecked item from bytes. Cost if wrong: the body codec must go through the wire types, which is a little more code. `compile_fail` doctests guard it.
 - A wrong password and a tampered file give the same error. That's unavoidable and correct.
 
 The exact field layout is the builder's to finalise. The rules above are not.

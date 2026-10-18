@@ -53,7 +53,7 @@ pub struct SecretText(Zeroizing<String>);
 
 - A newtype is a struct with one unnamed field, written `(...)`.
 - The inner field is private, so code outside the module cannot reach it. Only `expose()` hands out the text.
-- `SecretText` and `Text` hold the same kind of data but are different types. You cannot pass a secret where plain text is expected, so a secret cannot slip into a log line or a title by accident.
+- `SecretText` and `Text` hold the same kind of data but are different types. You cannot pass a `SecretText` where a `Text` is expected, so a secret does not end up in a title field by a slip. The compiler stops the mix-up, but it does not stop code that calls `expose()` and logs the result. That part is review work.
 - `Zeroizing<String>` overwrites the string's bytes when the value is dropped.
 
 In Kotlin you'd write: `@JvmInline value class SecretText(private val value: String)`. Kotlin cannot wipe the string, but the type separation works the same way.
@@ -71,7 +71,8 @@ impl fmt::Debug for SecretText {
 - `#[derive(Debug)]` would print every field, which for `SecretText` means the secret itself. So we write the impl by hand.
 - `f.write_str` writes a fixed string. It never looks at `self.0`.
 - `ItemData` does the same with a `match`: it prints `Login` or `SecureNote` and nothing else.
-- The types also have no `Clone`, so nobody can copy a secret without it being a visible decision.
+- `SecretText`, `GatedSecret` and `ItemData` have no `Clone`, so nobody can copy a secret without it being a visible decision. (`Text` holds no secret and does derive `Clone`.)
+- None of the item, text or category types implement serde's `Serialize` or `Deserialize` either. Only crate-private wire types in `wire.rs` do, and they re-run every field rule when reading. Two `compile_fail` doctests in `lib.rs` prove that outside code cannot serialize an `Item` or deserialize a `GatedSecret`.
 
 In Kotlin you'd write: a `data class` with an overridden `toString()` that returns `"SecretText([REDACTED])"`. Forgetting the override leaks, because a `data class` prints every field.
 
@@ -88,7 +89,7 @@ fn is_bidi(c: char) -> bool {
 - `|` means "or". `matches!` gives back `true` if `c` fits any pattern.
 - These characters flip the display direction of text. A title can look like `invoice` while holding something else, so display fields reject them.
 
-In Kotlin you'd write: `c.code in 0x202A..0x202E || c.code in 0x2066..0x2069 || c == '؜'`. Kotlin `Char` is a UTF-16 unit, so characters outside the first 65 536 need `Int` code points. Rust `char` covers them all.
+In Kotlin you'd write: `c.code in 0x202A..0x202E || c.code in 0x2066..0x2069 || c == '\u061C'`. Kotlin `Char` is a UTF-16 unit, so characters outside the first 65 536 need `Int` code points. Rust `char` covers them all.
 
 ### Errors that name the field, never the value
 
@@ -116,13 +117,13 @@ In Kotlin you'd write: a `sealed class FieldError` whose subclasses carry a `Fie
 
 ## Why this matters for security
 
-Secrets leak through side doors: a debug print, a log line, an error message, a copy left in memory. The types here close those doors one by one. `Debug` is redacted, there is no `Clone`, memory is wiped on drop, and validation errors carry a label instead of the text that failed. A reviewer can check the whole policy by reading a few small impls.
+Secrets leak through side doors: a debug print, a log line, an error message, a copy left in memory. The types here close those doors one by one. `Debug` is redacted, secrets have no `Clone` and no serde impls, memory is wiped on drop, and validation errors carry a label instead of the text that failed. A reviewer can check the whole policy by reading a few small impls.
 
 ## Try it
 
 1. See the redaction test run.
    - Run: `cargo test -p holm-core --locked secret_text_debug_is_redacted`
-   - Check: the output ends with `1 passed`.
+   - Check: the `test result:` line says `ok. 1 passed`, followed by `filtered out` for the other tests.
    - Undo: nothing to undo, it only reads.
 2. Prove `match` is exhaustive. Add a variant `Card {}` to the `ItemData` enum in `crates/holm-core/src/item.rs`.
    - Run: `cargo check -p holm-core --locked`
@@ -138,3 +139,5 @@ Secrets leak through side doors: a debug print, a log line, an error message, a 
 - [Lesson 07: Modules and encapsulation](07-modules-and-encapsulation.md), for how a private field keeps a secret in one place.
 - [Lesson 03: Errors and results](03-errors-and-results.md), for `Result` and the `?` operator.
 - [The Rust book on enums and `match`](https://doc.rust-lang.org/book/ch06-00-enums.html)
+
+Next lesson: none yet. Lesson 11 arrives with the next task.

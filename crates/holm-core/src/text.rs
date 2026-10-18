@@ -2,10 +2,11 @@
 //!
 //! [`Text`] is for display fields (title, username, URL, chain). [`SecretText`] is for
 //! secrets. [`GatedSecret`] is a secret with no public accessor: only code inside this
-//! crate can read it, so the password gate cannot be bypassed from outside.
+//! crate can read it. None of these types implements `Serialize` or `Deserialize`, so
+//! no downstream serde code can read or build one. The crate's own wire format uses
+//! private data types that are checked on the way in.
 
 use core::fmt;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
@@ -47,18 +48,6 @@ impl fmt::Debug for Text {
     }
 }
 
-impl Serialize for Text {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for Text {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Text, D::Error> {
-        String::deserialize(deserializer).map(Text::new)
-    }
-}
-
 /// A secret text field, wiped when dropped. No `Clone`, no `PartialEq`, and `Debug`
 /// prints `[REDACTED]`.
 pub struct SecretText(Zeroizing<String>);
@@ -95,18 +84,6 @@ impl fmt::Debug for SecretText {
     }
 }
 
-impl Serialize for SecretText {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for SecretText {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<SecretText, D::Error> {
-        String::deserialize(deserializer).map(SecretText::new)
-    }
-}
-
 /// A secret that outside code can store and check for emptiness but never read.
 /// Only this crate can call [`GatedSecret::expose`]; the session reveals it after a
 /// password check.
@@ -126,7 +103,6 @@ impl GatedSecret {
     }
 
     /// The secret, for the password-gated paths inside this crate only.
-    #[allow(dead_code)] // first used by the session's reveal and export paths
     pub(crate) fn expose(&self) -> &str {
         self.0.expose()
     }
@@ -138,22 +114,9 @@ impl fmt::Debug for GatedSecret {
     }
 }
 
-impl Serialize for GatedSecret {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for GatedSecret {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<GatedSecret, D::Error> {
-        SecretText::deserialize(deserializer).map(GatedSecret)
-    }
-}
-
 /// Folds `s` for comparison and search: NFC, then lowercase, one character at a time.
 /// The result is built in a buffer sized up front so it never reallocates (a
 /// reallocation would leave an unwiped copy behind).
-#[allow(dead_code)] // used by name_key now, and by search later
 pub(crate) fn fold(s: &str) -> Zeroizing<String> {
     let mut out = Zeroizing::new(String::with_capacity(3 * s.len()));
     for c in s.nfc() {
@@ -169,6 +132,9 @@ mod tests {
 
     assert_not_impl_any!(SecretText: Clone, Copy);
     assert_not_impl_any!(GatedSecret: Clone, Copy);
+    assert_not_impl_any!(Text: serde::Serialize, serde::de::DeserializeOwned);
+    assert_not_impl_any!(SecretText: serde::Serialize, serde::de::DeserializeOwned);
+    assert_not_impl_any!(GatedSecret: serde::Serialize, serde::de::DeserializeOwned);
 
     #[test]
     fn secret_text_debug_is_redacted() {
@@ -187,16 +153,6 @@ mod tests {
         assert_eq!(format!("{g:?}"), "GatedSecret([REDACTED])");
         assert!(!g.is_empty());
         assert_eq!(g.expose(), "EXAMPLE-phrase");
-    }
-
-    #[test]
-    fn serde_is_a_plain_string() {
-        let t = Text::new("EXAMPLE".into());
-        assert_eq!(serde_json::to_string(&t).unwrap(), "\"EXAMPLE\"");
-        let g: GatedSecret = serde_json::from_str("\"EXAMPLE\"").unwrap();
-        assert_eq!(g.expose(), "EXAMPLE");
-        let s: SecretText = serde_json::from_str("\"x\"").unwrap();
-        assert_eq!(serde_json::to_string(&s).unwrap(), "\"x\"");
     }
 
     #[test]
