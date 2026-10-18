@@ -1,8 +1,9 @@
 //! Holm platform code: everything that talks to the operating system.
 //!
 //! For now this is [`fs_store`], the vault file on disk with durable writes,
-//! [`paths`], where the vault lives by default, and [`lock`], one Holm at a time per
-//! vault folder. All three use the standard library only. On macOS the optional
+//! [`paths`], where the vault lives by default, [`lock`], one Holm at a time per
+//! vault folder, and [`private_file`], the owner-only export file and the capped read
+//! of an import file. All four use the standard library only. On macOS the optional
 //! `gui-window` feature adds `window`, the window's minimised state from AppKit.
 
 // No `unsafe` in the default build: everything there uses safe std APIs, and `unsafe`
@@ -18,6 +19,7 @@
 pub mod fs_store;
 pub mod lock;
 pub mod paths;
+pub mod private_file;
 #[cfg(all(feature = "gui-window", target_os = "macos"))]
 pub mod window;
 

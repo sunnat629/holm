@@ -24,6 +24,7 @@ gui-window = ["dep:raw-window-handle", "dep:objc2", "dep:objc2-app-kit"]
 [dependencies]
 holm-core.workspace = true
 holm-crypto.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = { workspace = true, optional = true }

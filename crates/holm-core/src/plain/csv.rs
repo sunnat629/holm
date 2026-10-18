@@ -211,7 +211,11 @@ pub(crate) fn quoted_len(cell: &str) -> usize {
 /// The caller separates cells with `,` and ends each row with [`ROW_END`].
 pub(crate) fn push_quoted(out: &mut String, cell: &str) {
     let cap = out.capacity();
-    debug_assert!(cap - out.len() >= quoted_len(cell));
+    // Checked in release too: growing here would leave an unwiped copy behind.
+    assert!(
+        cap - out.len() >= quoted_len(cell),
+        "no room for the quoted cell"
+    );
     out.push('"');
     let mut rest = cell;
     while let Some(i) = rest.find('"') {

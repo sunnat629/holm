@@ -179,7 +179,7 @@ pub(crate) const O_NOFOLLOW: Option<i32> = if cfg!(any(
 /// Opens `path` for reading without blocking on a FIFO (Unix, see [`O_NONBLOCK`]),
 /// so a FIFO or device swapped in after the `lstat` check cannot hang the open
 /// before the type and dev+ino checks refuse it.
-fn open_for_read(path: &Path) -> io::Result<File> {
+pub(crate) fn open_for_read(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -219,7 +219,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Opens `path` for writing only if it does not exist yet, mode 0600 on Unix.
 /// `create_new` also refuses a symlink at `path`, so nothing is followed.
-fn create_exclusive(path: &Path) -> Result<File, StoreError> {
+pub(crate) fn create_exclusive(path: &Path) -> Result<File, StoreError> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

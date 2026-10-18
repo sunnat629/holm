@@ -1,5 +1,6 @@
 //! The whole Phase 2a path end to end, through the public API only: create, add,
-//! lock, unlock, edit, change the password, back up, open the backup.
+//! lock, unlock, edit, change the password, back up, open the backup. On disk it then
+//! exports to an owner-only CSV file, reads it back and imports it into a new vault.
 //!
 //! Runs twice: on `FsStore` in a temporary directory (real files, durable writes)
 //! and on an in-memory store, so a failure points at either the store or the core.
@@ -8,12 +9,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use holm_core::category::CategoryId;
+use holm_core::category::{BUILT_IN_CATEGORIES, CategoryId};
 use holm_core::clock::SystemClock;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::format::Header;
 use holm_core::generator::{PasswordSpec, generate_password};
+use holm_core::import::{ImportFormat, MAX_IMPORT_BYTES, parse};
 use holm_core::item::{ItemData, ItemId, ItemInput, Timestamp};
 use holm_core::session::Session;
 use holm_core::settings::Settings;
@@ -22,6 +24,7 @@ use holm_core::text::{GatedSecret, SecretText, Text};
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
+use holm_platform::private_file::{read_capped, write_new_private_file};
 
 const PW: &str = "correct-Horse-battery-staple-EXAMPLE-9";
 const NEW_PW: &str = "Quokka-Sextant-velvet-EXAMPLE-ember-71";
@@ -269,6 +272,66 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
     (s, b)
 }
 
+/// The items of `v` by title, as an import into another vault sees them: a built-in
+/// category by its name, a user category as none (import never creates one).
+fn portable(v: View) -> Vec<(Option<String>, Snap)> {
+    let mut out: Vec<(Option<String>, Snap)> = v
+        .items
+        .into_values()
+        .map(|mut snap| {
+            let name = snap.category.take().and_then(|id| {
+                v.categories
+                    .iter()
+                    .find(|(c, n)| *c == id && BUILT_IN_CATEGORIES.contains(&n.as_str()))
+                    .map(|(_, n)| n.clone())
+            });
+            (name, snap)
+        })
+        .collect();
+    out.sort_by(|a, b| a.1.title.cmp(&b.1.title));
+    out
+}
+
+/// Exports the unlocked `s` to an owner-only file in `dir`, reads it back through the
+/// import cap and imports it into a new vault there. Every active item comes back.
+fn export_and_reimport(s: &mut Session<FsStore>, dir: &Path) {
+    let csv = s.export_csv(&pw(NEW_PW)).unwrap();
+    let export = dir.join("holm-export.csv");
+    write_new_private_file(&export, csv.expose()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&export).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert_eq!(
+        write_new_private_file(&export, b"EXAMPLE"),
+        Err(StoreError::AlreadyExists)
+    );
+    let bytes = read_capped(&export, MAX_IMPORT_BYTES).unwrap();
+    assert_eq!(bytes.as_slice(), csv.expose());
+
+    let batch = parse(&bytes, ImportFormat::Csv).unwrap();
+    assert!(batch.issues().is_empty());
+    let mut other = Session::new(
+        FsStore::new(dir.join("imported.vault")),
+        Box::new(SystemClock::new()),
+    );
+    other.create(&pw(PW), &KdfParams::FLOOR).unwrap();
+    let report = other.import(batch).unwrap();
+    assert_eq!(report.imported, 4, "the trashed note stays out");
+    assert_eq!(report.duplicates, 0);
+
+    let expected = portable(view(s, &pw(NEW_PW)));
+    let got = portable(view(&mut other, &pw(PW)));
+    assert_eq!(got, expected);
+    assert!(
+        got.iter()
+            .any(|(c, snap)| c.is_some() && snap.title == "Seed")
+    );
+    assert!(got.iter().any(|(_, snap)| snap.favourite));
+}
+
 /// Names in `dir` that look like a temp file (`*.tmp-*`).
 fn temps(dir: &Path) -> Vec<String> {
     fs::read_dir(dir)
@@ -283,7 +346,8 @@ fn full_round_trip_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("holm.vault");
     let backup = dir.path().join("holm-backup.vault");
-    let (s, b) = round_trip(FsStore::new(&vault), FsStore::new(&backup));
+    let (mut s, b) = round_trip(FsStore::new(&vault), FsStore::new(&backup));
+    export_and_reimport(&mut s, dir.path());
     drop((s, b));
     for path in [&vault, &backup] {
         let bytes = fs::read(path).unwrap();
