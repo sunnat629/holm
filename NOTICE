@@ -41,3 +41,25 @@ Data:     zxcvbn built the lists from leaked-password frequencies (Xato / Mark B
           derived word rankings, which zxcvbn ships under its MIT grant above.
 SHA-256:  664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276
 Changes:  none. The file is a byte-exact copy of the source. Holm parses it at run time.
+
+Atkinson Hyperlegible Next (Regular)
+------------------------------------
+File:     crates/holm-gui/assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf
+Author:   Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors
+          (https://github.com/googlefonts/atkinson-hyperlegible-next)
+Source:   https://github.com/googlefonts/atkinson-hyperlegible-next/blob/7925f50f649b3813257faf2f4c0b381011f434f1/fonts/ttf/AtkinsonHyperlegibleNext-Regular.ttf
+          (commit 7925f50f649b3813257faf2f4c0b381011f434f1)
+License:  SIL Open Font License, Version 1.1 (OFL-1.1); full text in LICENSES/OFL-1.1.txt
+SHA-256:  88ed5c31a71584c7772963b02d04bef1eb7e3d2e9c8b9cb204339b1f82cf432c
+Changes:  none. The file is a byte-exact copy of the source. Holm embeds it in the app.
+
+Atkinson Hyperlegible Mono (Regular)
+------------------------------------
+File:     crates/holm-gui/assets/fonts/AtkinsonHyperlegibleMono-Regular.ttf
+Author:   Copyright 2020-2024 The Atkinson Hyperlegible Mono Project Authors
+          (https://github.com/googlefonts/atkinson-hyperlegible-next-mono)
+Source:   https://github.com/googlefonts/atkinson-hyperlegible-next-mono/blob/154d50362016cc3e873eb21d242cd0772384c8f9/fonts/ttf/AtkinsonHyperlegibleMono-Regular.ttf
+          (commit 154d50362016cc3e873eb21d242cd0772384c8f9)
+License:  SIL Open Font License, Version 1.1 (OFL-1.1); full text in LICENSES/OFL-1.1.txt
+SHA-256:  2c9a7b9fabebd5c746a808d8a1ef2f52e618850caad6ec4fd9f5c48f56e1c1af
+Changes:  none. The file is a byte-exact copy of the source. Holm embeds it in the app.

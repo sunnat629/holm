@@ -120,9 +120,9 @@ const EINVAL: i32 = 22;
 
 /// `O_NONBLOCK` for [`open_for_read`], or `None` where its value is not known here
 /// (std only, no `libc`). It makes opening a FIFO return at once instead of waiting
-/// for a writer. A regular file ignores it.
+/// for a writer. A regular file ignores it. [`crate::lock`] uses it too.
 #[cfg(unix)]
-const O_NONBLOCK: Option<i32> = if cfg!(any(
+pub(crate) const O_NONBLOCK: Option<i32> = if cfg!(any(
     target_vendor = "apple",
     target_os = "freebsd",
     target_os = "openbsd",

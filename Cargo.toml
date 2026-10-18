@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-platform", "crates/holm-cli"]
+members = [
+    "crates/holm-crypto",
+    "crates/holm-core",
+    "crates/holm-platform",
+    "crates/holm-cli",
+    "crates/holm-gui",
+]
 # Separate workspaces (own lockfiles): libsodium oracle tests and cargo-fuzz.
 exclude = ["oracle", "fuzz"]
 
@@ -40,6 +46,14 @@ thiserror = "2"
 subtle = "2.6"
 zxcvbn = { version = "3", default-features = false }
 
+# GUI (holm-gui, macOS target only). Exact pins: a GUI bump is a reviewed change.
+# eframe: `glow` renderer and `accesskit` (spec §10 screen readers) only. Off on purpose:
+# default_fonts, persistence, clipboard (pulls arboard's image decoders), wgpu, wayland,
+# x11, web_screen_reader, links, system_fonts. egui comes through `eframe::egui`.
+eframe = { version = "=0.37.0", default-features = false, features = ["glow", "accesskit"] }
+# Plain-text clipboard only; Holm calls it itself (no image support).
+arboard = { version = "=3.7.0", default-features = false }
+
 # Dev and test only
 proptest = "1.12"
 hex = "0.4"
@@ -47,6 +61,8 @@ serde_json = "1"
 static_assertions = "1.1"
 # Throwaway directories for holm-platform tests. Already in the graph through proptest.
 tempfile = "3"
+# Headless egui tests for holm-gui (macOS only).
+egui_kittest = { version = "=0.37.0", default-features = false }
 
 # Argon2 is slow in unoptimised builds. Optimise dependencies even in dev
 # so tests that derive keys stay fast. Our own code stays easy to debug.

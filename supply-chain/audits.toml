@@ -321,6 +321,27 @@ start = "2026-08-05"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
+[[trusted.async-trait]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2026-08-08"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os, bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.autocfg]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2026-05-22"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.bytes]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2026-07-08"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.cc]]
 criteria = "safe-to-run"
 trusted-publisher = "github:rust-lang/cc-rs"
@@ -343,11 +364,25 @@ end = "2027-10-18"
 notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
 [[trusted.either]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2026-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.either]]
 criteria = "safe-to-run"
 user-id = 539 # Josh Stone (cuviper)
 start = "2026-10-06"
 end = "2027-10-18"
 notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.equivalent]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2026-10-13"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.fancy-regex]]
 criteria = "safe-to-run"
@@ -377,6 +412,13 @@ start = "2026-08-11"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
+[[trusted.hashbrown]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2026-05-09"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported ariel-os, bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.iana-time-zone]]
 criteria = "safe-to-run"
 trusted-publisher = "github:strawlab/iana-time-zone"
@@ -384,12 +426,26 @@ start = "2026-01-28"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
+[[trusted.indexmap]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2026-09-05"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.itertools]]
 criteria = "safe-to-run"
 user-id = 1442 # Jack Wrenn (jswrenn)
 start = "2024-12-31"
 end = "2027-10-18"
 notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.jobserver]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2026-07-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os, bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.js-sys]]
 criteria = "safe-to-run"
@@ -413,11 +469,25 @@ end = "2027-10-17"
 notes = "Runtime FFI bindings used by getrandom and cpufeatures. 0.2.190 onward are published by crates.io trusted publishing from the official rust-lang/libc repository; earlier versions came from rust-lang-owner, whom isrg, mozilla, ariel-os and others trust. Replaces the libc exemption (Phase 2 Task 1, #13)."
 
 [[trusted.linux-raw-sys]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2025-01-08"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.linux-raw-sys]]
 criteria = "safe-to-run"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-06-12"
 end = "2027-10-17"
 notes = "Dev-only: rustix -> tempfile -> proptest, never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.lock_api]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2025-10-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.log]]
 criteria = "safe-to-run"
@@ -425,6 +495,48 @@ user-id = 3204 # Ashley Mannix (KodrAus)
 start = "2026-08-22"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.parking_lot]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2025-10-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.parking_lot_core]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2025-10-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.phf]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2026-06-21"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.phf_generator]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2026-06-21"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.phf_macros]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2026-06-21"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.phf_shared]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2026-06-21"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.pin-project-lite]]
 criteria = "safe-to-run"
@@ -455,6 +567,13 @@ end = "2027-10-18"
 notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
 [[trusted.rustix]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2025-01-21"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.rustix]]
 criteria = "safe-to-run"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
@@ -462,11 +581,32 @@ end = "2027-10-17"
 notes = "Dev-only: tempfile -> proptest (holm-core dev-dependency), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
 
 [[trusted.rustversion]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2026-07-07"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os, bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.rustversion]]
 criteria = "safe-to-run"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2026-07-07"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.scoped-tls]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2022-10-31"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.scopeguard]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2023-07-17"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.serde]]
 criteria = "safe-to-deploy"
@@ -489,6 +629,27 @@ start = "2019-03-01"
 end = "2027-10-17"
 notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
 
+[[trusted.serde_repr]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2026-07-18"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported ariel-os, bytecode-alliance, isrg, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.serde_spanned]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2026-10-08"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.slab]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2026-01-31"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.slab]]
 criteria = "safe-to-run"
 user-id = 6741 # Alice Ryhl (Darksonn)
@@ -510,12 +671,47 @@ start = "2026-08-01"
 end = "2027-10-18"
 notes = "Dev-only: built for tests as part of the zxcvbn test-oracle dev-dependency of holm-core (Phase 2 Task 4, #16); never in a shipped binary, so safe-to-run only. Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
+[[trusted.tokio]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2026-10-13"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.toml]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2026-10-09"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.toml_datetime]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2026-10-08"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.toml_edit]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2026-10-09"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.toml_edit]]
 criteria = "safe-to-run"
 user-id = 6743 # Ed Page (epage)
 start = "2021-09-13"
 end = "2027-10-17"
 notes = "Dev-only: proc-macro-crate (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.toml_parser]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2026-10-09"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.toml_parser]]
 criteria = "safe-to-run"
@@ -559,12 +755,47 @@ start = "2026-09-25"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
+[[trusted.windows]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-collections]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-core]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
 [[trusted.windows-core]]
 criteria = "safe-to-run"
 user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2025-10-06"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-future]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-implement]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.windows-implement]]
 criteria = "safe-to-run"
@@ -574,11 +805,32 @@ end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
 [[trusted.windows-interface]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-interface]]
 criteria = "safe-to-run"
 user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2025-10-06"
 end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
+
+[[trusted.windows-numerics]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-result]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.windows-result]]
 criteria = "safe-to-run"
@@ -588,6 +840,13 @@ end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
 [[trusted.windows-strings]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-strings]]
 criteria = "safe-to-run"
 user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2025-10-06"
@@ -595,11 +854,95 @@ end = "2027-10-18"
 notes = "Lock-only: wasm32-only subtree of zxcvbn (chrono, wasm-bindgen, web-sys); never built for Holm. Listed because cargo vet checks every locked crate; safe-to-run only (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm audit; start is the locked version's publish date. Expires 2027-10-18; re-check then."
 
 [[trusted.windows-sys]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2023-11-15"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-sys]]
 criteria = "safe-to-run"
 user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2021-11-15"
 end = "2027-10-17"
 notes = "Dev-only: errno, rustix and tempfile (proptest dev tree); Holm's Windows RNG path does not use it. Never in a shipped binary, so safe-to-run only. isrg, zcash, mozilla, ariel-os and others trust kennykerr. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.windows-targets]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows-threading]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2025-10-06"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for the same crate by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_aarch64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_aarch64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_i686_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_i686_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_i686_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_x86_64_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_x86_64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.windows_x86_64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-03"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, zcash audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
+
+[[trusted.winnow]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2026-07-13"
+end = "2026-12-31"
+notes = "GUI-only (holm-gui dependency graph, Phase 3 Task 1). Not a Holm audit: the publisher is already trusted for other crates by the imported bytecode-alliance, mozilla audit set(s), with a current end date. Start is the locked version's publish date. Expires 2026-12-31, before Phase 6 and no later than the imported trust; audit or replace before Phase 6."
 
 [[trusted.winnow]]
 criteria = "safe-to-run"

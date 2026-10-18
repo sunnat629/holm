@@ -101,6 +101,8 @@ wordlist_gate() {
   printf '%s\n' \
     "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e  crates/holm-core/src/eff_large_wordlist.txt" \
     "664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276  crates/holm-core/src/strength/frequency_lists.coffee" \
+    "88ed5c31a71584c7772963b02d04bef1eb7e3d2e9c8b9cb204339b1f82cf432c  crates/holm-gui/assets/fonts/AtkinsonHyperlegibleNext-Regular.ttf" \
+    "2c9a7b9fabebd5c746a808d8a1ef2f52e618850caad6ec4fd9f5c48f56e1c1af  crates/holm-gui/assets/fonts/AtkinsonHyperlegibleMono-Regular.ttf" \
     | shasum -a 256 -c -
 }
 gate wordlist wordlist_gate
