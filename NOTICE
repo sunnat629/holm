@@ -63,3 +63,13 @@ Source:   https://github.com/googlefonts/atkinson-hyperlegible-next-mono/blob/15
 License:  SIL Open Font License, Version 1.1 (OFL-1.1); full text in LICENSES/OFL-1.1.txt
 SHA-256:  2c9a7b9fabebd5c746a808d8a1ef2f52e618850caad6ec4fd9f5c48f56e1c1af
 Changes:  none. The file is a byte-exact copy of the source. Holm embeds it in the app.
+
+Wycheproof XChaCha20-Poly1305 test vectors
+------------------------------------------
+File:     crates/holm-crypto/tests/vectors/xchacha20_poly1305_test.json
+Author:   Copyright Google LLC (Project Wycheproof, now C2SP/wycheproof)
+Source:   https://github.com/C2SP/wycheproof/blob/7a325932231bd7a724c791c8b0d65ea4d6d2f435/testvectors_v1/xchacha20_poly1305_test.json
+          (commit 7a325932231bd7a724c791c8b0d65ea4d6d2f435)
+License:  Apache License, Version 2.0 (Apache-2.0); full text in LICENSES/Apache-2.0.txt
+SHA-256:  a79de072571b90eb40c3a63ce0c7f75dcb4b62323c8870228e1f61dcc61d63a9
+Changes:  none. The file is a byte-exact copy of the source. Holm uses it only as a test input.
