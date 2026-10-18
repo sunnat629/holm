@@ -6,6 +6,9 @@
 //! does not shorten a wait. Every unlock error counts as a failure (F16), whatever its
 //! kind, so a corrupt-file error cannot be used to dodge the throttle. That is enforced
 //! by [`Throttle::attempt`], the only way to run a guarded action.
+//!
+//! The wait is measured from attempt start to attempt start, so the time Argon2 takes
+//! counts toward it. This is intended.
 
 use std::time::Duration;
 

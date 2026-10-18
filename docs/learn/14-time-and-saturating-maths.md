@@ -4,6 +4,8 @@
 
 Holm needs to measure two waits: the pause after failed unlocks, and the idle time before auto-lock. `clock.rs` holds a `Clock` trait, the real `SystemClock`, and `IdleTimer`. `throttle.rs` holds `delay_after`, `Throttle` (with `attempt`, the one way to run a guarded action) and `ThrottleStatus`. The code is in `crates/holm-core/src/`.
 
+Honesty note: the throttle lives in memory, so restarting Holm resets it. It slows a person at the keyboard; the real defence against offline guessing is Argon2id (lesson 04 and the crypto crate).
+
 ## Rust ideas in this task
 
 ### `Duration`, and two kinds of clock
@@ -17,7 +19,7 @@ pub trait Clock: Send {
 
 - `Duration` is a span of time (seconds plus nanoseconds), not a point in time. Holm's monotonic clock is just "how long since the clock was made", as a `Duration`.
 - `SystemTime` is the wall clock. The user, or an attacker with a few minutes at the machine, can set it back. `Instant` is monotonic: it never goes backwards, whatever the wall clock does.
-- So the throttle uses only `monotonic()`. If they used wall time, setting the clock back an hour would erase a 60-second wait, and a quick brute-force script would not need to wait at all.
+- So the throttle uses only `monotonic()`. If it used wall time, setting the clock back an hour would erase a 60-second wait, and a quick brute-force script would not need to wait at all.
 - `Instant` has a catch: on macOS and Linux it may not count time asleep. So `IdleTimer` also records wall time, and locks when **either** the monotonic idle time **or** a forward wall-clock gap reaches the limit. A backward wall jump gives a gap of zero and is ignored, so wall time can only make the lock come sooner, never later.
 - `SystemTime::duration_since` returns a `Result`, because the time may be before 1970. Holm turns that error into 0.
 
@@ -92,8 +94,6 @@ In Kotlin you'd write: `fun <T> attempt(f: () -> T): T` with `try/finally`. Rust
 ## Why this matters for security
 
 Every unlock error counts as a failure (F16), so a damaged file cannot be used to retry without a pause. Task 7 routes unlock through `attempt`, which makes that rule hard to forget. The throttle runs on monotonic time and the idle timer can only be made shorter by the wall clock, so changing the date never helps an attacker.
-
-Honesty note: the throttle lives in memory. Restarting Holm resets it. It slows a person at the keyboard; the real defence against offline guessing is Argon2id (lesson 04 and the crypto crate).
 
 ## Try it
 
