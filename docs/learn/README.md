@@ -18,6 +18,7 @@ security, three exercises, and what to read next in
 | 06 | [Parsing bytes safely](06-parsing-bytes-safely.md): the vault header, with no panics on bad input. |
 | 07 | [Modules and encapsulation](07-modules-and-encapsulation.md): the envelope that creates, opens, saves and re-keys a vault, and how privacy keeps the data key in one module. |
 | 08 | [Property tests and fuzzing](08-property-tests-and-fuzzing.md): letting the computer invent hostile inputs. |
+| 09 | [Feature unification and cargo vet](09-feature-unification-and-vet.md): turning on a feature inside a transitive dependency, and imports, trust and exemptions in `cargo vet`. |
 
 ## Side tracks
 

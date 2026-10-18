@@ -194,8 +194,11 @@ Known gaps:
   can be swapped to disk by the OS while they are in use.
 - The upstream `chacha20` crate does not wipe its HChaCha20 subkey, so a short-lived copy
   can remain after each seal or open.
-- The `argon2` crate's own small temporaries (its BLAKE2b state and a 1 KiB stack
-  buffer) are not wiped.
+- The `argon2` crate's 1 KiB stack buffer is not wiped, nor are the 64-byte hash
+  outputs its `blake2b_long` keeps on the stack (one of them holds a copy of the KEK).
+  The BLAKE2b hash state itself (`Blake2bVarCore` and the block buffer inside
+  `Blake2b512`) wipes on drop, because Holm's direct `blake2` dependency turns on its
+  `zeroize` feature.
 - Copies made before a secret reaches Holm's types (for example, the caller's `String`
   for the password, or the normaliser's scratch space) are outside our control.
 - The plaintext body passed to `create`, `reseal` and `rekey` belongs to the caller, who

@@ -77,9 +77,10 @@ impl KdfParams {
 ///
 /// The Argon2 work area (64 MiB to 1 GiB of password-derived data) is wiped
 /// before it is freed. It is not locked in RAM, so the OS may still swap it
-/// out while the derivation runs. The argon2 crate's own small temporaries
-/// (its BLAKE2b state and a 1 KiB stack buffer) are outside our control and
-/// are not wiped.
+/// out while the derivation runs. The BLAKE2b hash state inside argon2 wipes
+/// on drop (our direct `blake2` dependency turns on its `zeroize` feature).
+/// The argon2 crate's 1 KiB stack buffer is not wiped, nor are the 64-byte
+/// hash outputs its `blake2b_long` keeps on the stack.
 ///
 /// # Errors
 /// Returns [`CryptoError::KdfParams`] if `params` break the policy, and
@@ -164,6 +165,19 @@ pub fn argon2id_raw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // argon2 hashes with `Blake2bVarCore` and `Blake2b512`. Our direct `blake2`
+    // dependency turns on its `zeroize` feature, so their state wipes on drop.
+    // `Blake2b512` has no `ZeroizeOnDrop` marker of its own, but its only two
+    // fields (the core wrapper and the block buffer) both have it.
+    static_assertions::assert_impl_all!(blake2::Blake2bVarCore: zeroize::ZeroizeOnDrop);
+    static_assertions::assert_impl_all!(
+        blake2::digest::block_api::CtOutWrapper<blake2::Blake2bVarCore, blake2::digest::consts::U64>:
+            zeroize::ZeroizeOnDrop
+    );
+    static_assertions::assert_impl_all!(
+        blake2::digest::block_api::Buffer<blake2::Blake2bVarCore>: zeroize::ZeroizeOnDrop
+    );
 
     #[test]
     fn default_and_floor_are_valid() {

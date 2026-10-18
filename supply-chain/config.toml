@@ -34,59 +34,14 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 [[exemptions.borsh-derive]]
 version = "1.8.1"
 criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). In Cargo.lock only as an optional dependency of bit-vec (proptest dev tree); `cargo tree -e all --target all` shows it is not built for Holm. It is a 5.6k-line proc-macro with no runtime presence. Risk accepted: none at runtime, theoretical build-time code execution if a future feature change ever activates it. Revisit if it starts being built (cargo tree shows it) or at the Phase 2 supply-chain review."
-
-[[exemptions.libc]]
-version = "0.2.191"
-criteria = "safe-to-deploy"
-notes = "Kept exempt (safe-to-deploy). Runtime FFI bindings (136k lines) used by getrandom (getentropy, getrandom, open, read, poll, futex) and cpufeatures (sysctlbyname, getauxval); too big for a line audit by this team. Published by the rust-lang-owner team; isrg, mozilla, ariel-os and others trust that publisher for libc. The call sites Holm actually reaches were reviewed in the getrandom 0.4.3 and cpufeatures 0.3.1 audits. Risk accepted: a wrong extern signature or constant in the generated bindings, or a compromised release. Revisit at the Phase 2 supply-chain review: either `cargo vet trust libc rust-lang-owner` (COS policy call) or import an audit of this exact version."
-
-[[exemptions.linux-raw-sys]]
-version = "0.12.1"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: rustix -> tempfile -> proptest (holm-core dev-dependency). It is a 202k-line generated syscall-constant crate; the only available delta is 0.6.5 -> 0.12.1, which is not tractable. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 0.12.x, or adopt `cargo vet trust linux-raw-sys sunfishcode` (COS policy call)."
+notes = "Dev-only, kept exempt (safe-to-run). In Cargo.lock only as an optional dependency of bit-vec (proptest dev tree); `cargo tree -e all --target all` shows it is not built for Holm. It is a 5.6k-line proc-macro with no runtime presence. Risk accepted: none at runtime, theoretical build-time code execution if a future feature change ever activates it. Kept at the Phase 2 supply-chain review (#13): no imported audit, and no imported set trusts its publisher (nearprotocol-ci). Revisit if it starts being built (cargo tree shows it)."
 
 [[exemptions.proptest]]
 version = "1.12.0"
 criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-dependency of holm-core for property tests; it is 27k lines with no imported audit of 1.12. Never part of a shipped binary. It uses fork/timeout (rusty-fork, already delta-audited), tempfile and regex-syntax at test time. Risk accepted: malicious code running on developer and CI machines during cargo test. Revisit when an imported audit covers proptest 1.12, or at the Phase 2 supply-chain review."
+notes = "Dev-only, kept exempt (safe-to-run). Dev-dependency of holm-core for property tests; it is 27k lines with no imported audit of 1.12. Never part of a shipped binary. It uses fork/timeout (rusty-fork, already delta-audited), tempfile and regex-syntax at test time. Risk accepted: malicious code running on developer and CI machines during cargo test. Kept at the Phase 2 supply-chain review (#13): no imported set trusts its publisher (rexmas). Revisit when an imported audit covers proptest 1.12."
 
 [[exemptions.r-efi]]
 version = "6.0.0"
 criteria = "safe-to-deploy"
-notes = """Kept exempt (safe-to-deploy). A dependency of getrandom only on target_os = "uefi" (the efi_rng backend), which Holm never builds; it is in Cargo.lock only because the lockfile spans every target. It is 10k lines of UEFI type and protocol definitions. Risk accepted: none for Holm's macOS/Linux/Windows targets. Revisit only if a UEFI target is ever added."""
-
-[[exemptions.rustix]]
-version = "1.1.5"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: tempfile -> proptest (holm-core dev-dependency). The only delta is 0.38.32 -> 1.1.5 (35k changed lines), and it is heavy in unsafe syscall code; not tractable for this team now. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 1.1.x, or adopt `cargo vet trust rustix sunfishcode` (COS policy call)."
-
-[[exemptions.syn]]
-version = "2.0.119"
-criteria = "safe-to-deploy"
-notes = "Kept exempt (safe-to-deploy). Build-time only: the parser behind zeroize_derive, which generates the Zeroize/ZeroizeOnDrop impls compiled into Holm. It is 67k lines with no runtime presence of its own. Published by dtolnay, whom isrg, mozilla, ariel-os and others trust. Risk accepted: a compromised syn could inject code into derived impls or run code at build time. Revisit at the Phase 2 supply-chain review: `cargo vet trust syn dtolnay` (COS policy call), or an imported audit of this exact version."
-
-[[exemptions.syn]]
-version = "3.0.9"
-criteria = "safe-to-deploy"
-notes = "Kept exempt (safe-to-deploy). Build-time only: the parser behind thiserror-impl (Holm's error derives) and serde_derive (dev tree). It is 69k lines with no runtime presence of its own. Published by dtolnay, whom isrg, mozilla, ariel-os and others trust. Risk accepted: a compromised syn could inject code into derived impls or run code at build time. Revisit at the Phase 2 supply-chain review: `cargo vet trust syn dtolnay` (COS policy call), or an imported audit of this exact version."
-
-[[exemptions.toml_edit]]
-version = "0.25.17+spec-1.1.0"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: proc-macro-crate (proptest dev tree). The only delta is 0.22.20 -> 0.25.17 (440 files, 14k changed lines). Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 0.25.x, or adopt `cargo vet trust toml_edit epage` (COS policy call)."
-
-[[exemptions.toml_parser]]
-version = "1.1.5+spec-1.1.0"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: toml_edit (proptest dev tree). It is 8k lines with no imported audit of 1.1.5. Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers it, or adopt `cargo vet trust toml_parser epage` (COS policy call)."
-
-[[exemptions.windows-sys]]
-version = "0.61.2"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: errno/rustix/tempfile (proptest dev tree); Holm's own Windows RNG path (getrandom ProcessPrng) does not use it. It is 335k lines of generated Win32 bindings. Never part of a shipped binary. Risk accepted: a malicious test-time dependency on Windows developer and CI machines. Revisit if it enters the runtime tree, or adopt `cargo vet trust windows-sys kennykerr` (COS policy call)."
-
-[[exemptions.winnow]]
-version = "1.0.4"
-criteria = "safe-to-run"
-notes = "Kept exempt (safe-to-run). Dev-only: toml_edit and toml_parser (proptest dev tree). The only delta is 0.6.18 -> 1.0.4 (39k changed lines). Never part of a shipped binary. Risk accepted: a malicious test-time dependency running on developer and CI machines. Revisit when an imported audit covers 1.0.x, or adopt `cargo vet trust winnow epage` (COS policy call)."
+notes = """Unused target, kept exempt (safe-to-deploy). A dependency of getrandom only on target_os = "uefi" (the efi_rng backend), which Holm never builds; it is in Cargo.lock only because the lockfile spans every target. It is 10k lines of UEFI type and protocol definitions. Risk accepted: none for Holm's macOS/Linux/Windows targets. Revisit only if a UEFI target is ever added."""

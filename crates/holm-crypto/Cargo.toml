@@ -19,6 +19,8 @@ argon2.workspace = true
 chacha20poly1305.workspace = true
 # Turns on poly1305/zeroize through feature unification (see root Cargo.toml).
 poly1305.workspace = true
+# Turns on blake2/zeroize through feature unification (see root Cargo.toml).
+blake2.workspace = true
 
 [features]
 # Exposes `kdf::argon2id_raw`, which skips the cost policy. Only the test-only

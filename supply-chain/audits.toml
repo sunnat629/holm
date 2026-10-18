@@ -306,3 +306,59 @@ who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-run"
 delta = "1.0.21 -> 1.0.23"
 notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed for safe-to-run: float formatting rewrite with new NEON/SSE paths and table lookups using pointer adds and get_unchecked; empty asm! comments used as optimisation barriers only. build.rs now also reads OPT_LEVEL and prints a cfg, nothing else. No filesystem, network or process access. The SIMD and table-index unsafe was skimmed, not proven in bounds; not suitable as a safe-to-deploy basis."
+
+[[trusted.libc]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:rust-lang/libc"
+start = "2026-10-02"
+end = "2027-10-17"
+notes = "Runtime FFI bindings used by getrandom and cpufeatures. 0.2.190 onward are published by crates.io trusted publishing from the official rust-lang/libc repository; earlier versions came from rust-lang-owner, whom isrg, mozilla, ariel-os and others trust. Replaces the libc exemption (Phase 2 Task 1, #13)."
+
+[[trusted.linux-raw-sys]]
+criteria = "safe-to-run"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-06-12"
+end = "2027-10-17"
+notes = "Dev-only: rustix -> tempfile -> proptest, never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.rustix]]
+criteria = "safe-to-run"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-10-29"
+end = "2027-10-17"
+notes = "Dev-only: tempfile -> proptest (holm-core dev-dependency), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.syn]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2027-10-17"
+notes = "Build-time only: the parser behind zeroize_derive and thiserror-impl, whose generated impls are compiled into Holm. isrg, mozilla, ariel-os and others trust dtolnay. Replaces the syn 2 and 3 exemptions (Phase 2 Task 1, #13)."
+
+[[trusted.toml_edit]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2021-09-13"
+end = "2027-10-17"
+notes = "Dev-only: proc-macro-crate (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.toml_parser]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2025-07-08"
+end = "2027-10-17"
+notes = "Dev-only: toml_edit (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.windows-sys]]
+criteria = "safe-to-run"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2027-10-17"
+notes = "Dev-only: errno, rustix and tempfile (proptest dev tree); Holm's Windows RNG path does not use it. Never in a shipped binary, so safe-to-run only. isrg, zcash, mozilla, ariel-os and others trust kennykerr. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.winnow]]
+criteria = "safe-to-run"
+user-id = 6743 # Ed Page (epage)
+start = "2023-02-22"
+end = "2027-10-17"
+notes = "Dev-only: toml_edit and toml_parser (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."

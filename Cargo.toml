@@ -25,6 +25,9 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 # Direct dep only to unify features: chacha20poly1305 does not enable poly1305/zeroize
 # itself, so the MAC key and state would not be wiped. Keep this line.
 poly1305 = { version = "0.9", default-features = false, features = ["zeroize"] }
+# Direct dep only to unify features: argon2 does not enable blake2/zeroize itself,
+# so its BLAKE2b hash state would not be wiped. Keep this line.
+blake2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 zeroize = { version = "1.9", features = ["derive"] }
 getrandom = "0.4"
 unicode-normalization = "0.1"
