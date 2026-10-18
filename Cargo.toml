@@ -34,6 +34,7 @@ unicode-normalization = "0.1"
 serde = { version = "1", default-features = false, features = ["std", "derive"] }
 thiserror = "2"
 subtle = "2.6"
+zxcvbn = { version = "3", default-features = false }
 
 # Dev and test only
 proptest = "1.12"

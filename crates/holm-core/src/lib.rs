@@ -4,7 +4,8 @@
 //! creates, opens, re-saves and re-keys a vault, and [`padding`] hides the
 //! exact body size. [`text`], [`item`] and [`category`] hold the item model: wiping
 //! text types, items and categories. [`rules`] holds the field rules, and [`generator`]
-//! makes passwords, passphrases and usernames.
+//! makes passwords, passphrases and usernames. [`strength`] checks a candidate master
+//! password.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -54,5 +55,6 @@ pub mod generator;
 pub mod item;
 pub mod padding;
 pub mod rules;
+pub mod strength;
 pub mod text;
 pub(crate) mod wire;

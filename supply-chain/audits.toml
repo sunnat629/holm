@@ -307,6 +307,139 @@ criteria = "safe-to-run"
 delta = "1.0.21 -> 1.0.23"
 notes = "Dev-only (test dependency), certified safe-to-run. Delta reviewed for safe-to-run: float formatting rewrite with new NEON/SSE paths and table lookups using pointer adds and get_unchecked; empty asm! comments used as optimisation barriers only. build.rs now also reads OPT_LEVEL and prints a cfg, nothing else. No filesystem, network or process access. The SIMD and table-index unsafe was skimmed, not proven in bounds; not suitable as a safe-to-deploy basis."
 
+[[trusted.aho-corasick]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-03-28"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.android_system_properties]]
+criteria = "safe-to-deploy"
+user-id = 1281 # Nicolas Silva (nical)
+start = "2022-06-27"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.autocfg]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-05-22"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.bit-set]]
+criteria = "safe-to-deploy"
+user-id = 38
+start = "2019-03-21"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.bit-vec]]
+criteria = "safe-to-deploy"
+user-id = 38
+start = "2019-03-21"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.cc]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:rust-lang/cc-rs"
+start = "2025-09-01"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.chrono]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-07-25"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.deranged]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:jhpratt/deranged"
+start = "2026-10-13"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.either]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-04-02"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.fancy-regex]]
+criteria = "safe-to-deploy"
+user-id = 5997
+start = "2019-10-18"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.fancy-regex]]
+criteria = "safe-to-deploy"
+user-id = 308963 # Keith Hall (keith-hall)
+start = "2025-08-01"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.find-msvc-tools]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:rust-lang/cc-rs"
+start = "2025-09-05"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.futures-core]]
+criteria = "safe-to-deploy"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2020-10-05"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.futures-task]]
+criteria = "safe-to-deploy"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2019-07-29"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.futures-util]]
+criteria = "safe-to-deploy"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2020-10-05"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.iana-time-zone]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:strawlab/iana-time-zone"
+start = "2026-01-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.itertools]]
+criteria = "safe-to-deploy"
+user-id = 1442 # Jack Wrenn (jswrenn)
+start = "2019-10-27"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.js-sys]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.lazy_static]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2026-10-01"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
 [[trusted.libc]]
 criteria = "safe-to-deploy"
 trusted-publisher = "github:rust-lang/libc"
@@ -321,12 +454,82 @@ start = "2021-06-12"
 end = "2027-10-17"
 notes = "Dev-only: rustix -> tempfile -> proptest, never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
 
+[[trusted.log]]
+criteria = "safe-to-deploy"
+user-id = 3204 # Ashley Mannix (KodrAus)
+start = "2019-07-10"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.memchr]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-07-07"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.num-conv]]
+criteria = "safe-to-deploy"
+user-id = 15682 # Jacob Pratt (jhpratt)
+start = "2023-12-23"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.once_cell]]
+criteria = "safe-to-deploy"
+user-id = 2699 # Alex Kladov (matklad)
+start = "2019-05-07"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.pin-project-lite]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:taiki-e/pin-project-lite"
+start = "2026-02-27"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.powerfmt]]
+criteria = "safe-to-deploy"
+user-id = 15682 # Jacob Pratt (jhpratt)
+start = "2023-10-08"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.regex]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-27"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.regex-automata]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-25"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.regex-syntax]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-03-30"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
 [[trusted.rustix]]
 criteria = "safe-to-run"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
 end = "2027-10-17"
 notes = "Dev-only: tempfile -> proptest (holm-core dev-dependency), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust sunfishcode. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.rustversion]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-07-08"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
 
 [[trusted.serde]]
 criteria = "safe-to-deploy"
@@ -349,12 +552,33 @@ start = "2019-03-01"
 end = "2027-10-17"
 notes = "Normal dependency of holm-core (the DTO wire types derive it). isrg, mozilla, ariel-os and others trust dtolnay. Covers the 1.0.229 deploy path (Phase 2 Task 2, #14)."
 
+[[trusted.slab]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-10-13"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
 [[trusted.syn]]
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-03-01"
 end = "2027-10-17"
 notes = "Build-time only: the parser behind zeroize_derive and thiserror-impl, whose generated impls are compiled into Holm. isrg, mozilla, ariel-os and others trust dtolnay. Replaces the syn 2 and 3 exemptions (Phase 2 Task 1, #13)."
+
+[[trusted.time]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:time-rs/time"
+start = "2026-06-30"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
+
+[[trusted.time-core]]
+criteria = "safe-to-deploy"
+user-id = 15682 # Jacob Pratt (jhpratt)
+start = "2020-12-17"
+end = "2027-10-18"
+notes = "Built transitive dependency of zxcvbn (Phase 2 Task 4, #16). Trust rests on the crates.io publisher identity, not a Holm code audit. Expires 2027-10-18; re-check then."
 
 [[trusted.toml_edit]]
 criteria = "safe-to-run"
@@ -370,6 +594,76 @@ start = "2025-07-08"
 end = "2027-10-17"
 notes = "Dev-only: toml_edit (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
 
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.web-sys]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:wasm-bindgen/wasm-bindgen"
+start = "2026-04-28"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.windows-core]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.windows-implement]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-01-27"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.windows-interface]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-02-18"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.windows-result]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
+[[trusted.windows-strings]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2027-10-18"
+notes = "Lock-only for Holm: pulled by zxcvbn or its time dependency on wasm32, Windows, Android or Apple targets, never built on the current targets. Trust rests on the crates.io publisher identity, not a Holm code audit. Added with zxcvbn (Phase 2 Task 4, #16). Expires 2027-10-18."
+
 [[trusted.windows-sys]]
 criteria = "safe-to-run"
 user-id = 64539 # Kenny Kerr (kennykerr)
@@ -383,3 +677,10 @@ user-id = 6743 # Ed Page (epage)
 start = "2023-02-22"
 end = "2027-10-17"
 notes = "Dev-only: toml_edit and toml_parser (proptest dev tree), never in a shipped binary, so safe-to-run only. isrg, mozilla, ariel-os and others trust epage. Replaces the exemption (Phase 2 Task 1, #13)."
+
+[[trusted.zxcvbn]]
+criteria = "safe-to-deploy"
+user-id = 3357 # Josh Holmer (shssoichiro)
+start = "2019-08-06"
+end = "2027-10-18"
+notes = "Direct dependency of holm-core (master password strength check, Phase 2 Task 4, #16). Trust rests on the crates.io publisher (shssoichiro, the sole owner), not on a code audit by Holm; zxcvbn is passively maintained. Holm calls only zxcvbn() and the feedback getters, with default features off. Expires 2027-10-18; re-check then."

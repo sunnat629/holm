@@ -17,6 +17,7 @@ subtle.workspace = true
 zeroize.workspace = true
 serde.workspace = true
 unicode-normalization.workspace = true
+zxcvbn.workspace = true
 
 [dev-dependencies]
 static_assertions.workspace = true

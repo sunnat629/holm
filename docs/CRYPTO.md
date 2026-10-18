@@ -204,6 +204,11 @@ Known gaps:
   for the password, or the normaliser's scratch space) are outside our control.
 - The plaintext body passed to `create`, `reseal` and `rekey` belongs to the caller, who
   must wipe it.
+- zxcvbn copies the candidate master password into memory Holm cannot wipe. Its matchers
+  build lowercase and substitution variants as ordinary `String`s, and the scoring result
+  holds substrings of the password. Holm drops the result straight after copying out the
+  fixed advice text, but the freed memory is not zeroed. zxcvbn also scores only the first
+  100 characters, so Holm's length rule is the only check on the rest.
 
 ## Not claimed
 
