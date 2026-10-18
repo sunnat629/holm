@@ -1,7 +1,7 @@
 //! Items and the item-level field rules.
 //!
 //! An [`Item`] is one vault entry. Its text lives in wiping types from [`crate::text`].
-//! [`validate_item`] is the single implementation of the item rules (the per-field
+//! `validate_item` is the single implementation of the item rules (the per-field
 //! checks live in [`crate::rules`]): adding, updating and decoding a stored vault all
 //! call it. A [`FieldError`] names the field that failed
 //! and never carries the value.

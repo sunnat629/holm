@@ -1,7 +1,7 @@
 //! Password, passphrase and username generators.
 //!
 //! Randomness comes from the operating system through [`holm_crypto::fill_random`].
-//! Every choice goes through [`uniform_below`], which uses rejection sampling so no
+//! Every choice goes through `uniform_below`, which uses rejection sampling so no
 //! value is more likely than another. Generated secrets come back as [`SecretText`],
 //! which wipes its memory when dropped. The spec types hold settings, not secrets.
 

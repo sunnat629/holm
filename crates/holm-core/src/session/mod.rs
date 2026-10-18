@@ -266,6 +266,9 @@ impl<S: VaultStore> Session<S> {
         let body = open.data.encode()?;
         let file = envelope::reseal(&mut open.keys, body.expose())?;
         drop(body);
+        // `reseal` stored the backup's header (its body nonce) in `open.keys`. That
+        // is harmless: the session's own file has another nonce, and every save draws
+        // a fresh one, so no nonce is ever used twice.
         dest.create_new(&file).map_err(map_create_error)
     }
 

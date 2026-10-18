@@ -18,7 +18,7 @@ use crate::store::VaultStore;
 ///
 /// # Errors
 /// [`CoreError::TooManyItems`], [`CoreError::UnknownCategory`], or
-/// [`CoreError::Crypto`]-style failures from the random id draw.
+/// [`CoreError::Vault`] (`Crypto`) if the random id draw fails.
 pub(crate) fn insert_new(
     data: &mut VaultData,
     input: ItemInput,
@@ -299,11 +299,9 @@ impl<S: VaultStore> Session<S> {
 mod tests {
     use super::super::Session;
     use super::super::tests::{
-        FLOOR, NEW_PW, PW, WRONG, created, created_locked, failures, open_file, pw, secs, session,
-        stored,
+        PW, WRONG, created, created_locked, failures, open_file, pw, secs, stored,
     };
     use crate::body::VaultData;
-    use crate::category::CategoryId;
     use crate::envelope::{self, VaultError};
     use crate::error::CoreError;
     use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
@@ -655,8 +653,8 @@ mod tests {
         assert!(!s.is_dirty());
     }
 
-    /// Seeds big logins until fewer than one more fits. Returns (the seeded session's
-    /// size of one big login, ids of seeded items).
+    /// Seeds big logins until fewer than one more fits. Returns the encoded size of
+    /// one big login and the ids of the seeded items.
     fn fill_to_the_brim(s: &mut S) -> (usize, Vec<ItemId>) {
         let base = data_mut(s).encode().unwrap().expose().len();
         data_mut(s).items.push(seed_item(big_login("probe")));
@@ -812,11 +810,5 @@ mod tests {
             Err(CoreError::Locked)
         );
         assert_eq!(s.reveal_phrase(id, &pw(PW)).unwrap_err(), CoreError::Locked);
-    }
-
-    // Keep these names used so the shared helper imports stay honest.
-    #[test]
-    fn helpers_are_wired() {
-        let _ = (NEW_PW, FLOOR, session as fn() -> _, None::<CategoryId>);
     }
 }

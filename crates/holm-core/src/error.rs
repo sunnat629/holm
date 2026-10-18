@@ -58,7 +58,8 @@ pub enum CoreError {
     /// This change needs the master password.
     #[error("this change needs the master password")]
     PasswordRequired,
-    /// The new master password is too easy to guess.
+    /// The new master password is too easy to guess. The verdict holds numbers only
+    /// (score, character count, verdict flag), never the password, so its `Debug` output is safe.
     #[error("this master password is too easy to guess")]
     WeakPassword(StrengthVerdict),
     /// No item has that id.

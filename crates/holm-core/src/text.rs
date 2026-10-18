@@ -85,7 +85,7 @@ impl fmt::Debug for SecretText {
 }
 
 /// A secret that outside code can store and check for emptiness but never read.
-/// Only this crate can call [`GatedSecret::expose`]; the session reveals it after a
+/// Only this crate can call `GatedSecret::expose`; the session reveals it after a
 /// password check.
 ///
 /// The lock-in: `expose` is `pub(crate)`, so code in another crate cannot read the
