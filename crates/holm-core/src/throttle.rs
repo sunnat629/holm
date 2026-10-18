@@ -170,6 +170,24 @@ mod tests {
     }
 
     #[test]
+    fn throttle_follows_a_fake_clock() {
+        use crate::clock::{Clock, FakeClock};
+        let c = FakeClock::default();
+        let mut t = Throttle::new();
+        for _ in 0..3 {
+            let _ = t.attempt(c.monotonic(), || Err::<(), _>(()));
+        }
+        assert_eq!(t.status(c.monotonic()).retry_after, Some(s(2)));
+        c.advance(s(1));
+        assert_eq!(t.status(c.monotonic()).retry_after, Some(s(1)));
+        // A wall-clock jump back must not change the wait.
+        c.set_unix(-1_000_000);
+        assert_eq!(t.status(c.monotonic()).retry_after, Some(s(1)));
+        c.advance(s(1));
+        assert_eq!(t.attempt(c.monotonic(), || Ok::<_, ()>(5)), Ok(5));
+    }
+
+    #[test]
     fn attempt_err_counts_and_returns_the_error() {
         let mut t = Throttle::new();
         let r: Result<(), _> = t.attempt(s(1), || Err("bad"));

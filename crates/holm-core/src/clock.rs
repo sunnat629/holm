@@ -228,6 +228,16 @@ mod tests {
     }
 
     #[test]
+    fn set_unix_backwards_leaves_monotonic_unchanged() {
+        let c = FakeClock::default();
+        c.set_unix(1_000);
+        c.advance(secs(7));
+        c.set_unix(10);
+        assert_eq!(c.monotonic(), secs(7));
+        assert_eq!(c.now_unix(), Timestamp(10));
+    }
+
+    #[test]
     fn fake_clock_is_shared_between_handles() {
         let a = FakeClock::default();
         let b = a.clone();
