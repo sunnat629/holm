@@ -13,6 +13,7 @@ use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::import::ImportError;
 use holm_core::rules::{Field, FieldError};
+use holm_core::settings::{CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS};
 use holm_core::store::StoreError;
 use holm_core::throttle::ThrottleStatus;
 
@@ -89,8 +90,15 @@ pub const SECRET_TOO_LONG: &str =
     "This password is too long to edit here, so it is shown read-only.";
 /// No login is selected.
 pub const SELECT_OR_ADD: &str = "Select a login, or add one.";
-/// The password was copied. Fixed text for Phase 3, which has no clipboard clearing.
-pub const COPIED: &str = "Password copied. Holm doesn't clear the clipboard yet, so copy something else when you're done.";
+/// The line after a copy, naming the vault's clipboard time. `secs` is clamped to the
+/// settings range, as the clear itself clamps it.
+#[must_use]
+pub fn copied_note(secs: u32) -> String {
+    let secs = secs.clamp(CLIPBOARD_MIN_SECS, CLIPBOARD_MAX_SECS);
+    format!("Copied. Holm clears the clipboard in {secs} seconds.")
+}
+/// The auto-clear found another app's copy on the clipboard and left it alone.
+pub const CLIPBOARD_CHANGED: &str = "The clipboard changed, so Holm left it alone.";
 /// The clipboard did not take the password.
 pub const COPY_FAILED: &str = "Couldn't copy. Try again.";
 /// A paste would not fit the field, so nothing was pasted.
@@ -177,7 +185,7 @@ const ALL: [&str; 50] = [
     NOT_SAVED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
-    COPIED,
+    CLIPBOARD_CHANGED,
     COPY_FAILED,
     PASTE_TOO_LONG,
     UNSAVED_ON_LOCK,
@@ -504,6 +512,24 @@ mod tests {
             export_error(&CoreError::WrongPassword),
             EXPORT_WRONG_PASSWORD
         );
+    }
+
+    #[test]
+    fn copied_note_names_the_clear_time_over_the_whole_range() {
+        for secs in CLIPBOARD_MIN_SECS..=CLIPBOARD_MAX_SECS {
+            let line = copied_note(secs);
+            assert_eq!(
+                line,
+                format!("Copied. Holm clears the clipboard in {secs} seconds.")
+            );
+            assert!(
+                !line.contains(['%', '<', '>', '/', '\\']),
+                "not plain text: {line}"
+            );
+        }
+        // Out-of-range times are clamped like the clear itself.
+        assert!(copied_note(0).contains(" 5 seconds"));
+        assert!(copied_note(u32::MAX).contains(" 90 seconds"));
     }
 
     #[test]

@@ -9,12 +9,12 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use common::{
-    ClipState, FakeTerminal, Kind, PW, Ran, env, env_with_clip, init, run, run_env, session, usage,
-    vault_dir,
+    ClipState, FakeClip, FakeTerminal, Kind, PW, Ran, env, env_with_clip, init, run, run_env,
+    session, usage, vault_dir,
 };
 use holm_cli::CliError;
 use holm_cli::args::CopyField;
-use holm_cli::commands::copy::value_of;
+use holm_cli::commands::copy::{copy_and_wait, value_of};
 use holm_cli::output::write_error;
 use holm_core::error::CoreError;
 use holm_core::generator::PasswordSpec;
@@ -654,6 +654,26 @@ fn copy_waits_then_clears_only_if_unchanged() {
 
 fn env_no_clip() -> holm_cli::Env {
     env()
+}
+
+#[test]
+fn copy_wait_is_clamped_to_the_shared_range() {
+    for (asked, waited) in [(0_u32, "5"), (u32::MAX, "90"), (30, "30")] {
+        let clip = Rc::new(RefCell::new(ClipState::default()));
+        let mut term = FakeTerminal::new(&[]);
+        let mut err = Vec::new();
+        copy_and_wait(
+            zeroize::Zeroizing::new("EXAMPLE-clamp".to_owned()),
+            asked,
+            &mut FakeClip(Rc::clone(&clip)),
+            &mut term,
+            &mut err,
+        )
+        .expect("copy");
+        assert_eq!(term.prompts, vec![(Kind::Wait, waited.to_owned())]);
+        let said = String::from_utf8(err).expect("utf8");
+        assert!(said.contains(&format!("in {waited} seconds")), "{said}");
+    }
 }
 
 #[test]

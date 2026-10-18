@@ -26,7 +26,6 @@ use zeroize::Zeroizing;
 use super::FieldIo;
 use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
 use super::transfer::{Transfer, TransferAction};
-use crate::clipboard::SecretClipboard;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
 use crate::worker::{Job, JobKind, TransferFail, TransferResult};
@@ -106,7 +105,7 @@ pub(crate) struct VaultView {
     /// other messages never hide it while the session is dirty.
     save_error: Option<&'static str>,
     /// The fixed line under the password after the Copy button, if any.
-    copy_note: Option<&'static str>,
+    copy_note: Option<String>,
     /// Whether the unsaved-changes dialog of a manual lock is open.
     lock_dialog: bool,
     /// The search box. Wiped when the view drops on lock.
@@ -542,7 +541,7 @@ impl VaultView {
                 }
                 FormAction::Save => job = self.save_form(session),
             },
-            DetailMode::View => job = job.or(self.show_item(ui, session, now, io.clipboard)),
+            DetailMode::View => job = job.or(self.show_item(ui, session, now, io)),
         }
         job
     }
@@ -584,12 +583,18 @@ impl VaultView {
     }
 
     /// The selected login, read-only, with the Copy button for its password.
+    /// Sets or clears the line under the Copy button (the app's clipboard clear
+    /// reports through it).
+    pub(crate) fn set_copy_note(&mut self, note: Option<String>) {
+        self.copy_note = note;
+    }
+
     fn show_item(
         &mut self,
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
-        clipboard: &mut dyn SecretClipboard,
+        io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let item = self
             .selected
@@ -640,14 +645,17 @@ impl VaultView {
             }
             // Only through Holm's clipboard (concealed), never egui's `copy_text`.
             if ui.button(COPY_LABEL).clicked() {
-                self.copy_note = Some(match clipboard.set_secret(password.expose()) {
-                    Ok(()) => messages::COPIED,
-                    Err(_) => messages::COPY_FAILED,
+                self.copy_note = Some(match io.clipboard.set(password.expose()) {
+                    Ok(()) => {
+                        io.copied = Some(Zeroizing::new(password.expose().to_owned()));
+                        messages::copied_note(io.clear_secs)
+                    }
+                    Err(_) => messages::COPY_FAILED.to_owned(),
                 });
             }
         });
-        if let Some(note) = self.copy_note {
-            ui.label(note);
+        if let Some(note) = &self.copy_note {
+            ui.label(note.as_str());
         }
         ui.add_space(8.0);
         if ui.button(EDIT_LABEL).clicked() {

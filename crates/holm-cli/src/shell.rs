@@ -44,6 +44,7 @@ use crate::output::CliError;
 use crate::term::Terminal;
 use crate::vault::{self, WRONG_PASSWORD};
 use crate::{Env, USAGE};
+use holm_platform::clip_clear::PendingClear;
 
 /// The prompt while the vault is open.
 pub const PROMPT: &str = "holm> ";
@@ -273,11 +274,9 @@ fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
 
 /// A copied value waiting to be cleared from the clipboard. No `Debug`: it holds the
 /// value.
-struct PendingClear {
+struct Pending {
     clip: Box<dyn Clip>,
-    value: Zeroizing<String>,
-    /// When to clear it, on the shell's clock.
-    at: Duration,
+    clear: PendingClear,
 }
 
 /// What the loop does after a line.
@@ -306,7 +305,7 @@ struct Shell<'a> {
     env: &'a Env,
     /// When the last line was read, on the shell's clock.
     last_active: Duration,
-    pending: Option<PendingClear>,
+    pending: Option<Pending>,
 }
 
 /// Runs `holm shell` on the vault at `path` and returns the exit code: 0 after
@@ -591,7 +590,7 @@ impl Shell<'_> {
         if self
             .pending
             .as_ref()
-            .is_some_and(|p| self.clock.monotonic() >= p.at)
+            .is_some_and(|p| p.clear.is_due(self.clock.as_ref()))
         {
             self.clear_clipboard(err)?;
         }
@@ -670,10 +669,9 @@ impl Shell<'_> {
         err: &mut dyn Write,
     ) -> Result<(), CliError> {
         clip.set(&value).map_err(|_| CliError::CopyFailed)?;
-        self.pending = Some(PendingClear {
+        self.pending = Some(Pending {
             clip,
-            value,
-            at: self.clock.monotonic() + Duration::from_secs(u64::from(secs)),
+            clear: PendingClear::new(value, secs, self.clock.as_ref()),
         });
         writeln!(err, "Copied. Holm clears the clipboard in {secs} seconds.")?;
         Ok(())
@@ -685,7 +683,7 @@ impl Shell<'_> {
         let Some(mut p) = self.pending.take() else {
             return Ok(());
         };
-        match copy::clear_copied(p.clip.as_mut(), &p.value) {
+        match copy::clear_copied(p.clip.as_mut(), p.clear.value()) {
             Ok(said) => writeln!(err, "{said}")?,
             Err(e) => writeln!(err, "holm: {e}")?,
         }
@@ -707,7 +705,7 @@ impl Shell<'_> {
             .session
             .is_unlocked()
             .then(|| self.last_active + Duration::from_secs(u64::from(self.auto_lock_secs())));
-        let clear = self.pending.as_ref().map(|p| p.at);
+        let clear = self.pending.as_ref().map(|p| p.clear.due());
         // The earlier of the two, or None if neither is set.
         let target = idle.into_iter().chain(clear).min()?;
         let wait = target.saturating_sub(self.clock.monotonic()).max(MIN_WAIT);

@@ -15,6 +15,7 @@ use common::{
 use eframe::egui::{Event, Key};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_gui::app::{HolmApp, ScreenKind};
 use holm_gui::messages;
 
@@ -96,10 +97,13 @@ fn run_flow(dir: &Path) {
     harness.run();
     {
         let state = fake.0.borrow();
-        assert_eq!(state.sets.len(), 1, "one set_secret call");
+        assert_eq!(state.sets.len(), 1, "one set call");
         assert_eq!(state.sets[0].as_str(), SECRET);
     }
-    assert_shown(&harness, messages::COPIED);
+    assert_shown(
+        &harness,
+        messages::copied_note(CLIPBOARD_DEFAULT_SECS).as_str(),
+    );
 
     // Lock with the button.
     harness.get_by_label("Lock").click();

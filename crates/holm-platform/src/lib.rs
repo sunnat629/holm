@@ -7,8 +7,9 @@
 //! `gui-window` feature adds `window`, the window's minimised state from AppKit. The
 //! optional `tty` feature (holm-cli) adds [`tty`]: the no-echo password prompt on the
 //! controlling terminal, through rustix's safe termios API. The optional `clipboard`
-//! feature (holm-cli) adds [`clipboard`]: the macOS pasteboard, with every copy marked
-//! concealed, through arboard's safe API.
+//! feature (holm-cli, holm-gui) adds [`clipboard`]: the macOS pasteboard, with every copy marked
+//! concealed, through arboard's safe API. [`clip_clear`] is the one clear rule shared by
+//! the CLI, the shell and the GUI, behind a small `Clip` trait so tests use a fake.
 
 // No `unsafe` in the default build: everything there uses safe std APIs, and `unsafe`
 // stays forbidden. The `gui-window` feature on macOS lowers this to `deny` so that the
@@ -20,6 +21,7 @@
 #![cfg_attr(all(feature = "gui-window", target_os = "macos"), deny(unsafe_code))]
 #![deny(missing_docs)]
 
+pub mod clip_clear;
 #[cfg(feature = "clipboard")]
 pub mod clipboard;
 pub mod fs_store;

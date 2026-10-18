@@ -20,9 +20,13 @@ use eframe::egui;
 use holm_core::clock::Clock;
 use holm_core::error::CoreError;
 use holm_core::session::Session;
-use holm_core::settings::{AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS};
+use holm_core::settings::{
+    AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS, CLIPBOARD_DEFAULT_SECS,
+    CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS,
+};
 use holm_core::throttle::ThrottleStatus;
 use holm_crypto::kdf::KdfParams;
+use holm_platform::clip_clear::{ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
@@ -120,6 +124,8 @@ pub struct HolmApp {
     /// idle timer (monotonic part only) for the warning; the lock itself always asks
     /// the session.
     last_activity: Duration,
+    /// A copied password waiting for its clipboard clear.
+    pending_clear: Option<PendingClear>,
     /// Why the vault last locked, until the next unlock.
     lock_note: Option<LockNote>,
     /// The unlock screen's line for `lock_note`.
@@ -171,6 +177,7 @@ impl HolmApp {
             vault_path: vault_path.clone(),
             spawner: spawn_worker,
             last_activity: Duration::ZERO,
+            pending_clear: None,
             lock_note: None,
             lock_line: None,
         };
@@ -223,6 +230,7 @@ impl HolmApp {
             return;
         };
         let outcome = session.lock();
+        self.run_pending_clear();
         self.screen = Screen::Unlock(UnlockForm::new());
         self.focus = FieldFocus::None;
         let note = LockNote {
@@ -231,6 +239,32 @@ impl HolmApp {
         };
         self.lock_line = Some(messages::lock_line(&note, auto_lock));
         self.lock_note = Some(note);
+    }
+
+    /// Runs the waiting clipboard clear now, if any: clears the clipboard when it still
+    /// holds the copied password, leaves it alone when something else is there. The
+    /// vault screen, if showing, says so. Safe to call on any screen.
+    fn run_pending_clear(&mut self) {
+        let Some(pending) = self.pending_clear.take() else {
+            return;
+        };
+        let outcome = pending.run(&mut *self.clipboard);
+        let note = match outcome {
+            ClearOutcome::LeftAlone => Some(messages::CLIPBOARD_CHANGED.to_owned()),
+            _ => None,
+        };
+        if let Screen::Vault(view) = &mut self.screen {
+            view.set_copy_note(note);
+        }
+    }
+
+    /// The vault's clipboard time from its settings, clamped to the settings range.
+    fn clipboard_clear_secs(&self) -> u32 {
+        self.session
+            .as_ref()
+            .and_then(|s| s.settings().ok())
+            .map_or(CLIPBOARD_DEFAULT_SECS, |s| s.clipboard_clear_secs)
+            .clamp(CLIPBOARD_MIN_SECS, CLIPBOARD_MAX_SECS)
     }
 
     /// The vault's auto-lock time from its settings, clamped to the settings range as
@@ -261,6 +295,18 @@ impl HolmApp {
     /// frame every second. It also takes the worker's answer when it is there. It never
     /// records activity: input seen here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
+        if let Some(pending) = &self.pending_clear {
+            if pending.is_due(&*self.ui_clock) {
+                self.run_pending_clear();
+            } else {
+                // The clear must not wait for input: ask for a frame at its deadline.
+                let left = pending
+                    .due()
+                    .saturating_sub(self.ui_clock.monotonic())
+                    .max(Duration::from_millis(50));
+                ctx.request_repaint_after(left.min(OPEN_TICK));
+            }
+        }
         if matches!(self.screen, Screen::Vault(_)) {
             let minimised = window
                 .minimised()
@@ -321,16 +367,22 @@ impl HolmApp {
         let kdf = self.kdf;
         let now = self.ui_clock.monotonic();
         let idle_left = self.idle_left(now);
+        let clear_secs = self.clipboard_clear_secs();
         let screen = &mut self.screen;
         let session = self.session.as_ref();
         let lock_line = self.lock_line.as_deref();
         let mut io = FieldIo {
             clipboard: &mut *self.clipboard,
             focus: FieldFocus::None,
+            clear_secs,
+            copied: None,
         };
         if let Screen::Vault(view) = screen {
             let action = view.show(ui, session, now, idle_left, &throttle, &mut io);
             self.focus = io.focus;
+            if let Some(copied) = io.copied.take() {
+                self.pending_clear = Some(PendingClear::new(copied, clear_secs, &*self.ui_clock));
+            }
             match action {
                 None => return,
                 Some(VaultAction::Job(job)) => self.start(ui.ctx(), job),
@@ -610,6 +662,11 @@ fn is_paste_key(event: &egui::Event) -> bool {
 }
 
 impl eframe::App for HolmApp {
+    /// Quitting clears a waiting copied password first.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.run_pending_clear();
+    }
+
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.tick(ctx, &AppKitWindow(frame));
     }

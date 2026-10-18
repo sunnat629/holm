@@ -22,7 +22,7 @@ use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_gui::app::{AppConfig, HolmApp, WindowState};
-use holm_gui::clipboard::{ClipboardError, NoClipboard, SecretClipboard};
+use holm_gui::clipboard::{Clip, ClipCheck, ClipboardError, NoClipboard, SecretClipboard};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -70,17 +70,21 @@ impl Clock for TestClock {
 /// What a [`FakeClipboard`] saw and what it serves. Fake data only.
 #[derive(Default)]
 pub struct FakeClipboardState {
-    /// Every text passed to `set_secret`, in order (failed calls included).
+    /// Every text passed to `set`, in order (failed calls included).
     pub sets: Vec<Zeroizing<String>>,
     /// What `get_text` returns.
     pub paste: Option<String>,
     /// How many times `get_text` was called.
     pub gets: usize,
-    /// Whether `set_secret` fails.
+    /// Whether `set` fails.
     pub fail: bool,
+    /// What the clipboard holds now: the last good `set`, or what a test put there.
+    pub contents: Option<String>,
+    /// How many times `clear` was called.
+    pub clears: usize,
 }
 
-/// A clipboard for tests: records `set_secret` calls and serves `paste`. Clones share
+/// A clipboard for tests: records `set` calls and serves `paste`. Clones share
 /// the same state, so the test keeps one and the app gets another.
 #[derive(Clone, Default)]
 pub struct FakeClipboard(pub Rc<RefCell<FakeClipboardState>>);
@@ -94,17 +98,34 @@ impl FakeClipboard {
     }
 }
 
-impl SecretClipboard for FakeClipboard {
-    fn set_secret(&mut self, text: &str) -> Result<(), ClipboardError> {
+impl Clip for FakeClipboard {
+    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
         let mut state = self.0.borrow_mut();
         state.sets.push(Zeroizing::new(text.to_owned()));
         if state.fail {
             Err(ClipboardError::Refused)
         } else {
+            state.contents = Some(text.to_owned());
             Ok(())
         }
     }
 
+    fn check(&mut self, text: &str) -> ClipCheck {
+        if self.0.borrow().contents.as_deref() == Some(text) {
+            ClipCheck::Holds
+        } else {
+            ClipCheck::Other
+        }
+    }
+
+    fn clear(&mut self) {
+        let mut state = self.0.borrow_mut();
+        state.clears += 1;
+        state.contents = None;
+    }
+}
+
+impl SecretClipboard for FakeClipboard {
     fn get_text(&mut self) -> Option<Zeroizing<String>> {
         let mut state = self.0.borrow_mut();
         state.gets += 1;

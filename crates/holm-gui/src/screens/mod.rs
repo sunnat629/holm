@@ -12,6 +12,7 @@ pub(crate) mod vault;
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
+use zeroize::Zeroizing;
 
 use crate::clipboard::{Paste, SecretClipboard, paste_into};
 use crate::messages;
@@ -42,6 +43,10 @@ pub(crate) struct FieldIo<'a> {
     pub(crate) clipboard: &'a mut dyn SecretClipboard,
     /// The focus seen so far this frame.
     pub(crate) focus: FieldFocus,
+    /// The vault's clipboard time in seconds, for the line after a copy.
+    pub(crate) clear_secs: u32,
+    /// A password copied this frame, for the app to schedule its clear. Wiped on drop.
+    pub(crate) copied: Option<Zeroizing<String>>,
 }
 
 impl FieldIo<'_> {

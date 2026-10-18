@@ -11,6 +11,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use holm_core::clock::{Clock, SystemClock};
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -19,7 +20,7 @@ use holm_core::item::{ItemData, ItemId};
 use holm_core::session::Session;
 use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_core::text::Text;
-use holm_platform::clipboard::{ClipCheck, ClipboardError, ConcealedClipboard};
+use holm_platform::clip_clear::{self, ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -32,32 +33,8 @@ use crate::vault::{self, MAX_PASSWORD_BYTES};
 /// The prompt that re-checks the master password before a recovery phrase is copied.
 pub const AGAIN_PROMPT: &str = "Master password again: ";
 
-/// The clipboard as a trait, so tests swap in a fake one.
-pub trait Clip {
-    /// Puts `text` on the clipboard, marked concealed.
-    ///
-    /// # Errors
-    /// [`ClipboardError`] if the clipboard did not take it.
-    fn set(&mut self, text: &str) -> Result<(), ClipboardError>;
-    /// Whether the clipboard holds exactly `text`, or could not be read.
-    fn check(&mut self, text: &str) -> ClipCheck;
-    /// Empties the clipboard.
-    fn clear(&mut self);
-}
-
-impl Clip for ConcealedClipboard {
-    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
-        ConcealedClipboard::set(self, text)
-    }
-
-    fn check(&mut self, text: &str) -> ClipCheck {
-        ConcealedClipboard::check(self, text)
-    }
-
-    fn clear(&mut self) {
-        ConcealedClipboard::clear(self);
-    }
-}
+/// The clipboard as a trait, shared with the shell and the GUI.
+pub use holm_platform::clip_clear::Clip;
 
 /// Holm's value was there and is gone now.
 const CLEARED: &str = "Clipboard cleared.";
@@ -77,16 +54,12 @@ const CLEARED_UNCHECKED: &str =
 /// # Errors
 /// [`CliError::ClearFailed`] if `value` is still there after the clear.
 pub(crate) fn clear_copied(clip: &mut dyn Clip, value: &str) -> Result<&'static str, CliError> {
-    let before = clip.check(value);
-    if before == ClipCheck::Other {
-        return Ok(LEFT_ALONE);
-    }
-    clip.clear();
-    match (before, clip.check(value)) {
-        (_, ClipCheck::Holds) => Err(CliError::ClearFailed),
-        (_, ClipCheck::Unreadable) => Ok(CLEARED_UNCHECKED),
-        (ClipCheck::Unreadable, ClipCheck::Other) => Ok(CLEARED_UNREADABLE),
-        (_, ClipCheck::Other) => Ok(CLEARED),
+    match clip_clear::clear_copied(clip, value) {
+        ClearOutcome::Cleared => Ok(CLEARED),
+        ClearOutcome::LeftAlone => Ok(LEFT_ALONE),
+        ClearOutcome::ClearedUnreadable => Ok(CLEARED_UNREADABLE),
+        ClearOutcome::ClearedUnchecked => Ok(CLEARED_UNCHECKED),
+        ClearOutcome::StillThere => Err(CliError::ClearFailed),
     }
 }
 
@@ -172,14 +145,20 @@ pub fn copy_and_wait(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     clip.set(&value).map_err(|_| CliError::CopyFailed)?;
-    let until = Instant::now() + Duration::from_secs(u64::from(secs));
+    // One clamp for every client: the wait and the message use the clamped time.
+    let clock = SystemClock::new();
+    let pending = PendingClear::new(value, secs, &clock);
+    let wait = pending.due().saturating_sub(clock.monotonic());
+    let until = Instant::now() + wait;
     let said = writeln!(
         err,
-        "Copied. Holm clears the clipboard in {secs} seconds. Press Enter to clear it now."
+        "Copied. Holm clears the clipboard in {} seconds. Press Enter to clear it now.",
+        (wait + Duration::from_millis(500)).as_secs()
     );
     let waited = term.wait_for_key(until);
-    let cleared = clear_copied(clip, &value)?;
-    drop(value);
+    let cleared = clear_copied(clip, pending.value());
+    drop(pending);
+    let cleared = cleared?;
     said?;
     waited?;
     writeln!(err, "{cleared}")?;

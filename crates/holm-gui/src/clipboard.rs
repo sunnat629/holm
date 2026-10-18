@@ -10,48 +10,32 @@
 //! (`HolmApp`'s `raw_input_hook`).
 //!
 //! The trait is the seam for tests: [`SystemClipboard`] talks to the macOS pasteboard
-//! through `arboard`, and tests use a fake. Nothing here logs or formats a clipboard
+//! through holm-platform's concealed clipboard, and tests use a fake. Nothing here logs or formats a clipboard
 //! value: `Debug` shows no text and errors carry no library message.
 
 use core::fmt;
-use std::borrow::Cow;
 
-use arboard::SetExtApple as _;
+pub use holm_platform::clip_clear::{Clip, ClipCheck, ClipboardError};
+use holm_platform::clipboard::ConcealedClipboard;
 use zeroize::Zeroizing;
 
 use crate::secret_input::SecretInput;
 
-/// Why a copy did not happen. No library text is kept: the UI shows fixed lines only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClipboardError {
-    /// There is no clipboard to talk to (it could not be opened, or this is
-    /// [`NoClipboard`]).
-    Unavailable,
-    /// The clipboard was there but did not take the text.
-    Refused,
-}
-
-/// Where copied secrets go and pasted text comes from. Lives on the UI thread, so there
-/// is no `Send` bound.
-pub trait SecretClipboard {
-    /// Puts `text` on the clipboard, marked as concealed where the platform allows it,
-    /// so clipboard managers are asked not to keep it.
-    ///
-    /// # Errors
-    ///
-    /// [`ClipboardError`] when the clipboard is missing or refuses the text.
-    fn set_secret(&mut self, text: &str) -> Result<(), ClipboardError>;
-
+/// Where copied secrets go and pasted text comes from. It is a [`Clip`] (set, check
+/// and clear, shared with the CLI), so the app can clear what it copied. Lives on the
+/// UI thread, so there is no `Send` bound.
+pub trait SecretClipboard: Clip {
     /// The clipboard's text, in a buffer that wipes itself when dropped. `None` when the
     /// clipboard is empty, holds no text, or cannot be read.
     fn get_text(&mut self) -> Option<Zeroizing<String>>;
 }
 
-/// The system clipboard (the macOS general pasteboard), through `arboard`. It is opened
-/// on first use, not at start-up, and kept open after that.
+/// The system clipboard (the macOS general pasteboard), through holm-platform's
+/// concealed clipboard. It is opened on first use, not at start-up, and kept open after
+/// that.
 pub struct SystemClipboard {
     /// The open clipboard, or `None` before first use or after it failed to open.
-    inner: Option<arboard::Clipboard>,
+    inner: Option<ConcealedClipboard>,
 }
 
 impl SystemClipboard {
@@ -63,9 +47,9 @@ impl SystemClipboard {
 
     /// The open clipboard, opening it now if needed. `None` when it cannot be opened;
     /// the library's error is dropped, because its text is never shown.
-    fn open(&mut self) -> Option<&mut arboard::Clipboard> {
+    fn open(&mut self) -> Option<&mut ConcealedClipboard> {
         if self.inner.is_none() {
-            self.inner = arboard::Clipboard::new().ok();
+            self.inner = ConcealedClipboard::open().ok();
         }
         self.inner.as_mut()
     }
@@ -85,35 +69,46 @@ impl fmt::Debug for SystemClipboard {
     }
 }
 
-impl SecretClipboard for SystemClipboard {
-    fn set_secret(&mut self, text: &str) -> Result<(), ClipboardError> {
-        let clipboard = self.open().ok_or(ClipboardError::Unavailable)?;
-        // `exclude_from_history` adds `org.nspasteboard.ConcealedType`. `Cow::Borrowed`
-        // hands arboard the caller's text without another Rust copy; the pasteboard
-        // itself keeps its own, which Holm cannot wipe.
-        clipboard
-            .set()
-            .exclude_from_history()
-            .text(Cow::Borrowed(text))
-            .map_err(|_| ClipboardError::Refused)
+impl Clip for SystemClipboard {
+    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
+        self.open().ok_or(ClipboardError::Unavailable)?.set(text)
     }
 
-    fn get_text(&mut self) -> Option<Zeroizing<String>> {
-        // The `String` moves into `Zeroizing` with no copy in between.
-        self.open()?.get().text().ok().map(Zeroizing::new)
+    fn check(&mut self, text: &str) -> ClipCheck {
+        self.open().map_or(ClipCheck::Unreadable, |c| c.check(text))
+    }
+
+    fn clear(&mut self) {
+        if let Some(c) = self.open() {
+            c.clear();
+        }
     }
 }
 
-/// A clipboard that is never there: copies fail with [`ClipboardError::Unavailable`] and
-/// pastes find nothing.
+impl SecretClipboard for SystemClipboard {
+    fn get_text(&mut self) -> Option<Zeroizing<String>> {
+        self.open()?.get_text()
+    }
+}
+
+/// A clipboard that is never there: copies fail with [`ClipboardError::Unavailable`],
+/// pastes find nothing and a check is unreadable.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoClipboard;
 
-impl SecretClipboard for NoClipboard {
-    fn set_secret(&mut self, _text: &str) -> Result<(), ClipboardError> {
+impl Clip for NoClipboard {
+    fn set(&mut self, _text: &str) -> Result<(), ClipboardError> {
         Err(ClipboardError::Unavailable)
     }
 
+    fn check(&mut self, _text: &str) -> ClipCheck {
+        ClipCheck::Unreadable
+    }
+
+    fn clear(&mut self) {}
+}
+
+impl SecretClipboard for NoClipboard {
     fn get_text(&mut self) -> Option<Zeroizing<String>> {
         None
     }
@@ -158,11 +153,19 @@ mod tests {
     /// Serves one fixed text and counts reads.
     struct Serving(Option<&'static str>);
 
-    impl SecretClipboard for Serving {
-        fn set_secret(&mut self, _text: &str) -> Result<(), ClipboardError> {
+    impl Clip for Serving {
+        fn set(&mut self, _text: &str) -> Result<(), ClipboardError> {
             Ok(())
         }
 
+        fn check(&mut self, _text: &str) -> ClipCheck {
+            ClipCheck::Other
+        }
+
+        fn clear(&mut self) {}
+    }
+
+    impl SecretClipboard for Serving {
         fn get_text(&mut self) -> Option<Zeroizing<String>> {
             self.0.map(|t| Zeroizing::new(t.to_owned()))
         }
@@ -209,10 +212,8 @@ mod tests {
 
     #[test]
     fn no_clipboard_refuses_copies() {
-        assert_eq!(
-            NoClipboard.set_secret("EXAMPLE"),
-            Err(ClipboardError::Unavailable)
-        );
+        assert_eq!(NoClipboard.set("EXAMPLE"), Err(ClipboardError::Unavailable));
+        assert_eq!(NoClipboard.check("EXAMPLE"), ClipCheck::Unreadable);
     }
 
     #[test]

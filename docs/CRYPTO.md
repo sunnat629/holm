@@ -359,10 +359,11 @@ Known gaps:
   and a paste into a plain field becomes an egui `Event::Paste(String)`.
 - Typed text arrives from winit as `Event::Text(String)` before `SecretField` copies it
   into its buffer; those event strings are not wiped.
-- No clipboard auto-clear yet. A copied password stays on the clipboard until something
-  else is copied, and macOS Universal Clipboard (Handoff) can carry it to the user's
-  other Apple devices. The copy is marked `org.nspasteboard.ConcealedType`, which
-  clipboard managers may honour; that is a request, not a control. Phase 5.
+- The GUI clears a copied value after the vault's clipboard time, on every lock and on
+  quit, if the clipboard still holds Holm's value (or cannot be read back). If Holm is
+  killed first, the value stays, and macOS Universal Clipboard (Handoff) may already
+  have carried it to the user's other Apple devices. The copy is marked `org.nspasteboard.ConcealedType`, which
+  clipboard managers may honour; that is a request, not a control.
 - Holm does not turn on macOS Secure Event Input while a password field has focus, so
   an app with input-monitoring permission can read the keystrokes. Phase 5.
 - The vault folder check refuses a folder that group or others can write, but checks

@@ -1498,7 +1498,6 @@ dependencies = [
 name = "holm-gui"
 version = "0.0.0"
 dependencies = [
- "arboard",
  "eframe",
  "egui_kittest",
  "holm-core",

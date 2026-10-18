@@ -44,6 +44,7 @@ security, three exercises, and what to read next in
 | 35 | [A read-eval loop with a deadline](35-a-read-eval-loop-with-a-deadline.md): a `loop` with `match` on an outcome enum, the earlier of two `Option` deadlines with `into_iter().chain().min()`, a quote-aware tokenizer as a small state machine over `(mode, char)`, and keeping per-line secrets in loop locals so they are wiped every turn. |
 | 36 | [Thin screens over the core](36-thin-screens-over-the-core.md): moving owned data through a worker `Job` and back, a GUI flow as a state-machine enum, and why a warning is a core constant the screens only show. |
 | 37 | [Hold to reveal](37-hold-to-reveal.md): immediate mode means no stored flag, `Response::is_pointer_button_down_on` plus `contains_pointer`, painting a borrowed `&str` instead of using a `TextEdit`, and drawing an icon from lines when the font has no glyph. |
+| 38 | [One clear for every client](38-one-clear-for-every-client.md): a trait in a shared crate with a test fake, owning a secret in `PendingClear::run(self)`, and two clocks (monotonic and wall) so a sleep cannot delay a deadline. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 
 ## Side tracks

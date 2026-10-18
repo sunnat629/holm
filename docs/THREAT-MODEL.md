@@ -19,7 +19,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
 | Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser, padding, body decode and the full open with a fixed key are fuzzed (`fuzz/`). |
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on minimise (Phase 3), lock on sleep and screen lock (from Phase 5), password re-entry for recovery phrases and settings changes. |
-| Clipboard snooping and clipboard history | Partly | Auto-clear (from Phase 5), plus OS hints that ask clipboard managers not to record. |
+| Clipboard snooping and clipboard history | Partly | Auto-clear in the CLI, the shell and the GUI, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
 | Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Planned: signed releases, reproducible builds, SBOM. |
 | Malware running as the same user while unlocked | No | Cannot be defended against. Documented plainly. |
@@ -35,7 +35,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 - Holm cannot see or stop what the operating system, other programs or hardware do.
 - A CSV export is every password in plain text, in a file the user chose to create. Holm asks for the master password, shows a warning first, creates the file new with owner-only permissions (0600 on Unix) and never overwrites one, but after that the file is outside Holm's protection: backups, sync folders, spreadsheet apps and anyone with the user's file access can read it. Full-disk encryption and deleting the file promptly are the only defences.
 - The import source file is also plaintext on disk, by the user's choice. Holm reads it and never changes it, and tells the user to delete it after a good import. The GUI path field keeps the typed path in egui's undo history; it is a path, not a secret.
-- In Phase 3 builds a copied password stays on the clipboard until something else replaces it. Holm does not clear it, any app can read it, and macOS Universal Clipboard (Handoff) can send it to the user's other Apple devices. The Copy button says so. Auto-clear and clear-on-lock come in Phase 5.
+- A copied password stays on the clipboard until something else replaces it. any app can read it, and macOS Universal Clipboard (Handoff) can send it to the user's other Apple devices. The Copy button says so. From Phase 5 the GUI clears it after the vault's clipboard time, on lock and on quit, if it still holds Holm's value.
 
 ## Never claim
 

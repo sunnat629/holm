@@ -29,7 +29,7 @@ zeroize.workspace = true
 # a binary that says the window is macOS-only for now (Phase 3).
 [target.'cfg(target_os = "macos")'.dependencies]
 eframe.workspace = true
-arboard.workspace = true
+holm-platform = { workspace = true, features = ["clipboard"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 egui_kittest.workspace = true
