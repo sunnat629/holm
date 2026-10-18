@@ -81,9 +81,11 @@ Rules:
 | Randomness | OS random source | `getrandom` / `rand_core::OsRng` |
 | Wiping memory | Zero on drop | `zeroize`, `secrecy` |
 | Unicode cleanup | NFC normalisation | `unicode-normalization` |
-| Password strength | zxcvbn estimate | `zxcvbn` |
+| Password strength | zxcvbn's guess model (dictionaries, l33t, keyboard walks, repeats, sequences, dates, minimum-guesses split) | none: Holm's own `holm_core::strength`, with zxcvbn's MIT word lists embedded; the `zxcvbn` crate is a test-only oracle |
 
 The `argon2` crate has no published outside audit that we know of. To cover that, tests check it against RFC 9106 vectors, and a test-only cross-check against libsodium (`libsodium-sys-stable`, never shipped) runs in the local CI gate (`scripts/ci-local.sh`). GitHub Actions is manual-only for now (project decision, see §12); the cross-check moves back into Actions when Actions is re-enabled for the public repo. libsodium only supports parallelism 1, which is one reason v1 fixes parallelism at 1 (section 5.3).
+
+- Security decision (2026-10-18, #16): the master password strength check is written in `holm-core`, not taken from the `zxcvbn` crate. The crate would add 17 unreviewed production crates to the vault-format crate, read the clock, and leave un-wiped copies of the master password (every substring, lowercase and l33t variants) in a long-running process. Holm's check ports zxcvbn's matchers and minimum-guesses search, embeds zxcvbn's MIT frequency lists (SHA-256 pinned and gated in `scripts/ci-local.sh`), keeps every derived buffer in `Zeroizing`, and accepts only an estimate of at least 1e8 guesses (score 3) plus 12 NFC characters. A dev-only test (`crates/holm-core/tests/strength_oracle.rs`) uses the `zxcvbn` crate as an oracle: on a fixed corpus every password zxcvbn scores below 3 must be refused, and Holm's score is never above zxcvbn's. Cost if wrong: a bug in our estimator could accept a password zxcvbn would refuse outside the oracle corpus; the oracle bounds this but does not prove it.
 
 ### 5.2 Keys
 
@@ -157,7 +159,7 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 ## 8. Feature list (v1)
 
 0. **Vault location** (owner decision): one vault open at a time. A default path per OS (macOS `~/Library/Application Support/Holm/holm.vault`, Windows `%APPDATA%\Holm\holm.vault`, Linux `~/.local/share/Holm/holm.vault`), and the user can also create or open a vault file anywhere, such as a USB stick. The last-used path is remembered in the UI config file. No vault switcher or vault list in v1.
-1. Create vault, with strength check (zxcvbn score at least 3 and at least 12 characters). Weak passwords are refused outright; no override.
+1. Create vault, with strength check (score at least 3 on zxcvbn's scale, that is at least 1e8 estimated guesses from Holm's own estimator (§5.1), and at least 12 characters). Weak passwords are refused outright; no override.
 2. Unlock, lock, auto-lock on idle (default 5 min), lock on OS sleep and screen lock, lock on quit.
 3. Add, edit, view, search, sort and filter items across all four types. Categories, favourites, trash.
 4. Copy to clipboard with auto-clear (default 30 s). It clears only if the clipboard still holds what Holm put there. Recovery phrases are never copied without re-entering the master password.

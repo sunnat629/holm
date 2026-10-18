@@ -17,9 +17,10 @@ subtle.workspace = true
 zeroize.workspace = true
 serde.workspace = true
 unicode-normalization.workspace = true
-zxcvbn.workspace = true
 
 [dev-dependencies]
 static_assertions.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+# Test oracle only: tests/strength_oracle.rs checks Holm's own estimator against it.
+zxcvbn.workspace = true

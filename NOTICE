@@ -12,3 +12,31 @@ License:  Creative Commons Attribution 3.0 United States (CC-BY-3.0-US)
           https://creativecommons.org/licenses/by/3.0/us/
 SHA-256:  addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e
 Changes:  none. The file is a byte-exact copy of the source.
+
+zxcvbn common-password and word frequency lists
+-----------------------------------------------
+File:     crates/holm-core/src/strength/frequency_lists.coffee
+Author:   Dan Wheeler and Dropbox, Inc. (zxcvbn)
+Source:   https://github.com/dropbox/zxcvbn/blob/f0735425180b130d6c57efbc044a47c0c8f1fd65/src/frequency_lists.coffee
+          (tag v4.4.2, commit f0735425180b130d6c57efbc044a47c0c8f1fd65)
+License:  MIT License, Copyright (c) 2012-2016 Dan Wheeler and Dropbox, Inc.
+          https://github.com/dropbox/zxcvbn/blob/f0735425180b130d6c57efbc044a47c0c8f1fd65/LICENSE.txt
+          Permission is hereby granted, free of charge, to any person obtaining a copy of
+          this software and associated documentation files (the "Software"), to deal in
+          the Software without restriction, including without limitation the rights to
+          use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+          the Software, and to permit persons to whom the Software is furnished to do so,
+          subject to the following conditions: The above copyright notice and this
+          permission notice shall be included in all copies or substantial portions of
+          the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+          EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+          MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+          EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+          OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+          FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+          THE SOFTWARE.
+Data:     zxcvbn built the lists from leaked-password frequencies (Xato / Mark Burnett),
+          English Wikipedia, US census names and surnames, and Wiktionary's US TV and film
+          word counts.
+SHA-256:  664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276
+Changes:  none. The file is a byte-exact copy of the source. Holm parses it at run time.

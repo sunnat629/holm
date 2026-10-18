@@ -118,4 +118,4 @@ A biased generator gives an attacker a shortcut, and the bias never shows up in 
 - [std::sync::OnceLock](https://doc.rust-lang.org/std/sync/struct.OnceLock.html)
 - [std::num::NonZeroU32](https://doc.rust-lang.org/std/num/type.NonZeroU32.html)
 
-Next lesson: [12, Wrapping a library](12-wrapping-a-library.md).
+Next lesson: [12, Owning the check instead of wrapping a library](12-wrapping-a-library.md).

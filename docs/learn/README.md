@@ -21,7 +21,7 @@ security, three exercises, and what to read next in
 | 09 | [Feature unification and cargo vet](09-feature-unification-and-vet.md): turning on a feature inside a transitive dependency, and imports, trust and exemptions in `cargo vet`. |
 | 10 | [Enums, newtypes and validation](10-enums-newtypes-and-validation.md): items as an enum with data, wiping secret text types, and field errors that name the field but never the value. |
 | 11 | [Randomness without bias](11-randomness-without-bias.md): why `% n` is biased, rejection sampling, `NonZeroU32`, a `dyn Trait` test seam and a built-in wordlist. |
-| 12 | [Wrapping a library](12-wrapping-a-library.md): a small API over zxcvbn, `Option` and `Vec<String>` from a library, `cargo tree -i`, and what a library may keep of data you lend it. |
+| 12 | [Owning the check](12-wrapping-a-library.md): why Holm wrote its own strength check instead of wrapping zxcvbn, `include_str!` data, `Zeroizing` scratch buffers, a cheapest-split table over `&[char]`, and a dev-only oracle test. |
 
 ## Side tracks
 

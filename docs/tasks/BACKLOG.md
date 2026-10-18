@@ -16,7 +16,7 @@ Source of truth: GitHub issues. This file mirrors them for offline reading.
 | [#13](https://github.com/sunnat629/holm/issues/13) | Dependency hygiene: BLAKE2 wiping and cargo vet exemptions | 2 | `09-feature-unification-and-vet.md` | todo |
 | [#14](https://github.com/sunnat629/holm/issues/14) | Text types, items and categories | 2 | `10-enums-newtypes-and-validation.md` | todo |
 | [#15](https://github.com/sunnat629/holm/issues/15) | Password, passphrase and username generator | 2 | `11-randomness-without-bias.md` | todo |
-| [#16](https://github.com/sunnat629/holm/issues/16) | Master password strength check (zxcvbn) | 2 | `12-wrapping-a-library.md` | todo |
+| [#16](https://github.com/sunnat629/holm/issues/16) | Master password strength check (in-house, zxcvbn as test oracle) | 2 | `12-wrapping-a-library.md` | todo |
 | [#17](https://github.com/sunnat629/holm/issues/17) | Settings and the vault body codec | 2 | `13-serde-and-versioned-formats.md` | todo |
 | [#18](https://github.com/sunnat629/holm/issues/18) | Clock, throttle and idle timer | 2 | `14-time-and-saturating-maths.md` | todo |
 | [#19](https://github.com/sunnat629/holm/issues/19) | Vault store trait and session lifecycle | 2 | `15-generics-and-trait-objects.md` | todo |

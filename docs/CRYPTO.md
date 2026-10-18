@@ -177,6 +177,45 @@ The `From` conversions into `VaultError` are written by hand instead of with thi
 `verify_password` derives the KEK again, unwraps the DEK and compares it with the DEK
 held in `VaultKeys` using `subtle::ConstantTimeEq`.
 
+## Master password strength
+
+`holm_core::strength::check` decides whether a new master password is accepted. It is
+Holm's own code (no production dependency), a port of zxcvbn's guess model:
+
+- The NFC form must have at least 12 `char`s, and the estimate must reach 1e8 guesses
+  (score 3 on zxcvbn's 0-4 scale). There is no override.
+- Pieces it recognises: words from zxcvbn's MIT frequency lists (30,000 leaked passwords,
+  30,000 English Wikipedia words, 19,160 TV and film words, 10,000 surnames, 4,695 first
+  names; `NOTICE` has the provenance and SHA-256, and `scripts/ci-local.sh` checks the
+  hash), in any case, reversed or with l33t symbols; the word `holm` at rank 1; keyboard
+  walks on QWERTY, Dvorak and two keypads; repeats; letter and digit sequences; years
+  and dates.
+- The estimate is the cheapest way to build the whole password from those pieces, with
+  any gap priced as random characters (`10^length`), using zxcvbn's formula
+  `l! x product + 10000^(l-1)`. Holm finds the true minimum; zxcvbn's search can only
+  return the same or more.
+- The whole password is scored, with no 100-character cut-off. Work is bounded instead.
+  Two bounds cannot change the score: at most 4 pieces, and random gaps of at most 10
+  characters (more pieces or a longer gap cost over 1e10 on their own). One errs towards
+  refusing: after 65,536 characters of repeat units have been priced in depth, later
+  units count as 1 guess. Two can miss a pattern: repeat units longer than 512
+  characters are not detected, and the dictionary search stops after 4,096 steps per
+  start position.
+- Years are priced from a fixed reference year (2026), so results never depend on the
+  clock. Years after 2026 get the minimum price.
+- Feedback is fixed text chosen from the cheapest split; it never contains the password.
+- A dev-only test (`crates/holm-core/tests/strength_oracle.rs`) runs the `zxcvbn` crate
+  as an oracle on a fixed corpus of about 12,000 weak candidates: every one zxcvbn scores
+  below 3 must be refused, Holm's score must never be above zxcvbn's, and strong
+  passphrases and random strings must be accepted.
+
+Limits, honestly: this is an estimate of one attacker model, not a proof. The lists are
+English-centric, so words from other languages, local names and newer leaks are priced as
+random characters. The oracle bounds disagreement with zxcvbn on its corpus only. Beyond
+the two bounds that can miss a pattern, a crafted input (for example a sequence of more
+than 512 characters, typed twice) can be over-estimated and accepted. Such inputs are far
+longer than any real password, and zxcvbn itself scores only the first 100 characters.
+
 ## Memory hygiene
 
 Wiped when dropped: the KEK, the DEK, the master password and its NFC bytes, the Argon2
@@ -204,11 +243,9 @@ Known gaps:
   for the password, or the normaliser's scratch space) are outside our control.
 - The plaintext body passed to `create`, `reseal` and `rekey` belongs to the caller, who
   must wipe it.
-- zxcvbn copies the candidate master password into memory Holm cannot wipe. Its matchers
-  build lowercase and substitution variants as ordinary `String`s, and the scoring result
-  holds substrings of the password. Holm drops the result straight after copying out the
-  fixed advice text, but the freed memory is not zeroed. zxcvbn also scores only the first
-  100 characters, so Holm's length rule is the only check on the rest.
+- The strength check wipes every heap buffer it derives from the candidate password
+  (characters, lower-cased copy, matches, search stack, split table), but like the rest of
+  Holm it cannot wipe stack slots and registers that briefly hold characters or prices.
 
 ## Not claimed
 

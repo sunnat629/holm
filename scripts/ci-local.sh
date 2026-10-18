@@ -93,11 +93,15 @@ gate() { # name, command...
   fi
 }
 
-# The EFF wordlist is include_str!'d into the binary. Its pinned SHA-256 (also in NOTICE)
-# must match, and a missing shasum or file fails the gate, so this fails closed.
+# The EFF wordlist and the zxcvbn common-password lists are include_str!'d into the binary.
+# Their pinned SHA-256 values (also in NOTICE) must match, and a missing shasum or file fails
+# the gate, so this fails closed.
 wordlist_gate() {
   command -v shasum >/dev/null 2>&1 || { echo "MISSING shasum" >&2; return 1; }
-  echo "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e  crates/holm-core/src/eff_large_wordlist.txt" | shasum -a 256 -c -
+  printf '%s\n' \
+    "addd35536511597a02fa0a9ff1e5284677b8883b83e986e43f15a3db996b903e  crates/holm-core/src/eff_large_wordlist.txt" \
+    "664d32190713e42b7726072a5cf7533bd4a469e5588c7c1bd2ff9485cdf83276  crates/holm-core/src/strength/frequency_lists.coffee" \
+    | shasum -a 256 -c -
 }
 gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
