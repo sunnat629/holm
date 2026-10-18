@@ -91,6 +91,16 @@ The deadline is only a hint to wake up. The decision to lock is the session's ow
 `idle_expired()`, which checks the monotonic clock and a forward jump of the wall clock. Two
 clocks never have to agree for the shell to be safe.
 
+Every prompt needs the deadline, not only `holm> `. The first version gave one only to the
+shell prompt, so a user who walked away at `add`'s hidden `Note: ` prompt, or at
+`Type export to continue: `, left an open shell behind: whoever sat down next could finish the
+prompt and get `holm> ` back, unlocked, because the line then counted as activity. Now the
+shell hands each command an `IdleTerm`, a small wrapper around the terminal that gives every
+prompt a deadline of "now plus the auto-lock time" (`earlier(deadline, idle)`). If that
+deadline passes, the wrapper sets `timed_out` and answers `Cancelled`, so the command stops
+before it changes anything. The shell sees the flag and locks before `after_line` can count
+the line as activity. A lock that one path can skip is not a lock.
+
 In Kotlin you'd write `listOfNotNull(idle, clear).minOrNull()`, or `minOf(a, b)` once both are
 known to be there.
 

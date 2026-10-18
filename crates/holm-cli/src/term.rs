@@ -18,6 +18,23 @@ pub trait Terminal {
     /// [`TtyError`]; a closed terminal is [`TtyError::Cancelled`].
     fn secret(&mut self, prompt: &str, max_bytes: usize) -> Result<Zeroizing<String>, TtyError>;
 
+    /// Asks for a secret with no echo. `Ok(None)` means `deadline` passed first.
+    ///
+    /// The default ignores the deadline and waits, so a terminal that can't time out
+    /// still works.
+    ///
+    /// # Errors
+    /// As [`Terminal::secret`].
+    fn secret_until(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let _ = deadline;
+        self.secret(prompt, max_bytes).map(Some)
+    }
+
     /// Asks for a visible line. `Ok(None)` means `deadline` passed first.
     ///
     /// # Errors
@@ -50,6 +67,20 @@ impl Terminal for RealTerminal {
         // With no deadline a line always comes back; `None` cannot happen, but it is
         // handled as a cancel rather than a panic.
         tty::read_line(prompt, opts)?.ok_or(TtyError::Cancelled)
+    }
+
+    fn secret_until(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let opts = LineOpts {
+            echo: false,
+            max_bytes,
+            deadline,
+        };
+        tty::read_line(prompt, opts)
     }
 
     fn line(

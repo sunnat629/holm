@@ -83,6 +83,8 @@ struct ShellTerm {
     clock: TestClock,
     prompts: Vec<(Kind, String)>,
     deadlines: Vec<Option<Instant>>,
+    /// The deadline of every hidden prompt that was given one.
+    secret_deadlines: Vec<Option<Instant>>,
 }
 
 impl ShellTerm {
@@ -92,6 +94,7 @@ impl ShellTerm {
             clock: clock.clone(),
             prompts: Vec::new(),
             deadlines: Vec::new(),
+            secret_deadlines: Vec::new(),
         }
     }
 
@@ -128,6 +131,25 @@ impl Terminal for ShellTerm {
         match self.next() {
             Some(Step::Text(t)) => Ok(Zeroizing::new(t)),
             Some(Step::Deadline(_)) => panic!("a secret prompt has no deadline"),
+            Some(Step::Run(_)) | None => Err(TtyError::Cancelled),
+        }
+    }
+
+    fn secret_until(
+        &mut self,
+        prompt: &str,
+        _max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        self.prompts.push((Kind::Secret, prompt.to_owned()));
+        self.secret_deadlines.push(deadline);
+        match self.next() {
+            Some(Step::Text(t)) => Ok(Some(Zeroizing::new(t))),
+            Some(Step::Deadline(secs)) => {
+                assert!(deadline.is_some(), "a deadline step needs a deadline");
+                self.clock.advance(secs);
+                Ok(None)
+            }
             Some(Step::Run(_)) | None => Err(TtyError::Cancelled),
         }
     }
@@ -856,4 +878,172 @@ fn shell_output_holds_no_secret() {
             "{canary} leaked: {everything}"
         );
     }
+}
+
+/// The idle time passes at a hidden prompt inside a command: the shell locks as an
+/// idle lock, clears the clipboard, and the command changes nothing.
+#[test]
+fn idle_at_a_hidden_prompt_locks() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = add_login(&path, "Example Mail", "EXAMPLE-copy-pw-3");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t(&format!("get {} --copy password", short(id))),
+            t("add note --title Walkaway"),
+            // The user walks away at the hidden "Note: " prompt.
+            Step::Deadline(300),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(ran.err.matches(IDLE_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains("Cancelled."), "{}", ran.err);
+    // The hidden prompt waited with a deadline.
+    assert_eq!(term.texts(Kind::Secret), ["Master password: ", "Note: "]);
+    assert!(term.secret_deadlines.last().unwrap().is_some());
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, PROMPT, LOCKED_PROMPT, LOCKED_PROMPT]
+    );
+    assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    assert!(!ran.out.contains("Added "), "{}", ran.out);
+    let state = clip.borrow();
+    assert_eq!(state.clears, 1);
+    assert_eq!(state.contents, None);
+    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+}
+
+/// The idle time passes at a visible confirm prompt inside a command.
+#[test]
+fn idle_at_a_confirm_prompt_locks() {
+    let (dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-export-pw-2");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let file = dir.path().join("export.csv");
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t(&format!("export \"{}\"", file.to_str().unwrap())),
+            // At "Type export to continue: ".
+            Step::Deadline(300),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(ran.err.matches(IDLE_LOCKED).count(), 1, "{}", ran.err);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [
+            PROMPT,
+            "Type export to continue: ",
+            LOCKED_PROMPT,
+            LOCKED_PROMPT
+        ]
+    );
+    // The confirm prompt waited with a deadline.
+    assert!(term.deadlines[1].is_some());
+    assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    assert!(!file.exists());
+}
+
+/// The idle time passes at the discard prompt of `lock`: the idle lock discards, as
+/// it does at the shell prompt.
+#[cfg(unix)]
+#[test]
+fn idle_at_the_discard_prompt_locks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let folder = dir.path().to_owned();
+    let mode = |m: u32| {
+        let folder = folder.clone();
+        move || std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(m)).unwrap()
+    };
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            Step::Run(Box::new(mode(0o500))),
+            t("add note --title Kept"),
+            t("EXAMPLE unsaved body"),
+            t("lock"),
+            // At "Type discard to lock without saving: ".
+            Step::Deadline(300),
+            Step::Run(Box::new(mode(0o700))),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    ok(&ran);
+    assert!(
+        ran.err
+            .contains("Locked after 5 minutes without use. Unsaved changes were discarded."),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains("Not locked."), "{}", ran.err);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [
+            PROMPT,
+            PROMPT,
+            "Type discard to lock without saving: ",
+            LOCKED_PROMPT,
+            LOCKED_PROMPT,
+        ]
+    );
+    assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
+    assert_eq!(session(&path).active_items().unwrap().count(), 0);
+}
+
+/// `lock` while already locked still clears a value `gen --copy` put on the
+/// clipboard, as `exit` does.
+#[test]
+fn lock_while_locked_clears_the_clipboard() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let seen = Rc::clone(&clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t("not-the-password"),
+            t("gen --copy"),
+            t("lock"),
+            Step::Run(Box::new(move || assert_eq!(seen.borrow().contents, None))),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert!(
+        ran.err.contains("The vault is already locked."),
+        "{}",
+        ran.err
+    );
+    assert_eq!(clip.borrow().clears, 1);
 }

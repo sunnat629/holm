@@ -109,6 +109,9 @@ After
 - [ ] Idle lock on a real terminal: leave the shell untouched for 5 minutes (the
   default auto-lock time). It prints "Locked after 5 minutes without use." by itself,
   and the prompt becomes `holm (locked)> `.
+- [ ] Idle lock at a command's own prompt: type `add note --title Test`, then leave the
+  hidden `Note: ` prompt for 5 minutes. It prints "Locked after 5 minutes without use."
+  by itself, the prompt becomes `holm (locked)> `, and no note was added.
 - [ ] Ctrl-C at the prompt: the shell ends with "Locked.", and typing in the same
   terminal echoes normally (echo restored).
 - [ ] While a shell runs, `holm list` in a second terminal says Holm is already open

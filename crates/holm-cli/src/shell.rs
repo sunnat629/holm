@@ -10,6 +10,11 @@
 //! line typed after the idle time runs against a locked vault. Then it clears the
 //! clipboard if its time has come and it still holds Holm's value.
 //!
+//! A command's own prompts (hidden fields, `Type … to continue`, the discard prompt)
+//! wait with a deadline too: the auto-lock time from when the prompt starts. If it
+//! passes, the command is cancelled and the shell idle-locks before the line counts
+//! as activity.
+//!
 //! Typed lines can hold secrets by mistake, so there is no history, and every line
 //! and word lives in a buffer that is wiped when dropped. Passwords are never read
 //! from a line: the commands ask for them at hidden prompts, as one-shot commands do.
@@ -185,6 +190,84 @@ impl Drop for Words {
     }
 }
 
+// ----- prompts inside a command -----
+
+/// The terminal as a command inside the shell sees it. While the vault is open,
+/// every prompt gives up after the auto-lock time, counted from when the prompt
+/// starts, so a user who keeps answering is never cut off. No `Debug`: it is only a
+/// view of the terminal.
+struct IdleTerm<'t> {
+    term: &'t mut dyn Terminal,
+    /// The auto-lock time while the vault is open; None while it is locked.
+    limit: Option<Duration>,
+    /// Set when a prompt's idle deadline passed. The command saw a cancel.
+    timed_out: bool,
+}
+
+impl IdleTerm<'_> {
+    /// The idle deadline for a prompt that starts now.
+    fn idle_deadline(&self) -> Option<Instant> {
+        self.limit.map(|limit| Instant::now() + limit)
+    }
+
+    /// A prompt that came back empty: if the idle deadline is what ended it, note
+    /// the time-out and cancel the command; else hand the empty answer back.
+    fn ended<T>(
+        &mut self,
+        answer: Option<T>,
+        asked: Option<Instant>,
+        idle: Option<Instant>,
+    ) -> Result<Option<T>, TtyError> {
+        // The idle deadline ended it if it came no later than the caller's own.
+        let idle_ended = idle.is_some_and(|i| asked.is_none_or(|a| i <= a));
+        if answer.is_none() && idle_ended {
+            self.timed_out = true;
+            return Err(TtyError::Cancelled);
+        }
+        Ok(answer)
+    }
+}
+
+impl Terminal for IdleTerm<'_> {
+    fn secret(&mut self, prompt: &str, max_bytes: usize) -> Result<Zeroizing<String>, TtyError> {
+        self.secret_until(prompt, max_bytes, None)?
+            .ok_or(TtyError::Cancelled)
+    }
+
+    fn secret_until(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let idle = self.idle_deadline();
+        let answer = self
+            .term
+            .secret_until(prompt, max_bytes, earlier(deadline, idle))?;
+        self.ended(answer, deadline, idle)
+    }
+
+    fn line(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let idle = self.idle_deadline();
+        let answer = self.term.line(prompt, max_bytes, earlier(deadline, idle))?;
+        self.ended(answer, deadline, idle)
+    }
+
+    fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
+        self.term.wait_for_key(until)
+    }
+}
+
+/// The earlier of two deadlines, or None if neither is set.
+fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+    a.into_iter().chain(b).min()
+}
+
 // ----- the shell -----
 
 /// A copied value waiting to be cleared from the clipboard. No `Debug`: it holds the
@@ -291,7 +374,8 @@ impl Shell<'_> {
                 // Ctrl-D, Ctrl-C (the terminal can't tell them apart), or a closed
                 // terminal: leave, as `exit` does.
                 Err(TtyError::Cancelled) => {
-                    if self.lock(LockReason::EndOfInput, term, err)? {
+                    let mut term = self.idle_term(term);
+                    if self.lock(LockReason::EndOfInput, &mut term, err)? {
                         return Ok(());
                     }
                     continue;
@@ -321,6 +405,8 @@ impl Shell<'_> {
         err: &mut dyn Write,
     ) -> Result<Flow, CliError> {
         let mut flow = Flow::Continue;
+        let mut term = self.idle_term(term);
+        let term = &mut term;
         let result = match tokenize(line) {
             Err(e) => Err(CliError::Usage(e)),
             Ok(words) => match words.first().map(|w| w.as_str()) {
@@ -335,6 +421,7 @@ impl Shell<'_> {
                     if self.session.is_unlocked() {
                         self.lock(LockReason::Command, term, err).map(|_| ())
                     } else {
+                        self.clear_clipboard(err)?;
                         writeln!(err, "The vault is already locked.").map_err(CliError::from)
                     }
                 }
@@ -361,7 +448,17 @@ impl Shell<'_> {
             },
         };
         let failed = result.is_err();
-        report(result, err)?;
+        if term.timed_out {
+            // The user walked away at one of the command's prompts. Lock now, before
+            // `after_line` counts the line as activity. The lock message says why
+            // the command stopped, so its cancel is not printed.
+            self.idle_lock(err)?;
+            if !matches!(result, Err(CliError::Cancelled)) {
+                report(result, err)?;
+            }
+        } else {
+            report(result, err)?;
+        }
         self.after_line(failed, err)?;
         Ok(flow)
     }
@@ -446,7 +543,7 @@ impl Shell<'_> {
     fn lock(
         &mut self,
         reason: LockReason,
-        term: &mut dyn Terminal,
+        term: &mut IdleTerm<'_>,
         err: &mut dyn Write,
     ) -> Result<bool, CliError> {
         if !self.session.is_unlocked() {
@@ -457,6 +554,12 @@ impl Shell<'_> {
             writeln!(err, "holm: {}", CliError::NotSaved)?;
             match write::confirm(term, DISCARD_PROMPT, "discard") {
                 Ok(()) => {}
+                // Nobody answered within the auto-lock time: an idle lock, which
+                // discards without asking.
+                Err(_) if term.timed_out => {
+                    self.idle_lock(err)?;
+                    return Ok(true);
+                }
                 // The terminal is gone, so nobody can be asked.
                 Err(e)
                     if reason == LockReason::EndOfInput && !matches!(e, CliError::NotConfirmed) => {
@@ -479,18 +582,10 @@ impl Shell<'_> {
     }
 
     /// After a prompt returns: an idle lock if the time has passed, then a clipboard
-    /// clear if one is due. The idle lock never waits and never asks.
+    /// clear if one is due.
     fn on_wake(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
         if self.session.idle_expired() {
-            let limit = self.auto_lock_secs();
-            self.clear_clipboard(err)?;
-            let outcome = self.session.lock();
-            let tail = if outcome.discarded_unsaved {
-                DISCARDED
-            } else {
-                ""
-            };
-            writeln!(err, "Locked after {} without use.{tail}", span(limit))?;
+            self.idle_lock(err)?;
         }
         if self
             .pending
@@ -500,6 +595,39 @@ impl Shell<'_> {
             self.clear_clipboard(err)?;
         }
         Ok(())
+    }
+
+    /// The idle lock: clears the clipboard, then locks and says so. It never waits
+    /// and never asks; unsaved changes are dropped. A locked vault only has its
+    /// clipboard value cleared.
+    fn idle_lock(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
+        let limit = self.auto_lock_secs();
+        self.clear_clipboard(err)?;
+        if !self.session.is_unlocked() {
+            return Ok(());
+        }
+        let outcome = self.session.lock();
+        let tail = if outcome.discarded_unsaved {
+            DISCARDED
+        } else {
+            ""
+        };
+        writeln!(err, "Locked after {} without use.{tail}", span(limit))?;
+        Ok(())
+    }
+
+    /// `term` for a command's own prompts: while the vault is open, each one gives
+    /// up after the auto-lock time.
+    fn idle_term<'t>(&self, term: &'t mut dyn Terminal) -> IdleTerm<'t> {
+        let limit = self
+            .session
+            .is_unlocked()
+            .then(|| Duration::from_secs(u64::from(self.auto_lock_secs())));
+        IdleTerm {
+            term,
+            limit,
+            timed_out: false,
+        }
     }
 
     /// After every line: the session notes activity, and any change still unsaved

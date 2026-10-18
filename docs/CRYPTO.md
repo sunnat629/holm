@@ -426,6 +426,10 @@ does its work and locks the vault on exit. There is no background agent.
   locked vault. An idle lock never waits or asks: unsaved changes are discarded and the
   message says so. `lock` and `exit` save first, and if that fails they lock only after
   `discard` is typed. Every lock clears the clipboard if it still holds Holm's value.
+- A command's own prompts (a hidden entry, `Type … to continue`, the discard prompt)
+  wait with a deadline too: the auto-lock time from when the prompt starts. If it
+  passes, the command is cancelled before it changes anything, and the shell idle-locks
+  (wipes the session, clears the clipboard) before the line counts as activity.
 - Inside the shell the master password is asked again only where the spec asks: export
   (again), `passwd` (the current one) and copying a recovery phrase.
 - `--copy` returns to the prompt at once and schedules the clear for the vault's clear
@@ -450,8 +454,6 @@ Known gaps:
 - `holm shell` does not lock on OS sleep, screen lock or logout yet; after a wake the
   first line is checked against the idle time (wall clock included) before it runs.
   Phase 5.
-- Inside a `holm shell` command, a prompt (a hidden entry or a confirmation) has no
-  deadline, so the idle lock waits until that command ends.
 - Command arguments (titles, usernames, web addresses, paths) are copied into plain
   `String`s by the parser and are not wiped. They are public fields, never secrets.
 
