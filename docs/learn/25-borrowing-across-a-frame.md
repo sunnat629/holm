@@ -13,7 +13,7 @@ When the vault unlocks, the app builds a list of `ItemRow` values (id, title, us
 ### Build once, own it, borrow it per frame
 
 ```rust
-pub struct ItemRow { pub id: ItemId, pub title: String, pub username: String, pub url: String }
+pub struct ItemRow { pub id: ItemId, pub title: Text, pub subtitle: Text }
 pub fn build_rows<'a>(items: impl Iterator<Item = &'a Item>) -> Vec<ItemRow> { /* ... */ }
 ```
 
