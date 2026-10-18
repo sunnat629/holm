@@ -29,7 +29,9 @@ impl SystemClock {
     /// Starts the monotonic clock at zero.
     #[must_use]
     pub fn new() -> Self {
-        Self { start: Instant::now() }
+        Self {
+            start: Instant::now(),
+        }
     }
 }
 

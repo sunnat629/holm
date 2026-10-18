@@ -73,6 +73,6 @@ pub mod padding;
 pub mod rules;
 pub mod settings;
 pub mod strength;
-pub mod throttle;
 pub mod text;
+pub mod throttle;
 pub(crate) mod wire;

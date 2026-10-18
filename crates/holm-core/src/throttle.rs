@@ -97,7 +97,17 @@ mod tests {
 
     #[test]
     fn delay_table() {
-        let want = [(1, 0), (2, 0), (3, 2), (4, 4), (5, 8), (6, 16), (7, 32), (8, 60), (9, 60)];
+        let want = [
+            (1, 0),
+            (2, 0),
+            (3, 2),
+            (4, 4),
+            (5, 8),
+            (6, 16),
+            (7, 32),
+            (8, 60),
+            (9, 60),
+        ];
         for (f, secs) in want {
             assert_eq!(delay_after(f), s(secs), "failures {f}");
         }
@@ -145,7 +155,10 @@ mod tests {
         assert_eq!(t.check(s(10)), Ok(()));
         assert_eq!(
             t.status(s(10)),
-            ThrottleStatus { consecutive_failures: 0, retry_after: None }
+            ThrottleStatus {
+                consecutive_failures: 0,
+                retry_after: None
+            }
         );
     }
 
@@ -157,7 +170,10 @@ mod tests {
         }
         assert_eq!(
             t.status(s(101)),
-            ThrottleStatus { consecutive_failures: 4, retry_after: Some(s(3)) }
+            ThrottleStatus {
+                consecutive_failures: 4,
+                retry_after: Some(s(3))
+            }
         );
     }
 
