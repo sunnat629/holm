@@ -185,7 +185,7 @@ Holm's own code (no production dependency), a port of zxcvbn's guess model:
 - The NFC form must have from 12 to 1,024 `char`s, and the estimate must reach 1e10
   guesses (score 4, zxcvbn's top band). There is no override. Score 3 (1e8) was the
   first rule; it accepted word + year + symbol shapes such as `Summer2026!!`, which
-  rule-based cracking reaches in far fewer guesses, so the COS raised it to score 4.
+  rule-based cracking reaches in far fewer guesses, so the maintainer raised it to score 4.
 - Input over 1,024 characters (after NFC) is refused with fixed text before it is scored.
   Input over 4,096 raw characters is refused first, before NFC copies it, so a huge paste
   costs one pass to count it (about 10 ms for 1,000,000 characters).

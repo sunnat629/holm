@@ -1,29 +1,81 @@
 # Holm
 
-Holm is a local-only, offline password and secrets vault. It keeps everything in one
-encrypted file, with no account, no cloud and no network code. It is written in pure Rust,
-and security matters more than looks.
+Your passwords in one encrypted file on your own computer. No account, no cloud, no network.
 
 > **Status: pre-alpha. Do not trust Holm with real secrets yet.**
-> The file format and the code can still change, and nothing has had an outside audit.
+> The file format and the code can still change. Nothing has had an outside audit.
 
-## Build
+<!-- screenshot: added before launch -->
 
-You need [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
+## Why Holm
+
+- **Offline only.** Holm has no network code and never sends your data anywhere itself. Until clipboard auto-clear lands, a password you copy in the macOS app stays on the clipboard, where macOS Universal Clipboard can reach your other Apple devices.
+- **One file you own.** Your vault is a single encrypted file. Copy it, back it up or delete it.
+- **Pure Rust.** `unsafe` is forbidden everywhere except one small macOS window file.
+- **Checked.** Fuzzed, with a local CI gate and dependency audits (cargo-deny, cargo-audit, cargo-vet).
+- **Open.** Dual licensed under MIT or Apache-2.0.
+
+## Features today
+
+- Create and unlock a vault, with a password strength meter and an unlock throttle.
+- Logins, crypto addresses, recovery phrases and secure notes. The macOS app lists logins
+  today. Other types arrive in the next update.
+- Categories, trash, search, filter and sort.
+- Password generator.
+- Copy password. Only the CLI clears the clipboard today; the macOS app gets clipboard auto-clear in the next update.
+- Idle auto-lock.
+- Import from CSV or JSON. Exports are plaintext, and Holm warns you about it.
+- Command-line tool (`holm`) with an interactive shell.
+
+## Platform support
+
+| Platform | Desktop app | CLI | How to get it |
+|---|---|---|---|
+| macOS | ✅ works | ✅ works | Build from source today; a downloadable app is coming next |
+| Windows | ⏳ planned | ⏳ planned | Not supported yet |
+| Linux | ⏳ planned | ⏳ planned | Not supported yet |
+| Android / iOS | 🗓 later | — | Separate design after desktop v1 |
+
+## Build from source (macOS)
+
+1. Install [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
+2. Run the app or the CLI:
 
 ```sh
-cargo build --workspace
-cargo test --workspace
+cargo run -p holm-gui --release --locked
+cargo run -p holm-cli --release --locked -- --help
 ```
 
-## Read more
+A download-and-run app is not ready yet.
 
-- [How Holm encrypts your vault](docs/CRYPTO.md): the key hierarchy, file format and error model.
-- [Design decisions and accepted risks](docs/DECISIONS.md): what we chose, why, and when to revisit.
-- [Threat model](docs/THREAT-MODEL.md): what Holm defends against, and what it does not.
-- [Learn Rust with Holm](docs/learn/README.md): a course for beginners, one lesson per task.
-- [Security policy](SECURITY.md): how to report a vulnerability.
-- [Contributing](CONTRIBUTING.md) and [changelog](CHANGELOG.md).
+On Windows and Linux, `holm-gui` builds but only reports that it is macOS-only for now.
+The CLI is not supported there yet.
+
+## Roadmap
+
+- [x] Encryption core and file format
+- [x] Vault core
+- [x] macOS app
+- [x] Search, import/export, CLI
+- [ ] Hardening and polish: clipboard auto-clear, lock on sleep, all item types in the app, a downloadable macOS app
+- [ ] Release: signed installers, an outside security audit, then Windows and Linux. Mobile comes later.
+
+See [CHANGELOG.md](CHANGELOG.md) for what has changed so far.
+
+## Security
+
+Report problems privately, as [SECURITY.md](SECURITY.md) explains. Read
+[THREAT-MODEL.md](docs/THREAT-MODEL.md) for what Holm does and does not protect against,
+and [CRYPTO.md](docs/CRYPTO.md) for how the vault is encrypted.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request. New to the project?
+Start with issues labelled [good first issue](https://github.com/sunnat629/holm/labels/good%20first%20issue).
+
+## Learn Rust with Holm
+
+New to Rust? [Learn Rust with Holm](docs/learn/README.md) is a short course that uses this code.
 
 ## Licence
 

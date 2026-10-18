@@ -16,7 +16,7 @@ and the chip.
 ## Before you start
 
 - The default vault folder is `~/Library/Application Support/Holm`. On the
-  folder may already exist from an earlier project or run, with a looser mode (for
+  folder may already exist from an earlier run, with a looser mode (for
   example 0755) and extra files. Holm accepts such a folder (it refuses only a folder
   that group or others can write, and never changes a folder's mode), so the folder
   check at the end would show the looser mode and the extra files. Before run 2, either

@@ -1,40 +1,46 @@
 # Contributing
 
-Thanks for helping. Holm is a security tool, so a few rules are strict.
+Thanks for helping. Holm is a security tool, so some rules are strict.
 
-## Before you send a change
+## Build and test
 
-Run `scripts/ci-local.sh` before every push. Until the repo is public it is the merge
-gate (GitHub Actions is manual-only for now; see spec section 12 and
-[docs/DECISIONS.md](docs/DECISIONS.md)). It runs 8 gates and tells you how to install
-any missing tool:
+Install [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
 
-1. `cargo fmt --all --check`
-2. `cargo clippy --workspace --all-targets --locked -- -D warnings`
-3. `cargo test --workspace --locked`
-4. `cargo deny` (licences, bans, sources)
-5. `cargo audit` (known advisories)
-6. `cargo vet --locked` (supply-chain audits)
-7. the oracle (`oracle/`): Argon2id cross-checked against libsodium
-8. the fuzz workspace (`fuzz/`): build and a short run on the pinned nightly
+The merge gate is the local CI script:
 
-The oracle and fuzz gates are skipped on Windows. The script needs a clean tree, unsets
-`RUSTFLAGS`-style environment overrides, refuses a `.cargo/config` that changes how
-tests run, and checks `CARGO_TARGET_*_RUNNER` cannot hide a failing test. Run
-`scripts/ci-local.sh --preflight` to self-test those checks.
+```sh
+bash scripts/ci-local.sh
+```
 
-## Rules
+It runs formatting, clippy, the tests, the supply-chain checks (cargo-deny, cargo-audit,
+cargo-vet), a libsodium cross-check in `oracle/` and a short fuzz run in `fuzz/`. It needs
+the exact tool versions it checks, and it prints the install command for anything missing.
+To check your setup without running the gates, use `bash scripts/ci-local.sh --preflight`.
 
-- No `unsafe` code outside `holm-platform` (when it exists). `unsafe_code = "forbid"` is
-  set through `[workspace.lints]` and in `fuzz/Cargo.toml`. The one exception is the
-  test-only FFI in `oracle/`, which never ships.
-- No networking crates in the product's dependency graph (see spec section 12 for the
-  oracle exception).
-- Keep dependencies few. Every new one needs a reason in the pull request.
-- Secrets must never appear in logs, errors, panic messages or `Debug` output.
+The script only passes on a clean working tree, so commit or stash first.
+
+## Pull requests
+
+- Keep each pull request small and about one topic.
+- Add or update tests with every change.
+- Run `bash scripts/ci-local.sh` before you push.
+- Explain in the pull request why any new dependency is needed.
+
+## Security rules
+
+- No new network code. Holm stays offline.
+- No `unsafe` code, except the one allowed file, `crates/holm-platform/src/window.rs`.
+  The test-only FFI in `oracle/` is the other exception, and it never ships.
+- Secrets live in wiping types (`zeroize`).
+- Never log secrets, including in errors, panic messages and `Debug` output.
 - Every security claim needs a test, or must be written down as a limit.
-- Do not write your own cryptography. Use the well-reviewed primitives already chosen (RustCrypto). Never add a custom construction.
+- New dependencies need a cargo-vet entry.
+- Do not write your own cryptography. Use the RustCrypto primitives already chosen.
 - Never put real passwords or keys in tests, examples or issues.
+
+## Good first issues
+
+Look for issues labelled [good first issue](https://github.com/sunnat629/holm/labels/good%20first%20issue).
 
 ## Licence
 
@@ -42,8 +48,8 @@ By contributing you agree your work is licensed under MIT OR Apache-2.0, like th
 
 ## Security problems
 
-Do not file them as issues. See [SECURITY.md](SECURITY.md).
+Do not file them as issues. Report them privately, as [SECURITY.md](SECURITY.md) explains.
 
 ## Conduct
 
-Be kind. See the [Code of Conduct](CODE_OF_CONDUCT.md).
+Be kind. This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).

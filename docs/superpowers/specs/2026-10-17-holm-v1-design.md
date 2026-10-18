@@ -1,8 +1,8 @@
 # Holm v1 design (Rust)
 
 Date: 2026-10-17
-Status: accepted for planning. Security decisions are owned by the security COS (Claude) by owner delegation on 2026-10-17; the owner can override any of them.
-Repo: `~/IdeaProjects/holm`, licence MIT OR Apache-2.0
+Status: accepted for planning. Security decisions are owned by the maintainer (decided 2026-10-17); the owner can override any of them.
+Repo: `sunnat629/holm`, licence MIT OR Apache-2.0
 
 ## 1. Intent
 
@@ -10,7 +10,7 @@ Holm is a local-only, offline password and secrets vault. One encrypted file, no
 
 Security is the main concern. Looks are secondary: the UI should be plain and clear, not fancy.
 
-The earlier Kotlin/JVM project (`~/IdeaProjects/harbor`) was a draft. No code, build tooling or file format carries over. What carries over is knowledge: the threat model, crypto choices, test vectors and the bugs it found. Section 13 lists those lessons.
+An earlier private Kotlin/JVM project was a draft. No code, build tooling or file format carries over. What carries over is knowledge: the threat model, crypto choices, test vectors and the bugs it found. Section 13 lists those lessons.
 
 ## 2. Goals, non-goals, anti-goals
 
@@ -150,7 +150,7 @@ The exact field layout is the builder's to finalise. The rules above are not.
 - **Recovery phrase**: title, phrase, notes. Showing or copying the phrase needs the master password again; it is never copied by default.
 - **Secure note**: title, body.
 - Shared fields: id (random 128-bit), category, favourite, created and updated times, trashed time.
-- **Categories**: built-in Personal, Work, Community, plus user-made. Rename and delete; deleting moves items to "Uncategorised". Clarified 2026-10-18 (owner answer, relayed by the COS): the built-in categories can be renamed and deleted exactly like user-made ones.
+- **Categories**: built-in Personal, Work, Community, plus user-made. Rename and delete; deleting moves items to "Uncategorised". Clarified 2026-10-18 (owner answer, relayed by the maintainer): the built-in categories can be renamed and deleted exactly like user-made ones.
 - **Trash**: delete moves to trash. Restore, delete forever, empty trash. Because the whole body is rewritten on every save, deleted-forever items are gone from the new file (not from old copies or backups).
 - **Search**: title, username, URL, chain, category. Never secret fields.
 
@@ -159,14 +159,14 @@ Every secret field (passwords, phrases, note bodies, addresses) uses a type that
 ## 8. Feature list (v1)
 
 0. **Vault location** (owner decision): one vault open at a time. A default path per OS (macOS `~/Library/Application Support/Holm/holm.vault`, Windows `%APPDATA%\Holm\holm.vault`, Linux `~/.local/share/Holm/holm.vault`), and the user can also create or open a vault file anywhere, such as a USB stick. The last-used path is remembered in the UI config file. No vault switcher or vault list in v1.
-1. Create vault, with strength check (score 4 on zxcvbn's scale, that is at least 1e10 estimated guesses from Holm's own estimator (§5.1), and from 12 to 1,024 characters of the NFC form). Weak passwords are refused outright; no override. Security decision (2026-10-18, COS, fix round 1 of #16): the line moved from score 3 (1e8) to score 4, because score 3 accepts word + year + symbol shapes such as `Summer2026!!` that rule-based cracking reaches quickly. Input over 1,024 characters is refused with fixed text before it is scored, so a huge paste cannot freeze the app; 1,024 is twice the longest repeat unit searched for, so every repeat is found. Cost if wrong: some people must pick a longer password; score 4 still accepts some guessable shapes (word + date + word).
+1. Create vault, with strength check (score 4 on zxcvbn's scale, that is at least 1e10 estimated guesses from Holm's own estimator (§5.1), and from 12 to 1,024 characters of the NFC form). Weak passwords are refused outright; no override. Security decision (2026-10-18, maintainer, fix round 1 of #16): the line moved from score 3 (1e8) to score 4, because score 3 accepts word + year + symbol shapes such as `Summer2026!!` that rule-based cracking reaches quickly. Input over 1,024 characters is refused with fixed text before it is scored, so a huge paste cannot freeze the app; 1,024 is twice the longest repeat unit searched for, so every repeat is found. Cost if wrong: some people must pick a longer password; score 4 still accepts some guessable shapes (word + date + word).
 2. Unlock, lock, auto-lock on idle (default 5 min), lock on OS sleep and screen lock, lock on quit.
 3. Add, edit, view, search, sort and filter items across all four types. Categories, favourites, trash.
 4. Copy to clipboard with auto-clear (default 30 s). It clears only if the clipboard still holds what Holm put there. Recovery phrases are never copied without re-entering the master password.
 5. Generator: passwords (length, character sets, avoid look-alikes, minimum digits and symbols), passphrases (EFF large word list, separator, capitals, number), usernames. Uniform sampling by rejection, OS randomness only.
 6. Change master password (rotates DEK; section 5.2).
-7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (`harbor/spikes/spike-import-v1.md`: title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards. Clarified 2026-10-18 (owner answer): an item keeps its source category when the name matches an existing category; otherwise it goes to Uncategorised. Import never creates categories. Clarified 2026-10-18 (owner answer, relayed by the COS): import skips a row that duplicates an existing item (same type, title, username and URLs after canonicalisation: trimmed, NFC and case-folded), and the import summary reports how many duplicates were skipped. Import also reads the `favourite`, `created` and `updated` columns when present (see 8).
-8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool). Clarified 2026-10-18 (owner answer, relayed by the COS): the CSV has the 11 import columns of item 7, then `favourite`, `created` and `updated`, so an export re-imports without losing favourites or dates.
+7. Import: generic CSV/JSON using the column schema of the old Kotlin importer (title, username, password, url, notes, category, type, chain, address, memo, recovery), and browser CSV (Chrome, Firefox, Safari). Size-limited, with a warning to delete the source file afterwards. Clarified 2026-10-18 (owner answer): an item keeps its source category when the name matches an existing category; otherwise it goes to Uncategorised. Import never creates categories. Clarified 2026-10-18 (owner answer, relayed by the maintainer): import skips a row that duplicates an existing item (same type, title, username and URLs after canonicalisation: trimmed, NFC and case-folded), and the import summary reports how many duplicates were skipped. Import also reads the `favourite`, `created` and `updated` columns when present (see 8).
+8. Export: encrypted backup copy of the vault. Plaintext CSV export only after master password re-entry and a clear warning (security decision: people should never be locked in to an open-source tool). Clarified 2026-10-18 (owner answer, relayed by the maintainer): the CSV has the 11 import columns of item 7, then `favourite`, `created` and `updated`, so an export re-imports without losing favourites or dates.
 9. Settings: auto-lock time, clipboard time, lock on sleep, generator defaults. These security settings live **inside the encrypted body** (security decision), so nobody can weaken them by editing a file; making any of them weaker needs the master password again. A separate plain config file holds only harmless UI preferences (window size, theme, last vault path).
 10. CLI: `holm init`, `list`, `get`, `add`, `edit`, `rm`, `gen`, `import`, `export`, `passwd`, `shell`. Passwords are read from the terminal with no echo, never from flags. There is **no background agent** (security decision): each one-shot command asks for the password and opens the vault, and `holm shell` keeps one unlocked session inside a single interactive process, with the same throttle and auto-lock as the GUI. An agent would add IPC and client-authentication surface for little gain in v1.
 
@@ -266,7 +266,7 @@ Reordered 2026-10-18 (owner approval): a thin, runnable macOS app comes early (P
 | 6 | Release | Internal review, long fuzz run, signing certificate, outside audit, signed installers, public repo. Paid and public steps need the owner's approval |
 | Later | Android (`holm-ffi` + Compose), then iOS (SwiftUI) | Separate design |
 
-Team process, from the shared rules: grok CLI writes the code, Sonnet reviews UI, and Opus does the security review that gates every merge. Review depth follows risk: Opus reviews crypto, password, file-format and `unsafe` work; Sonnet reviews mechanical work.
+Team process: one pass implements, a code review covers UI and mechanical work, and a security review gates every merge. Review depth follows risk: security review covers crypto, password, file-format and `unsafe` work; code review covers mechanical work.
 
 ## 15. Left to the builder
 
