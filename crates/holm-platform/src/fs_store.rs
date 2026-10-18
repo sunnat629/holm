@@ -202,6 +202,16 @@ fn create_exclusive(path: &Path) -> Result<File, StoreError> {
     })
 }
 
+/// Like [`create_exclusive`] for a temp file. A name collision (astronomically
+/// unlikely with 16 random hex digits) is an I/O error, not `AlreadyExists`, which
+/// would wrongly tell the caller that the vault itself exists.
+fn create_temp(path: &Path) -> Result<File, StoreError> {
+    create_exclusive(path).map_err(|e| match e {
+        StoreError::AlreadyExists => StoreError::Io(ErrorKind::AlreadyExists),
+        other => other,
+    })
+}
+
 /// Writes all of `bytes` to a new file and syncs it.
 fn write_all_synced(file: &mut File, bytes: &[u8]) -> Result<(), StoreError> {
     file.write_all(bytes).map_err(|e| io_err(&e))?;
@@ -399,7 +409,7 @@ impl VaultStore for FsStore {
         self.check_target()?;
         self.check_dir()?;
         let temp = self.temp_path()?;
-        let mut file = create_exclusive(&temp)?;
+        let mut file = create_temp(&temp)?;
         self.emit(SaveStep::TempCreated);
         let filled = self.fill_temp(&mut file, bytes);
         // Closed before the rename (Windows cannot rename an open file).
@@ -425,6 +435,10 @@ impl VaultStore for FsStore {
     /// Where hard links are not supported (FAT, exFAT), falls back to an exclusive
     /// create of the vault path itself, removed again if writing it fails.
     ///
+    /// A directory-sync error comes after the link: the call fails, but the vault file
+    /// already exists with the full bytes, so a retry of `create_new` reports
+    /// `AlreadyExists` and the caller should open the file instead.
+    ///
     /// Known gap (fix in Phase 5): that fallback is not crash-atomic. A crash
     /// between the exclusive create and the sync can leave a short or empty vault
     /// file, which then fails to unlock and blocks a new `create` with
@@ -441,7 +455,7 @@ impl VaultStore for FsStore {
         }
         self.check_dir()?;
         let temp = self.temp_path()?;
-        let mut file = create_exclusive(&temp)?;
+        let mut file = create_temp(&temp)?;
         let written = write_all_synced(&mut file, bytes);
         drop(file);
         if let Err(e) = written {

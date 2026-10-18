@@ -124,6 +124,9 @@ impl<S: VaultStore> Session<S> {
     /// [`CoreError::AlreadyUnlocked`], [`CoreError::WeakPassword`],
     /// [`CoreError::Vault`] (for example a cost policy error), [`CoreError::Body`],
     /// [`CoreError::VaultExists`] if a file is already there, or [`CoreError::Store`].
+    /// A store error from the final directory sync comes after the file was written
+    /// in full: the session stays locked, and a retry reports `VaultExists`, so the
+    /// caller should unlock the file instead.
     pub fn create(
         &mut self,
         password: &MasterPassword,
