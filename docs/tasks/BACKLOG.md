@@ -129,6 +129,68 @@ Phase 3 final review Minors
 - m6: two comment lines in `holm-platform/Cargo.toml` (19 and 22) run past 100 columns.
 - owed: the owner's real-Mac minimise run. If it does not lock, it is Critical.
 
+Phase 4 parked Minors
+
+From the Phase 4 per-task reviews, re-reviews and the final review. The final fix wave closed final I1 (with T4 M1), M1 (T6 M6), M2 (T7 M1), M3, M4 (documented in DECISIONS), the M5 wording and M8, and the T2 `Cell` Debug and `push_quoted` items. Earlier rounds closed T2 M3, T3 I1, T3 (a), T3 M4, T5 M1, T7 I1, T7 M5, T8 I1-I4, T8 M2 and T8 M9. None of these is security-load-bearing.
+
+- T1 M1: `cmp_title_asc` re-folds both titles on every compare. Fix: fold once per item (`sort_by_cached_key` style).
+- T1 M2: search `fold` is per-char lowercase, not full case folding (`STRASSE` vs `straße`, final sigma). Fix: document it, or case-fold properly.
+- T1 M3: `Query.text` is a public field and `Query` is `Clone` (each clone is a wiping copy). Note only.
+- T1 M4: search allocates a fresh `Zeroizing<String>` per field per item per keystroke. Fix: one scratch buffer, if it shows in profiles.
+- T1 M5: `Sort::TitleAsc` wraps `cmp_title_asc` in a needless closure. Style only.
+- T2 M1: a 16 MiB JSON import peaks near 182 MB RSS (about 10x input; bounded by the caps). Fix: note the bound, or consume rows as parsed.
+- T2 M2: the JSON duplicate-key check is O(k^2) per object (safe at 64 keys). Fix: a doc line on `parse_json_rows` that `max_fields` must stay small.
+- T2 M5: DECISIONS "Own CSV and JSON code" says both readers cap rows; `CsvReader` caps cells only, its caller caps rows. Fix: reword.
+- T2 M6: `cells_allocated_once_at_final_size` asserts `capacity() == len()`, an allocator detail. Fix: `>=` plus the ptr and capacity-unchanged check.
+- T3 (b): a header with no `title` reports `UnknownColumns { count: 0 }` ("0 column names Holm does not know"). Fix: own text or variant.
+- T3 (c): the `data.items.truncate(start)` undo after a failed `insert_new` has no test (needs an RNG seam).
+- T3 M5: imported timestamps are unbounded (`i64::MIN`/`MAX` accepted), so a file can pin items in "recently updated". Fix: clamp to `[0, now]` or refuse future dates.
+- T3 M6 / final M10: the import fuzz targets run at libFuzzer's default `max_len` and never reach the column, row or cell caps. Fix: `-max_len=1048576` or seeds near the caps.
+- T3 M7: `fuzz/README.md` says `.github/workflows/fuzz.yml` "does the same", but its matrix lists 3 of the 7 targets. Fix the matrix or the sentence.
+- T3 M8: a max-size import is slow: `find_category` re-folds every category name per row, and `insert_new` scans ids linearly (O(n^2) at 50k). Fix: precompute category keys once per call.
+- T3 M9: `generated_rows_parse_to_same_fields` uses a local `quote`, not the crate's `push_quoted` (the T4 round trip covers the writer).
+- T3 M10: lesson 31 §5 leaves out that a username or URL alone infers a login and notes alone a secure note.
+- T3 re-review M1: lesson 31 §5 "Duplicates follow the same rule" sentence is glued onto the "A password is never moved" line. Fix: reflow.
+- T3 re-review M2: a row whose category name matches no category compares as uncategorised, so it can be a duplicate of an uncategorised item. Note only.
+- T3 re-review M3: `dedup_key` now takes 5 arguments; only `key_of` calls it outside tests. Note only.
+- T4 M2: `private_file::io_err` duplicates `fs_store::io_err`. Fix: make the fs_store one `pub(crate)` and reuse it.
+- T4 M3: `read_capped`'s re-checks on the open handle (type swapped after `metadata`, length changed) have no direct test. Fix: a seam that swaps the path between the two checks.
+- T4 M4: `read_capped`'s rustdoc does not say callers must show their own text for `TooLarge` (`StoreError`'s Display says 64 MiB and names the vault).
+- T4 M5: on macOS, an inherited ACL on the parent folder can give other users read access to the 0600 export. Fix: add macOS ACL inheritance to the Phase 5 per-OS checklist.
+- T4 M6: the parent folder is not fsynced after the export file is created, so a power loss can lose the file; lesson 32's snippet calls the buffer `out`, the code `text`.
+- T5 M2: `gen` prints the generated password through `writeln!`, so it sits in stdout's unwiped `LineWriter` buffer. Fix: one pre-sized `Zeroizing` buffer plus `write_all`, or document it.
+- T5 M3: with a deadline, a tty read of 0 bytes is treated as a poll timeout, so after a hangup the prompt spins until the deadline (in the shell the idle lock then fires). Fix: treat an early `Ok(0)` as closed.
+- T5 M4: `init_refuses_weak_and_mismatched`'s "No terminal" case gets `Cancelled` (now `EndOfInput`) from an empty fake, not `NoTerminal`, and checks no message. Fix: a fake with a set error, or rename.
+- T5 M5: unrequested surface: `--uncategorized`/`--favorites` aliases (not in `USAGE`), `resolve_any`, `match_reference`.
+- T5 M6: `init` prints "Choose a master password…" to stdout before the terminal is opened, so with no tty the user sees it and then the error.
+- T5 M7: `output.rs` `clean()` lets U+2028/U+2029 and zero-width or invisible characters (U+200B-U+200D, U+2060, U+FEFF) through (CRYPTO now says so). Fix: add them to the filter.
+- T5 M8 / final M9: `--new-password=VALUE` is refused as an unknown flag, not as `PASSWORD_FLAG`, so the user is not told a password went on the command line. Fix: treat any `=value` on a prompt-only flag as `PASSWORD_FLAG`.
+- T6 M1: the TCSAFLUSH typeahead fix has only the ignored manual test. Fix: a pty-based test (rustix `pty`, dev-only).
+- T6 M2: arboard sets the concealed marker after the value is written, so a polling clipboard manager could record it unconcealed. Phase 6 audit, or write both types at once.
+- T6 M3: `import`'s `Err(_) => ImportNotSaved` also catches errors raised before any row was added. Fix: match only save errors, map the rest to `Failed`.
+- T6 M4: `write_error` is used for read-only operations (`export_csv`, `reveal_phrase`, the `passwd` current-password check), so their text talks about a change that could not be saved. Fix: a `read_error` mapper.
+- T6 M5: untested paths: `edit` and `rm` on a trashed item, the `ImportNotSaved` mapping, `ClearFailed`, and the clear after `wait_for_key` errors.
+- T6 (impl): `passwd` asks for the new password before verifying the current one (documented in DECISIONS). Fix: a core `verify_password` first.
+- T7 M2: parsed shell `Command` strings (title, username, URLs, chain, category, paths) are plain `String`/`PathBuf`, not wiped. Optional: `Zeroizing` text fields in `AddArgs`/`EditArgs`.
+- T7 M3: a clipboard-clear deadline at `holm>` drops (and wipes) a half-typed line. Fix: clear without ending the read, or document it.
+- T7 M4: the shell deadlines are monotonic, so on macOS the idle lock and the clipboard clear fire late after sleep (typed lines are still checked against the wall clock). Cheap hardening: also compare `PendingClear` with `now_unix`.
+- T7 M6: `cargo test -p holm-cli --locked shell` filters by name and runs 4 of the shell tests. Fix: use `--test shell` in plans and CI notes.
+- T7 re-review M1: `copy.rs` `wait_for_key` is not idle-bounded; its own `until` deadline bounds it. Note only.
+- T7 re-review M2: a pending clipboard clear does not wake an inner prompt; it waits up to the auto-lock time.
+- T7 re-review M3: untested: the Ctrl-D discard-prompt timeout path, and the `IdleTerm::ended` branch where the caller's earlier deadline wins.
+- T8 M1: the GUI export form draws the password field before the confirm tick (the CLI asks confirm, then password). Fix: move the tick above the password field.
+- T8 M3: some user-visible GUI strings are not constants in `messages.rs`/`ALL` (transfer notes, `problem_text`, "And more.", headings); `OTHER_TYPES_HINT` shows literal backticks.
+- T8 M4: the other-types count follows the search text, not the whole vault. Fix: count unfiltered, or say "matching".
+- T8 M5: `search_cleared_on_lock` checks the rows, not that the Search field is empty after unlock.
+- T8 M6: weak GUI tests: the re-import test does not assert the duplicate count or button state; `transfer_texts_hold_no_values` never asserts the Report screen and lacks the memo needles; the oversize test cannot tell which cap fired; no empty-path export case.
+- T8 M7: `Transfer::Busy` has no exit if a transfer job ever comes back with `transfer: None`. Fix: reset to `None`.
+- T8 M8: lesson 36 shows `pub(crate) enum Job` (code: `pub`) and asks for a test that already exists; CRYPTO says a bad import file fails "with a line number", but the GUI shows none.
+- T8 re-review M1: a session already dirty from an earlier failed save plus a pre-insert import failure (for example `TooManyItems`) is shown as "added, unsaved" with a stale banner.
+- T8 re-review M2: a stray `/// The central panel.` doc line sits above `show_save_banner` in `vault.rs`.
+- T8 re-review M3: the ReadOnly GUI test (0o500 folder) fails when run as root.
+- Final M6: the GUI import and export path is used as typed (`PathBuf::from(path.trim())`), so a relative path resolves against the app's working folder and a trailing space is trimmed. Fix: refuse relative paths with fixed text; do not trim.
+- Final M7: `vault::lock_folder` creates the vault folder (0700) before the exists check, so `holm --vault /new/dir/x.vault list` creates `/new/dir` and then reports NoVault. Fix: check the folder first for every command except `init`.
+
 Phase 6 (release)
 
 - Clear the 206 `cargo vet` exemptions noted `gui-only, pre-release; audit or replace before Phase 6`, and renew or drop the 49 GUI `trusted` entries that end 2026-12-31.
