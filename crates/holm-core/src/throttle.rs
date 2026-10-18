@@ -3,8 +3,9 @@
 //! The first [`FREE_FAILURES`] − 1 failures cost nothing. From the third on, each failure
 //! sets a wait of 2, 4, 8, 16, 32 s and then [`MAX_DELAY_SECS`]. Times are values from
 //! [`Clock::monotonic`](crate::clock::Clock::monotonic), so changing the wall clock
-//! does not shorten a wait. The caller must record **every** failed unlock attempt,
-//! whatever the error, so a corrupt-file error cannot be used to dodge the throttle.
+//! does not shorten a wait. Every unlock error counts as a failure (F16), whatever its
+//! kind, so a corrupt-file error cannot be used to dodge the throttle. That is enforced
+//! by [`Throttle::attempt`], the only way to run a guarded action.
 
 use std::time::Duration;
 
@@ -27,6 +28,15 @@ pub fn delay_after(failures: u32) -> Duration {
         .checked_shl(exp)
         .map_or(MAX_DELAY_SECS, |v| v.min(MAX_DELAY_SECS));
     Duration::from_secs(secs)
+}
+
+/// Why [`Throttle::attempt`] did not return a value.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Throttled<E> {
+    /// Refused without running the action; try again after this long.
+    Wait(Duration),
+    /// The action ran and failed. The failure has been counted.
+    Failed(E),
 }
 
 /// What a UI shows about the throttle.
@@ -52,12 +62,32 @@ impl Throttle {
         Self::default()
     }
 
-    /// `Ok` if an attempt may run at `now`; otherwise `Err` with the time left. Does
-    /// not count anything.
+    /// Runs `f` under the throttle. While a wait is active it returns
+    /// [`Throttled::Wait`] and does **not** run `f`. Otherwise the failure is counted
+    /// **before** `f` runs, so an early return or a panic inside `f` still counts. Only
+    /// an `Ok` result resets the count; every `Err` stays counted.
     ///
     /// # Errors
-    /// Returns the remaining wait while the throttle is active.
-    pub fn check(&self, now: Duration) -> Result<(), Duration> {
+    /// [`Throttled::Wait`] with the time left, or [`Throttled::Failed`] with `f`'s error.
+    pub fn attempt<T, E>(
+        &mut self,
+        now: Duration,
+        f: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, Throttled<E>> {
+        self.check(now).map_err(Throttled::Wait)?;
+        self.record_failure(now);
+        match f() {
+            Ok(v) => {
+                self.record_success();
+                Ok(v)
+            }
+            Err(e) => Err(Throttled::Failed(e)),
+        }
+    }
+
+    /// `Ok` if an attempt may run at `now`; otherwise `Err` with the time left. Does
+    /// not count anything.
+    fn check(&self, now: Duration) -> Result<(), Duration> {
         match self.not_before {
             Some(t) if now < t => Err(t.saturating_sub(now)),
             _ => Ok(()),
@@ -65,14 +95,14 @@ impl Throttle {
     }
 
     /// Counts a failed attempt at `now` and sets the next wait.
-    pub fn record_failure(&mut self, now: Duration) {
+    fn record_failure(&mut self, now: Duration) {
         self.failures = self.failures.saturating_add(1);
         let delay = delay_after(self.failures);
         self.not_before = (!delay.is_zero()).then(|| now.saturating_add(delay));
     }
 
-    /// Clears the count and the wait after a successful unlock.
-    pub fn record_success(&mut self) {
+    /// Clears the count and the wait after a successful attempt.
+    fn record_success(&mut self) {
         self.failures = 0;
         self.not_before = None;
     }
@@ -116,12 +146,68 @@ mod tests {
     }
 
     #[test]
-    fn first_three_failures_have_no_wait() {
+    fn first_two_failures_are_free() {
         let mut t = Throttle::new();
         t.record_failure(s(1));
         assert_eq!(t.check(s(1)), Ok(()));
         t.record_failure(s(1));
         assert_eq!(t.check(s(1)), Ok(()));
+        t.record_failure(s(1));
+        assert_eq!(t.check(s(1)), Err(s(2)));
+    }
+
+    #[test]
+    fn wait_runs_from_the_latest_failure() {
+        let mut t = Throttle::new();
+        for _ in 0..3 {
+            t.record_failure(s(10));
+        }
+        t.record_failure(s(12));
+        assert_eq!(t.check(s(15)), Err(s(1)));
+    }
+
+    #[test]
+    fn attempt_err_counts_and_returns_the_error() {
+        let mut t = Throttle::new();
+        let r: Result<(), _> = t.attempt(s(1), || Err("bad"));
+        assert_eq!(r, Err(Throttled::Failed("bad")));
+        assert_eq!(t.status(s(1)).consecutive_failures, 1);
+    }
+
+    #[test]
+    fn attempt_ok_resets() {
+        let mut t = Throttle::new();
+        for _ in 0..2 {
+            let _ = t.attempt(s(1), || Err::<(), _>(()));
+        }
+        assert_eq!(t.attempt(s(1), || Ok::<_, ()>(7)), Ok(7));
+        assert_eq!(t.status(s(1)).consecutive_failures, 0);
+    }
+
+    #[test]
+    fn refused_attempt_never_runs_the_closure() {
+        let mut t = Throttle::new();
+        for _ in 0..3 {
+            let _ = t.attempt(s(10), || Err::<(), _>(()));
+        }
+        let mut ran = false;
+        let r = t.attempt(s(11), || {
+            ran = true;
+            Ok::<_, ()>(())
+        });
+        assert_eq!(r, Err(Throttled::Wait(s(1))));
+        assert!(!ran);
+        assert_eq!(t.status(s(11)).consecutive_failures, 3);
+    }
+
+    #[test]
+    fn panic_inside_attempt_still_counts() {
+        let mut t = Throttle::new();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = t.attempt(s(1), || -> Result<(), ()> { panic!("boom") });
+        }));
+        assert!(r.is_err());
+        assert_eq!(t.status(s(1)).consecutive_failures, 1);
     }
 
     #[test]

@@ -1,9 +1,10 @@
 //! Time sources and the idle timer.
 //!
-//! Everything that waits (the unlock throttle, auto-lock) reads the **monotonic**
-//! clock, which only moves forward and ignores wall-clock changes. The wall clock is
-//! used only to stamp items. Code asks a [`Clock`] for the time, so tests can swap in
-//! a fake one.
+//! The unlock throttle reads the **monotonic** clock only, which moves forward and
+//! ignores wall-clock changes. Auto-lock reads both: the monotonic clock can stand
+//! still while the computer sleeps, so [`IdleTimer`] also watches the wall clock, but
+//! only to lock **sooner** (a forward jump counts, a backward jump is ignored). Code
+//! asks a [`Clock`] for the time, so tests can swap in a fake one.
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,10 +13,13 @@ use crate::settings::{AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS};
 
 /// A source of time.
 pub trait Clock: Send {
-    /// Wall-clock seconds since 1970, for item timestamps only. Never use it to
-    /// measure a wait: the user can change it.
+    /// Wall-clock seconds since 1970. Used for item timestamps, and by [`IdleTimer`]
+    /// only to lock sooner. Never use it to measure a wait that must not be shortened:
+    /// the user can change it.
     fn now_unix(&self) -> Timestamp;
-    /// Time since the clock was created. Never decreases, whatever the wall clock does.
+    /// Time since the clock was created. Never decreases, whatever the wall clock
+    /// does. It may not advance while the computer sleeps (`Instant` on macOS and
+    /// Linux leaves suspend out), which is why [`IdleTimer`] also checks wall time.
     fn monotonic(&self) -> Duration;
 }
 
@@ -56,32 +60,49 @@ impl Clock for SystemClock {
     }
 }
 
-/// Tracks the last activity and says when auto-lock is due. All times are values from
-/// [`Clock::monotonic`].
+/// Tracks the last activity and says when auto-lock is due.
+///
+/// It records both clocks at each touch and reports expiry when **either** the
+/// monotonic idle time **or** the forward wall-clock gap reaches the limit. The wall
+/// clock catches a sleep (monotonic time stands still), and it can only make the lock
+/// come sooner: setting the clock back gives a zero gap and the monotonic path still
+/// fires.
 #[derive(Debug, Clone, Copy)]
 pub struct IdleTimer {
     last: Duration,
+    last_unix: i64,
 }
 
 impl IdleTimer {
-    /// Starts the timer at `now`.
+    /// Starts the timer at the clock's current time.
     #[must_use]
-    pub fn new(now: Duration) -> Self {
-        Self { last: now }
+    pub fn new(clock: &dyn Clock) -> Self {
+        Self {
+            last: clock.monotonic(),
+            last_unix: clock.now_unix().0,
+        }
     }
 
-    /// Records activity at `now`. A `now` earlier than the last touch is ignored, so
-    /// the timer can never move backwards.
-    pub fn touch(&mut self, now: Duration) {
-        self.last = self.last.max(now);
+    /// Records activity now. The monotonic mark never moves backwards. The wall mark
+    /// is always replaced, so a backward wall jump cannot stretch the timer: the
+    /// gap is measured from the new, earlier mark and the monotonic path still counts.
+    pub fn touch(&mut self, clock: &dyn Clock) {
+        self.last = self.last.max(clock.monotonic());
+        self.last_unix = clock.now_unix().0;
     }
 
-    /// True once `limit_secs` have passed since the last touch. The limit is clamped
-    /// to the settings range (60 to 3600 s), so a bad value can never mean "never".
+    /// True once `limit_secs` have passed since the last touch on the monotonic clock,
+    /// or the wall clock has moved forward by that much. The limit is clamped to the
+    /// settings range (60 to 3600 s), so a bad value can never mean "never".
     #[must_use]
-    pub fn expired(&self, now: Duration, limit_secs: u32) -> bool {
+    pub fn expired(&self, clock: &dyn Clock, limit_secs: u32) -> bool {
         let limit = limit_secs.clamp(AUTO_LOCK_MIN_SECS, AUTO_LOCK_MAX_SECS);
-        now.saturating_sub(self.last) >= Duration::from_secs(u64::from(limit))
+        let mono_idle = clock.monotonic().saturating_sub(self.last);
+        let mono_hit = mono_idle >= Duration::from_secs(u64::from(limit));
+        // A backward wall jump saturates to 0 and never reaches the limit.
+        let wall_gap = clock.now_unix().0.saturating_sub(self.last_unix).max(0);
+        let wall_hit = u64::try_from(wall_gap).unwrap_or(0) >= u64::from(limit);
+        mono_hit || wall_hit
     }
 }
 
@@ -124,30 +145,86 @@ impl Clock for FakeClock {
 mod tests {
     use super::*;
 
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
     #[test]
     fn idle_expires_at_limit() {
-        let t = IdleTimer::new(Duration::ZERO);
-        assert!(!t.expired(Duration::from_secs(299), 300));
-        assert!(t.expired(Duration::from_secs(300), 300));
+        let c = FakeClock::default();
+        let t = IdleTimer::new(&c);
+        c.advance(secs(299));
+        assert!(!t.expired(&c, 300));
+        c.advance(secs(1));
+        assert!(t.expired(&c, 300));
     }
 
     #[test]
-    fn touch_restarts_and_never_goes_back() {
-        let mut t = IdleTimer::new(Duration::ZERO);
-        t.touch(Duration::from_secs(200));
-        assert!(!t.expired(Duration::from_secs(499), 300));
-        t.touch(Duration::from_secs(10));
-        assert!(!t.expired(Duration::from_secs(499), 300));
-        assert!(t.expired(Duration::from_secs(500), 300));
+    fn touch_restarts_the_timer() {
+        let c = FakeClock::default();
+        let mut t = IdleTimer::new(&c);
+        c.advance(secs(200));
+        t.touch(&c);
+        c.advance(secs(299));
+        assert!(!t.expired(&c, 300));
+        c.advance(secs(1));
+        assert!(t.expired(&c, 300));
     }
 
     #[test]
-    fn limit_is_clamped_and_now_before_last_is_safe() {
-        let t = IdleTimer::new(Duration::from_secs(100));
-        assert!(!t.expired(Duration::from_secs(50), 60));
-        assert!(t.expired(Duration::from_secs(160), 0));
-        assert!(!t.expired(Duration::from_secs(3699), u32::MAX));
-        assert!(t.expired(Duration::from_secs(3700), u32::MAX));
+    fn limit_is_clamped() {
+        let c = FakeClock::default();
+        let t = IdleTimer::new(&c);
+        c.advance(secs(60));
+        assert!(t.expired(&c, 0));
+        c.advance(secs(3539));
+        assert!(!t.expired(&c, u32::MAX));
+        c.advance(secs(1));
+        assert!(t.expired(&c, u32::MAX));
+    }
+
+    #[test]
+    fn simulated_sleep_locks_through_the_wall_clock() {
+        let c = FakeClock::default();
+        c.set_unix(1_000_000);
+        let t = IdleTimer::new(&c);
+        // Eight hours asleep: wall time jumps, monotonic barely moves.
+        c.set_unix(1_000_000 + 8 * 3600);
+        c.advance(secs(1));
+        assert!(t.expired(&c, 300));
+    }
+
+    #[test]
+    fn backward_wall_jump_neither_unlocks_nor_extends() {
+        let c = FakeClock::default();
+        c.set_unix(1_000_000);
+        let t = IdleTimer::new(&c);
+        c.set_unix(1_000_000 - 3600);
+        c.advance(secs(299));
+        assert!(!t.expired(&c, 300));
+        c.advance(secs(1));
+        assert!(t.expired(&c, 300), "monotonic path must still fire");
+    }
+
+    #[test]
+    fn small_wall_drift_does_not_lock_early() {
+        let c = FakeClock::default();
+        c.set_unix(1_000_000);
+        let t = IdleTimer::new(&c);
+        c.set_unix(1_000_000 + 299);
+        c.advance(secs(10));
+        assert!(!t.expired(&c, 300));
+    }
+
+    #[test]
+    fn extreme_wall_values_do_not_overflow() {
+        let c = FakeClock::default();
+        c.set_unix(i64::MIN);
+        let t = IdleTimer::new(&c);
+        c.set_unix(i64::MAX);
+        assert!(t.expired(&c, 300));
+        c.set_unix(i64::MIN);
+        assert!(!t.expired(&c, 300));
     }
 
     #[test]

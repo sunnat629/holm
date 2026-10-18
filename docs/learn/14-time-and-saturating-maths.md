@@ -2,7 +2,7 @@
 
 ## What we built
 
-Holm needs to measure two waits: the pause after failed unlocks, and the idle time before auto-lock. `clock.rs` holds a `Clock` trait, the real `SystemClock`, and `IdleTimer`. `throttle.rs` holds `delay_after`, `Throttle` and `ThrottleStatus`. The code is in `crates/holm-core/src/`.
+Holm needs to measure two waits: the pause after failed unlocks, and the idle time before auto-lock. `clock.rs` holds a `Clock` trait, the real `SystemClock`, and `IdleTimer`. `throttle.rs` holds `delay_after`, `Throttle` (with `attempt`, the one way to run a guarded action) and `ThrottleStatus`. The code is in `crates/holm-core/src/`.
 
 ## Rust ideas in this task
 
@@ -10,14 +10,15 @@ Holm needs to measure two waits: the pause after failed unlocks, and the idle ti
 
 ```rust
 pub trait Clock: Send {
-    fn now_unix(&self) -> Timestamp;   // wall clock, for stamping items
+    fn now_unix(&self) -> Timestamp;   // wall clock: stamps, and "lock sooner"
     fn monotonic(&self) -> Duration;   // for every wait
 }
 ```
 
 - `Duration` is a span of time (seconds plus nanoseconds), not a point in time. Holm's monotonic clock is just "how long since the clock was made", as a `Duration`.
 - `SystemTime` is the wall clock. The user, or an attacker with a few minutes at the machine, can set it back. `Instant` is monotonic: it never goes backwards, whatever the wall clock does.
-- So the throttle and idle timer use only `monotonic()`. If they used wall time, setting the clock back an hour would erase a 60-second wait, and a quick brute-force script would not need to wait at all.
+- So the throttle uses only `monotonic()`. If they used wall time, setting the clock back an hour would erase a 60-second wait, and a quick brute-force script would not need to wait at all.
+- `Instant` has a catch: on macOS and Linux it may not count time asleep. So `IdleTimer` also records wall time, and locks when **either** the monotonic idle time **or** a forward wall-clock gap reaches the limit. A backward wall jump gives a gap of zero and is ignored, so wall time can only make the lock come sooner, never later.
 - `SystemTime::duration_since` returns a `Result`, because the time may be before 1970. Holm turns that error into 0.
 
 In Kotlin you'd write: `System.nanoTime()` for waits (monotonic) and `System.currentTimeMillis()` for stamps (wall). Kotlin's `TimeSource.Monotonic` is the same split. Rust puts the two in different types, so you cannot mix them by accident.
@@ -51,22 +52,46 @@ In Kotlin you'd write: a data class with default arguments, `data class Throttle
 
 ### A trait as a test seam
 
-- Code that needs the time takes a `Clock`, not `Instant::now()`. The test `FakeClock` holds an `Arc` of atomics, so a test keeps one handle and moves time with `advance`, while the code under test holds another handle.
-- A test of a 60 s wait takes microseconds, and it is exact. With the real clock you would sleep for 60 s or accept a flaky test.
-- `FakeClock` is `#[cfg(test)]`, so it is not even compiled into the release library.
+```rust
+#[cfg(test)]
+pub(crate) struct FakeClock {
+    unix: Arc<AtomicI64>,
+    mono_nanos: Arc<AtomicU64>,
+}
+```
+
+- Code that needs the time takes a `&dyn Clock`, not `Instant::now()`. `FakeClock` holds `Arc`s of atomics, so a test keeps one handle and moves time with `advance` and `set_unix`, while the code under test holds another handle (`Clone` copies the `Arc`, not the number).
+- `#[cfg(test)]` means the struct is not compiled into the release library at all.
+- A test of a 60 s wait takes microseconds and is exact. A simulated sleep is `set_unix(+8 h)` with `advance(1 s)`: wall time jumps, monotonic time barely moves, and the idle timer must lock.
 
 In Kotlin you'd write: `interface Clock { fun now(): Long }` with a `FakeClock` in the test source set, or `kotlinx-datetime`'s `Clock` with a test implementation. Same pattern.
 
 ### The `Send` bound
 
-- `trait Clock: Send` says every clock can be moved to another thread. The GUI will probably hold the vault state on one thread and run timers on another, and the compiler then checks that nothing in the clock (such as an `Rc`) breaks that.
-- `Arc<AtomicI64>` is `Send`, so `FakeClock` passes. An `Rc<Cell<i64>>` would fail to compile where a `Clock` is moved across threads.
+```rust
+pub trait Clock: Send {
+```
+
+- `: Send` after the trait name says every type that implements `Clock` must be safe to move to another thread. The GUI will probably hold the vault on one thread and run timers on another.
+- The compiler checks it for each implementation. `Arc<AtomicI64>` is `Send`, so `FakeClock` passes. An `Rc<Cell<i64>>` field would fail to compile.
 
 In Kotlin you'd write: nothing. The JVM lets you share any object across threads, and thread safety is a convention you document. In Rust it is a type-level fact.
 
+### One door for guarded actions
+
+```rust
+pub fn attempt<T, E>(&mut self, now: Duration, f: impl FnOnce() -> Result<T, E>)
+    -> Result<T, Throttled<E>>
+```
+
+- `impl FnOnce() -> Result<T, E>` takes a closure that runs at most once. `attempt` refuses without calling it while a wait is active, counts the failure **before** calling it, and resets only on `Ok`.
+- `check` and `record_failure` are private, so a caller cannot forget one of them or skip the count with an early `?`.
+
+In Kotlin you'd write: `fun <T> attempt(f: () -> T): T` with `try/finally`. Rust makes the helper methods private so the safe path is the only path.
+
 ## Why this matters for security
 
-The throttle only helps if every failed attempt is counted. The caller records a failure for **every** error from an unlock attempt, not only "wrong password". Otherwise an attacker could feed a damaged file, get a non-password error, and retry without any pause. It also must not depend on the wall clock, and its arithmetic must not wrap. `IdleTimer::expired` clamps the limit to 60 to 3,600 s, so a bad setting can never mean "never lock".
+Every unlock error counts as a failure (F16), so a damaged file cannot be used to retry without a pause. Task 7 routes unlock through `attempt`, which makes that rule hard to forget. The throttle runs on monotonic time and the idle timer can only be made shorter by the wall clock, so changing the date never helps an attacker.
 
 Honesty note: the throttle lives in memory. Restarting Holm resets it. It slows a person at the keyboard; the real defence against offline guessing is Argon2id (lesson 04 and the crypto crate).
 
@@ -74,7 +99,7 @@ Honesty note: the throttle lives in memory. Restarting Holm resets it. It slows 
 
 1. Run the clock and throttle tests.
    - Run: `cargo test -p holm-core --locked --lib -- throttle clock`
-   - Check: the last line says `12 passed; 0 failed`.
+   - Check: the last line says `21 passed; 0 failed`.
    - Undo: nothing to undo, it only reads.
 2. Break the cap and watch the table test catch it.
    - Run: `sed -i.bak 's/MAX_DELAY_SECS: u64 = 60/MAX_DELAY_SECS: u64 = 600/' crates/holm-core/src/throttle.rs && cargo test -p holm-core --locked --lib delay_table`
