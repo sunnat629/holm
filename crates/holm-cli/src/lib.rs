@@ -5,13 +5,16 @@
 //! [`term::RealTerminal`], and calls [`run`]. Passwords come only from the
 //! [`term::Terminal`]: never from an argument (see [`args`]), the environment or a
 //! pipe. Each command is one-shot: it asks for the master password, does its work,
-//! and locks the vault before the process ends. There is no background agent.
+//! and locks the vault before the process ends. `holm shell` keeps one vault open
+//! for many commands in the same process, and locks it when idle or on exit. There
+//! is no background agent.
 
 #![forbid(unsafe_code)]
 
 pub mod args;
 pub mod commands;
 pub mod output;
+pub mod shell;
 pub mod term;
 pub mod vault;
 
@@ -87,10 +90,11 @@ Commands:
       --format csv|json     The file's format (default: from its name).
   holm export FILE          Write every item to a new CSV file, in plain text.
   holm export --backup FILE Write an encrypted copy of the vault.
+  holm shell                Run many commands with one unlock. The vault
+                            locks itself after the vault's auto-lock time
+                            without use, and on exit.
   holm help                 Show this help.
   holm version              Show the version.
-
-Coming next: shell.
 
 Holm asks for the master password at a hidden prompt on the terminal. It never
 takes a password from the command line, the environment or a pipe.
@@ -105,7 +109,12 @@ pub fn run(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> ExitCode {
-    match dispatch(inv, env, term, out, err) {
+    finish(dispatch(inv, env, term, out, err), err)
+}
+
+/// The exit code for a command's result, printing the error if there is one.
+pub(crate) fn finish(result: Result<(), CliError>, err: &mut dyn Write) -> ExitCode {
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(e)) => usage_error(&e, err),
         Err(e) => {
@@ -164,7 +173,10 @@ fn dispatch(
         Command::Export(args) => {
             transfer::export(&vault_path(vault, env)?, &args, env, term, out, err)
         }
-        Command::Pending(_) => Err(CliError::NotReady),
+        Command::Shell => {
+            let path = vault_path(vault, env)?;
+            shell::shell(&path, env, term, out, err)
+        }
     }
 }
 

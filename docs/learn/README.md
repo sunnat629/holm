@@ -41,6 +41,7 @@ security, three exercises, and what to read next in
 | 32 | [Building output safely](32-building-output-safely.md): measure-then-fill so a growing `String` leaves no copy of a password behind, RFC 4180 quoting with `"` doubled, `OpenOptions::create_new` and `OpenOptionsExt::mode(0o600)` for a file nobody else can read, a read that refuses FIFOs and growing files, and why Holm does not escape spreadsheet formulas. |
 | 33 | [A CLI without a framework](33-a-cli-without-a-framework.md): `OsString` and `args_os`, matching on slices of arguments, a `dyn Terminal` trait object so tests swap in a fake, RAII guards that restore the terminal in `Drop`, and `ExitCode` instead of `process::exit`. |
 | 34 | [Moving secrets in and out](34-moving-secrets-in-and-out.md): `std::mem::take` to move a typed password into an item without a copy, `to_owned()` straight into a wiping type when a copy can't be avoided, a `Box<dyn Fn>` factory so tests swap in a fake clipboard, and one monotonic `Instant` deadline for the clipboard clear, which runs before any error is returned. |
+| 35 | [A read-eval loop with a deadline](35-a-read-eval-loop-with-a-deadline.md): a `loop` with `match` on an outcome enum, the earlier of two `Option` deadlines with `into_iter().chain().min()`, a quote-aware tokenizer as a small state machine over `(mode, char)`, and keeping per-line secrets in loop locals so they are wiped every turn. |
 
 ## Side tracks
 

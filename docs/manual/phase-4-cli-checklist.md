@@ -1,10 +1,10 @@
-# Phase 4 manual check: the CLI clipboard
+# Phase 4 manual check: the CLI clipboard and shell
 
 The holm-cli tests (`cargo test -p holm-cli --locked`) drive every command through a
 fake terminal and a fake clipboard. They can't see the real macOS pasteboard, a
-clipboard manager, or a real terminal waiting for Enter. This list covers those. Run
-it once on a real Mac before the Phase 4 merge, and write down who ran it, the date,
-the macOS version and the chip.
+clipboard manager, a real terminal waiting for Enter, or a shell that sits idle. This
+list covers those. Run it once on a real Mac before the Phase 4 merge, and write down
+who ran it, the date, the macOS version and the chip.
 
 ## Runs
 
@@ -94,6 +94,29 @@ After
 
 - [ ] The terminal scrollback shows no password, phrase or master password.
 - [ ] Activity Monitor, Network tab: `holm` sent and received 0 bytes.
+
+`holm shell`
+
+- [ ] `holm shell`, master password. It prints "Type help to see the commands, and
+  exit to leave." and the prompt `holm> `. `list` shows the items; no password is
+  asked again.
+- [ ] `lock`: it prints "Locked." and the prompt becomes `holm (locked)> `. `list`
+  prints "The vault is locked. Type unlock to open it." `unlock`, master password:
+  back to `holm> `.
+- [ ] `get REF --copy password`: "Copied. Holm clears the clipboard in 30 seconds."
+  and the prompt is back at once. Paste gives the password. About 30 s later, without
+  typing, it prints "Clipboard cleared." and a paste gives nothing.
+- [ ] Idle lock on a real terminal: leave the shell untouched for 5 minutes (the
+  default auto-lock time). It prints "Locked after 5 minutes without use." by itself,
+  and the prompt becomes `holm (locked)> `.
+- [ ] Ctrl-C at the prompt: the shell ends with "Locked.", and typing in the same
+  terminal echoes normally (echo restored).
+- [ ] While a shell runs, `holm list` in a second terminal says Holm is already open
+  on this vault; after `exit` it opens.
+- [ ] `export` inside the shell asks "Type export to continue: " and then "Master
+  password again: ". Delete the file afterwards.
+- [ ] The scrollback shows no password typed at a hidden prompt, and there is no
+  history: the up arrow does not bring back a line.
 
 Clean up: `rm -r "$(dirname "$V")"`, then copy some plain text so nothing from the run
 stays on the clipboard.

@@ -413,18 +413,47 @@ does its work and locks the vault on exit. There is no background agent.
   goes through a filter that replaces terminal control and bidi characters.
 - Messages are fixed text: never a path, a value or a library message.
 
+`holm shell` keeps one unlocked session in one process, for many commands:
+
+- It takes `holm.lock` once and holds it until it ends. It keeps one `Session` for its
+  whole life, and `Session::lock` drops only the keys and the data, so the unlock
+  throttle carries over a lock and an unlock: within one shell, the fourth wrong
+  password waits.
+- It locks when the vault's auto-lock time passes without a typed line (the session's
+  idle timer, monotonic or a forward wall-clock jump), on `lock`, and on `exit`, `quit`,
+  Ctrl-D or Ctrl-C at the prompt. Each prompt waits with a deadline, and the idle check
+  runs before a typed line does, so a line typed after the idle time runs against a
+  locked vault. An idle lock never waits or asks: unsaved changes are discarded and the
+  message says so. `lock` and `exit` save first, and if that fails they lock only after
+  `discard` is typed. Every lock clears the clipboard if it still holds Holm's value.
+- Inside the shell the master password is asked again only where the spec asks: export
+  (again), `passwd` (the current one) and copying a recovery phrase.
+- `--copy` returns to the prompt at once and schedules the clear for the vault's clear
+  time, which the prompt's deadline then runs.
+- There is no history. Each line and each word lives in a wiping buffer; the words reach
+  the parser by moving, not copying, and are wiped after it. Passwords are never read
+  from a line; they are typed at the hidden prompt.
+
 Known gaps:
 
 - A process killed by a signal from outside (`kill`, SIGTERM, SIGHUP) skips the guard
   and can leave the terminal with echo off until `stty sane`. Handling signals would
   need `unsafe` or a new crate. Phase 5.
 - The unlock throttle lives in the `Session`, so it starts fresh in every process, and
-  three tries in one command never reach its first wait. A script that runs `holm` in a
+  three tries in one command never reach its first wait. A `holm shell` keeps its
+  throttle until it ends, but a new shell starts fresh. A script that runs `holm` in a
   loop is limited only by Argon2 and the instance lock: the same bound as an attacker
   with a copy of the file.
 - The terminal driver, the shell's line discipline before raw mode starts, and the
   kernel's tty buffers can hold typed bytes Holm cannot wipe.
 - `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
+- `holm shell` does not lock on OS sleep, screen lock or logout yet; after a wake the
+  first line is checked against the idle time (wall clock included) before it runs.
+  Phase 5.
+- Inside a `holm shell` command, a prompt (a hidden entry or a confirmation) has no
+  deadline, so the idle lock waits until that command ends.
+- Command arguments (titles, usernames, web addresses, paths) are copied into plain
+  `String`s by the parser and are not wiped. They are public fields, never secrets.
 
 ## Not claimed
 

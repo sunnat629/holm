@@ -123,8 +123,8 @@ pub enum Command {
     Import(ImportArgs),
     /// `holm export [--backup] FILE`.
     Export(ExportArgs),
-    /// A command whose handler comes in a later task. Its flags are not parsed yet.
-    Pending(Pending),
+    /// `holm shell`: one unlocked session for many commands.
+    Shell,
 }
 
 impl fmt::Debug for Command {
@@ -143,26 +143,9 @@ impl fmt::Debug for Command {
             Command::Passwd => "passwd",
             Command::Import(_) => "import",
             Command::Export(_) => "export",
-            Command::Pending(p) => p.name(),
+            Command::Shell => "shell",
         };
         f.write_str(name)
-    }
-}
-
-/// The commands parsed but not run yet (Task 7).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Pending {
-    /// `holm shell`.
-    Shell,
-}
-
-impl Pending {
-    /// The command's name.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Pending::Shell => "shell",
-        }
     }
 }
 
@@ -344,8 +327,8 @@ pub fn parse(args: &[OsString]) -> Result<Invocation, UsageError> {
     Ok(Invocation { vault, command })
 }
 
-/// Parses a command and its flags, without `--vault`. `holm shell` (Task 7) uses this
-/// for each line.
+/// Parses a command and its flags, without `--vault`. `holm shell` uses this for
+/// each line.
 ///
 /// # Errors
 /// As [`parse`].
@@ -357,7 +340,6 @@ pub fn parse_command(args: &[OsString]) -> Result<Command, UsageError> {
         return Ok(Command::Help);
     };
     let name = text(first)?;
-    let pending = |p: Pending| Ok(Command::Pending(p));
     match name {
         "help" | "--help" | "-h" => no_more(rest).map(|()| Command::Help),
         "version" | "--version" | "-V" => no_more(rest).map(|()| Command::Version),
@@ -371,7 +353,7 @@ pub fn parse_command(args: &[OsString]) -> Result<Command, UsageError> {
         "import" => parse_import(rest).map(Command::Import),
         "export" => parse_export(rest).map(Command::Export),
         "passwd" => no_more(rest).map(|()| Command::Passwd),
-        "shell" => no_more(rest).and_then(|()| pending(Pending::Shell)),
+        "shell" => no_more(rest).map(|()| Command::Shell),
         _ => Err(UNKNOWN_COMMAND),
     }
 }

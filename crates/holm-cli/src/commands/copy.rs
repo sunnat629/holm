@@ -60,7 +60,7 @@ impl Clip for ConcealedClipboard {
 
 /// Opens the clipboard, before anything is asked, so a system without one says so
 /// at once.
-fn open_clip(env: &Env) -> Result<Box<dyn Clip>, CliError> {
+pub(crate) fn open_clip(env: &Env) -> Result<Box<dyn Clip>, CliError> {
     (env.clip)().map_err(|_| CliError::NoClipboard)
 }
 
@@ -206,8 +206,17 @@ pub fn gen_copy(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let mut clip = open_clip(env)?;
+    let value = gen_secret(args.kind)?;
+    copy_and_wait(value, CLIPBOARD_DEFAULT_SECS, clip.as_mut(), term, err)
+}
+
+/// A new value of `kind` from the default spec, in a wiping buffer.
+///
+/// # Errors
+/// [`CliError::GenerateFailed`].
+pub(crate) fn gen_secret(kind: GenKind) -> Result<Zeroizing<String>, CliError> {
     let failed = |_| CliError::GenerateFailed;
-    let value = match args.kind {
+    Ok(match kind {
         GenKind::Password => Zeroizing::new(
             generate_password(&PasswordSpec::DEFAULT)
                 .map_err(failed)?
@@ -226,6 +235,5 @@ pub fn gen_copy(
                 .as_str()
                 .to_owned(),
         ),
-    };
-    copy_and_wait(value, CLIPBOARD_DEFAULT_SECS, clip.as_mut(), term, err)
+    })
 }

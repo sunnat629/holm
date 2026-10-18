@@ -108,7 +108,16 @@ pub fn add(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let mut opened = vault::open(path, env, term, err)?;
-    let session = &mut opened.session;
+    add_to(&mut opened.session, args, term, out)
+}
+
+/// The body of [`add`] on an open session, for `holm shell` too.
+pub(crate) fn add_to(
+    session: &mut Session<FsStore>,
+    args: AddArgs,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
     let category = match &args.category {
         None => None,
         Some(name) => Some(category_named(session, name)?),
@@ -197,7 +206,16 @@ pub fn edit(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let mut opened = vault::open(path, env, term, err)?;
-    let session = &mut opened.session;
+    edit_in(&mut opened.session, args, term, out)
+}
+
+/// The body of [`edit`] on an open session, for `holm shell` too.
+pub(crate) fn edit_in(
+    session: &mut Session<FsStore>,
+    args: EditArgs,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
     let item = session.item(id).map_err(|_| CliError::NotFound)?;
     if item.trashed().is_some() {
@@ -306,7 +324,16 @@ pub fn rm(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let mut opened = vault::open(path, env, term, err)?;
-    let session = &mut opened.session;
+    rm_in(&mut opened.session, args, term, out)
+}
+
+/// The body of [`rm`] on an open session, for `holm shell` too.
+pub(crate) fn rm_in(
+    session: &mut Session<FsStore>,
+    args: &RmArgs,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
     let trashed = session
         .item(id)
@@ -349,6 +376,18 @@ pub fn passwd(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let mut opened = vault::open(path, env, term, err)?;
+    passwd_in(&mut opened.session, env, term, out, err)
+}
+
+/// The body of [`passwd`] on an open session, for `holm shell` too: it starts at
+/// the current password.
+pub(crate) fn passwd_in(
+    session: &mut Session<FsStore>,
+    env: &Env,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
     let current = vault::master(term.secret("Current master password: ", MAX_PASSWORD_BYTES)?);
     let new = vault::master(term.secret("New master password: ", MAX_PASSWORD_BYTES)?);
     let report = strength::check(&new);
@@ -369,7 +408,6 @@ pub fn passwd(
         return Err(CliError::SecretsDiffer);
     }
     drop(repeat);
-    let session = &mut opened.session;
     match session.change_password(&current, &new, &env.kdf) {
         Ok(()) => {}
         // The session now holds the new keys and is dirty: one more save puts the

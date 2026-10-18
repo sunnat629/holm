@@ -15,10 +15,11 @@ use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::export::EXPORT_WARNING;
 use holm_core::import::{
-    IMPORT_DELETE_SOURCE_WARNING, ImportFormat, ImportPreview, MAX_IMPORT_BYTES, RowIssue,
-    RowProblem, parse,
+    IMPORT_DELETE_SOURCE_WARNING, ImportBatch, ImportFormat, ImportPreview, MAX_IMPORT_BYTES,
+    RowIssue, RowProblem, parse,
 };
 use holm_core::rules::FieldError;
+use holm_core::session::Session;
 use holm_core::store::StoreError;
 use holm_platform::fs_store::FsStore;
 use holm_platform::private_file::{read_capped, write_new_private_file};
@@ -154,6 +155,16 @@ pub fn import(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
+    let batch = read_import(args)?;
+    let mut opened = vault::open(path, env, term, err)?;
+    import_into(&mut opened.session, batch, term, out, err)
+}
+
+/// Reads and parses an import file. No prompt and no vault yet.
+///
+/// # Errors
+/// The `Import…` read and parse errors of [`CliError`].
+pub(crate) fn read_import(args: &ImportArgs) -> Result<ImportBatch, CliError> {
     let file = absolute(&args.file).map_err(|_| CliError::ImportReadFailed)?;
     let format = args.format.unwrap_or_else(|| {
         let json = file
@@ -168,9 +179,18 @@ pub fn import(
     let bytes = read_capped(&file, MAX_IMPORT_BYTES).map_err(|e| read_error(&e))?;
     let batch = parse(&bytes, format).map_err(CliError::Import)?;
     drop(bytes);
+    Ok(batch)
+}
 
-    let mut opened = vault::open(path, env, term, err)?;
-    let session = &mut opened.session;
+/// The body of [`import`] on an open session, for `holm shell` too: the preview,
+/// the `import` prompt, the import and the report.
+pub(crate) fn import_into(
+    session: &mut Session<FsStore>,
+    batch: ImportBatch,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
     let preview = session
         .preview_import(&batch)
         .map_err(|_| CliError::Failed)?;
@@ -224,15 +244,36 @@ pub fn export(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
+    let file = export_target(args)?;
+    let mut opened = vault::open(path, env, term, err)?;
+    export_to(&mut opened.session, &file, args.backup, term, out, err)
+}
+
+/// The export file as an absolute path. Nothing may be there yet.
+///
+/// # Errors
+/// [`CliError::DirError`] or [`CliError::FileExists`].
+pub(crate) fn export_target(args: &ExportArgs) -> Result<PathBuf, CliError> {
     let file = absolute(&args.file)?;
     if vault::exists(&file) {
         return Err(CliError::FileExists);
     }
-    let mut opened = vault::open(path, env, term, err)?;
-    let session = &mut opened.session;
-    if args.backup {
+    Ok(file)
+}
+
+/// The body of [`export`] on an open session, for `holm shell` too. A plain export
+/// still asks for `export` and for the master password again.
+pub(crate) fn export_to(
+    session: &mut Session<FsStore>,
+    file: &Path,
+    backup: bool,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
+    if backup {
         session
-            .save_backup(&mut FsStore::new(&file))
+            .save_backup(&mut FsStore::new(file))
             .map_err(|e| match e {
                 CoreError::VaultExists | CoreError::Store(StoreError::AlreadyExists) => {
                     CliError::FileExists
@@ -254,7 +295,7 @@ pub fn export(
         .active_items()
         .map_err(|_| CliError::Failed)?
         .count();
-    write_new_private_file(&file, csv.expose()).map_err(|e| match e {
+    write_new_private_file(file, csv.expose()).map_err(|e| match e {
         StoreError::AlreadyExists => CliError::FileExists,
         _ => CliError::ExportWriteFailed,
     })?;

@@ -91,8 +91,6 @@ pub enum CliError {
     GenerateFailed,
     /// Writing the output failed (for example a closed pipe).
     Output,
-    /// A command whose handler is not built yet.
-    NotReady,
     /// Any other error.
     Failed,
     /// A password typed again to confirm an action is wrong.
@@ -218,7 +216,6 @@ impl fmt::Display for CliError {
             CliError::UnknownCategory => "No category has that name.",
             CliError::GenerateFailed => "Holm couldn't generate a value. Try again.",
             CliError::Output => "Holm couldn't write its output.",
-            CliError::NotReady => "That command isn't ready yet.",
             CliError::Failed => "Something went wrong. Nothing was changed.",
             CliError::WrongPassword => "That password is wrong. Nothing was done.",
             CliError::NotConfirmed => "Not confirmed. Nothing was changed.",

@@ -34,7 +34,7 @@ pub const MAX_TRIES: usize = 3;
 /// limit at 4 bytes per character.
 pub const MAX_PASSWORD_BYTES: usize = MAX_MASTER_CHARS * 4;
 /// Shown after each wrong password.
-const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
+pub const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
 
 /// An unlocked vault and the folder lock that guards it.
 ///
@@ -108,23 +108,36 @@ pub fn open(
     }
     let mut session = Session::new(FsStore::new(path), (env.clock)());
     for _ in 0..MAX_TRIES {
-        let password = master(term.secret(PASSWORD_PROMPT, MAX_PASSWORD_BYTES)?);
-        match session.unlock(&password) {
-            Ok(()) => {
-                return Ok(Opened {
-                    session,
-                    _lock: lock,
-                });
-            }
-            Err(
-                CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt),
-            ) => {
-                writeln!(err, "{WRONG_PASSWORD}")?;
-            }
-            Err(e) => return Err(unlock_error(&e)),
+        if unlock_once(&mut session, term)? {
+            return Ok(Opened {
+                session,
+                _lock: lock,
+            });
         }
+        writeln!(err, "{WRONG_PASSWORD}")?;
     }
     Err(CliError::TooManyTries)
+}
+
+/// Asks for the master password once and tries it. `Ok(false)` is a wrong password
+/// (or a changed or damaged file); the caller says so. A failure counts against the
+/// session's throttle, which outlives a lock, so `holm shell` keeps one throttle for
+/// its whole life.
+///
+/// # Errors
+/// A terminal error, [`CliError::Throttled`], or another unlock error, as fixed text.
+pub fn unlock_once(
+    session: &mut Session<FsStore>,
+    term: &mut dyn Terminal,
+) -> Result<bool, CliError> {
+    let password = master(term.secret(PASSWORD_PROMPT, MAX_PASSWORD_BYTES)?);
+    match session.unlock(&password) {
+        Ok(()) => Ok(true),
+        Err(CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt)) => {
+            Ok(false)
+        }
+        Err(e) => Err(unlock_error(&e)),
+    }
 }
 
 /// Finds the one item in `view` whose id starts with `reference`.

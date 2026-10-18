@@ -85,6 +85,7 @@ Phase 5 (platform hardening and GUI polish)
 - Keychain and Touch ID option.
 - Memory locking (`mlock`).
 - OS sleep, screen-lock and logout events.
+- `holm shell`: lock on OS sleep, screen lock and logout (today it locks on idle, `lock` and exit only).
 - Screen-capture exclusion (`with_content_protected`).
 - Per-OS durable save.
 - Windows and Linux GUI (winit `x11` and `wayland` features), and compiling the Linux and Windows builds at all (nothing compiles them while Actions is off).
