@@ -241,10 +241,13 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
         Err(CoreError::PasswordRequired)
     ));
     s.update_settings(weaker.clone(), Some(&pw(PW))).unwrap();
+    assert_eq!(s.item(note).unwrap().title(), "Nötë, edited");
+    // Left in the trash across the password change and the backup.
+    s.trash(note).unwrap();
     let edited = view(&mut s, &pw(PW));
     assert_eq!(edited.settings, weaker);
-    assert_eq!(edited.items[&note].title, "Nötë, edited");
     assert_eq!(edited.items[&login].trashed, None);
+    assert!(!edited.items.contains_key(&note));
 
     // Change the password and raise the cost; the old password no longer opens.
     s.change_password(&pw(PW), &pw(NEW_PW), &RAISED).unwrap();
@@ -255,12 +258,14 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
     ));
     s.unlock(&pw(NEW_PW)).unwrap();
     assert_eq!(view(&mut s, &pw(NEW_PW)), edited);
+    assert!(s.item(note).unwrap().trashed().is_some());
 
     // A backup opens in a new session with the same items.
     s.save_backup(&mut backup).unwrap();
     let mut b = Session::new(backup, Box::new(SystemClock::new()));
     b.unlock(&pw(NEW_PW)).unwrap();
     assert_eq!(view(&mut b, &pw(NEW_PW)), edited);
+    assert!(b.item(note).unwrap().trashed().is_some());
     (s, b)
 }
 

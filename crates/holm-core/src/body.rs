@@ -781,10 +781,11 @@ mod tests {
     /// Spec section 12: any valid body survives `decode(encode())` unchanged.
     mod props {
         use super::*;
+        use crate::generator::{PassphraseSpec, UsernameSpec};
         use proptest::collection::vec;
         use proptest::option;
         use proptest::prelude::*;
-        use proptest::sample::Index;
+        use proptest::sample::{self, Index};
 
         /// One-line display text: no controls or bidi, precomposed non-ASCII only.
         const LINE: &str = "[a-zA-Z0-9 ._@:/#äéñ✉日本-]{0,40}";
@@ -857,6 +858,66 @@ mod tests {
                 )
         }
 
+        /// Generator specs that vary; any combination that fails `validate` falls back to
+        /// the default, so every result is valid and the defaults still appear.
+        fn specs() -> impl Strategy<Value = (PasswordSpec, PassphraseSpec, UsernameSpec)> {
+            (
+                (12u16..=128, any::<[bool; 5]>(), 0u8..=4, 0u8..=4),
+                (
+                    6u8..=20,
+                    sample::select(vec![' ', '-', '.', '_']),
+                    any::<bool>(),
+                    any::<bool>(),
+                ),
+                (1u8..=3, 0u8..=6),
+            )
+                .prop_map(
+                    |(
+                        (length, f, min_digits, min_symbols),
+                        (words, separator, capitalise, add_number),
+                        (uw, ud),
+                    )| {
+                        let pw = PasswordSpec {
+                            length,
+                            lowercase: f[0],
+                            uppercase: f[1],
+                            digits: f[2],
+                            symbols: f[3],
+                            avoid_lookalikes: f[4],
+                            min_digits,
+                            min_symbols,
+                        };
+                        let pp = PassphraseSpec {
+                            words,
+                            separator,
+                            capitalise,
+                            add_number,
+                        };
+                        let un = UsernameSpec {
+                            words: uw,
+                            digits: ud,
+                        };
+                        (
+                            if pw.validate().is_ok() {
+                                pw
+                            } else {
+                                PasswordSpec::DEFAULT
+                            },
+                            if pp.validate().is_ok() {
+                                pp
+                            } else {
+                                PassphraseSpec::DEFAULT
+                            },
+                            if un.validate().is_ok() {
+                                un
+                            } else {
+                                UsernameSpec::DEFAULT
+                            },
+                        )
+                    },
+                )
+        }
+
         fn vault() -> impl Strategy<Value = VaultData> {
             (
                 vec("[a-zA-Zä✉][a-zA-Z0-9 äé✉]{0,20}", 0..4),
@@ -865,8 +926,9 @@ mod tests {
                 AUTO_LOCK_MIN_SECS..=AUTO_LOCK_MAX_SECS,
                 crate::settings::CLIPBOARD_MIN_SECS..=CLIPBOARD_MAX_SECS,
                 any::<bool>(),
+                specs(),
             )
-                .prop_map(|(names, gap, parts, auto_lock, clipboard, sleep)| {
+                .prop_map(|(names, gap, parts, auto_lock, clipboard, sleep, specs)| {
                     let mut d = VaultData::new_default();
                     for (i, name) in names.iter().enumerate() {
                         // The number keeps names unique and apart from the built-ins.
@@ -889,6 +951,11 @@ mod tests {
                     d.settings.auto_lock_secs = auto_lock;
                     d.settings.clipboard_clear_secs = clipboard;
                     d.settings.lock_on_sleep = sleep;
+                    (
+                        d.settings.password,
+                        d.settings.passphrase,
+                        d.settings.username,
+                    ) = specs;
                     d
                 })
         }
