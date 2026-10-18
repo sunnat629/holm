@@ -140,8 +140,8 @@ fn fields_cleared_when_work_starts() {
     harness.step();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
     // The form and its buffers are gone (wiped) while the worker runs: no password
-    // field is on screen and no buffer holds a character.
-    assert!(harness.state().secret_buffers_empty());
+    // field is on screen. (`secret_buffers_empty` is always true on Working, so it is
+    // not asserted here; the unit test `submit_takes_both_fields` covers the wipe.)
     assert_eq!(harness.query_all_by_role(Role::PasswordInput).count(), 0);
     run_until(&mut harness, kind_is(ScreenKind::Vault), WAIT);
 }
@@ -216,6 +216,37 @@ fn throttle_wait_shown_and_button_disabled() {
     assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
     run_until(&mut harness, kind_is(ScreenKind::Vault), WAIT);
     assert!(harness.state().is_unlocked());
+}
+
+#[test]
+fn throttle_countdown_asks_for_a_frame_at_the_next_second() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (app, clock) = test_app(dir.path());
+    let mut harness = harness(app);
+    harness.run();
+    for _ in 0..3 {
+        try_unlock(&mut harness, OTHER_PASSWORD);
+    }
+    harness.run();
+    // Half a second into the 2 s wait, 1.5 s remain: the next label change is in 0.5 s.
+    clock.advance(Duration::from_millis(500));
+    let ctx = eframe::egui::Context::default();
+    let delay = std::sync::Arc::new(std::sync::Mutex::new(None::<Duration>));
+    let seen = delay.clone();
+    ctx.set_request_repaint_callback(move |info| {
+        let mut slot = seen.lock().unwrap();
+        // Keep the shortest delay asked for.
+        if slot.is_none_or(|d| info.delay < d) {
+            *slot = Some(info.delay);
+        }
+    });
+    harness.state_mut().tick(&ctx, &common::FakeWindow::default());
+    let asked = delay.lock().unwrap().expect("tick asked for no frame");
+    assert!(
+        !asked.is_zero() && asked <= Duration::from_millis(500),
+        "countdown frame asked in {asked:?}"
+    );
 }
 
 /// A spawner whose worker is gone at once: it drops the session and the sender, as a
