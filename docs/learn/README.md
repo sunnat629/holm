@@ -20,6 +20,7 @@ security, three exercises, and what to read next in
 | 08 | [Property tests and fuzzing](08-property-tests-and-fuzzing.md): letting the computer invent hostile inputs. |
 | 09 | [Feature unification and cargo vet](09-feature-unification-and-vet.md): turning on a feature inside a transitive dependency, and imports, trust and exemptions in `cargo vet`. |
 | 10 | [Enums, newtypes and validation](10-enums-newtypes-and-validation.md): items as an enum with data, wiping secret text types, and field errors that name the field but never the value. |
+| 11 | [Randomness without bias](11-randomness-without-bias.md): why `% n` is biased, rejection sampling, `NonZeroU32`, a `dyn Trait` test seam and a built-in wordlist. |
 
 ## Side tracks
 

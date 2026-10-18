@@ -140,4 +140,4 @@ Secrets leak through side doors: a debug print, a log line, an error message, a 
 - [The Rust book, ch09: error handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html), for `Result` and the `?` operator.
 - [The Rust book on enums and `match`](https://doc.rust-lang.org/book/ch06-00-enums.html)
 
-Next lesson: none yet. Lesson 11 arrives with the next task.
+Next lesson: [11, Randomness without bias](11-randomness-without-bias.md).
