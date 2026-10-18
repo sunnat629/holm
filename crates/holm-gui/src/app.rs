@@ -271,6 +271,7 @@ impl HolmApp {
                 self.lock(LockReason::Idle);
             }
         }
+        let throttle_wait = self.throttle_status().retry_after;
         let polled = match &mut self.screen {
             Screen::Working { rx, .. } => Some(rx.try_recv()),
             Screen::Unlock(_) => {
@@ -283,7 +284,9 @@ impl HolmApp {
                 let now = self.ui_clock.monotonic();
                 let focused = ctx.input(|i| i.viewport().focused != Some(false));
                 view.tick(now, focused);
-                ctx.request_repaint_after(OPEN_TICK);
+                // A running export throttle needs a frame at each whole second.
+                let next = throttle_wait.map_or(OPEN_TICK, |w| until_next_second(w).min(OPEN_TICK));
+                ctx.request_repaint_after(next);
                 None
             }
             Screen::Create(_) | Screen::Fatal(_) => None,
@@ -326,7 +329,7 @@ impl HolmApp {
             focus: FieldFocus::None,
         };
         if let Screen::Vault(view) = screen {
-            let action = view.show(ui, session, now, idle_left, &mut io);
+            let action = view.show(ui, session, now, idle_left, &throttle, &mut io);
             self.focus = io.focus;
             match action {
                 None => return,
@@ -527,7 +530,7 @@ impl HolmApp {
                 self.last_activity = self.ui_clock.monotonic();
             }
             view.on_done(kind, &result, added, returned, &session);
-            view.on_transfer_done(kind, transfer);
+            view.on_transfer_done(kind, transfer, &session);
             self.screen = Screen::Vault(view);
             self.session = Some(session);
             if expired {

@@ -473,8 +473,10 @@ Known gaps:
   names spreadsheets instead, because that is where formula injection happens.
 - The GUI takes the file path as typed text (no file dialog, so no new crate). The path
   sits in a plain egui `TextEdit`, so it stays in that widget's undo history until the
-  app closes. It is a display field, not a secret. Windows file permissions on the
-  export file are Phase 5.
+  app closes. It is a display field, not a secret. The vault search box is a plain
+  `TextEdit` too and shares this exposure: what the user typed to search (a title,
+  username or URL fragment) stays in its undo history after a lock until the app closes.
+  Windows file permissions on the export file are Phase 5.
 
 ## Not claimed
 

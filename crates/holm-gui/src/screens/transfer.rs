@@ -16,6 +16,7 @@ use holm_core::export::EXPORT_WARNING;
 use holm_core::import::{
     Dialect, IMPORT_DELETE_SOURCE_WARNING, ImportPreview, ImportReport, RowIssue, RowProblem,
 };
+use holm_core::throttle::ThrottleStatus;
 
 use super::FieldIo;
 use super::login_form::{LineBuf, line_field};
@@ -125,7 +126,7 @@ impl Transfer {
 
     /// Takes the answer of a transfer job and moves to the next screen. `self` is the
     /// screen that was open when the job started.
-    pub(crate) fn on_result(&mut self, result: TransferResult) {
+    pub(crate) fn on_result(&mut self, result: TransferResult, items_added: bool) {
         let was_export = matches!(self, Transfer::Export(_));
         match result {
             TransferResult::Previewed(batch, preview) => {
@@ -139,7 +140,7 @@ impl Transfer {
             TransferResult::Imported(report) => *self = Transfer::Report(report),
             TransferResult::Exported => *self = Transfer::Exported,
             TransferResult::Failed(fail) => {
-                let text = fail_text(&fail, was_export);
+                let text = fail_text(&fail, was_export, items_added);
                 match self {
                     Transfer::Export(form) => form.error = Some(text),
                     Transfer::Pick(form) => form.error = Some(text),
@@ -158,6 +159,7 @@ impl Transfer {
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
+        throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<TransferAction> {
         match self {
@@ -179,7 +181,7 @@ impl Transfer {
                 ui.label(IMPORT_DELETE_SOURCE_WARNING);
                 close_button(ui)
             }
-            Transfer::Export(form) => form.show(ui, io),
+            Transfer::Export(form) => form.show(ui, throttle, io),
             Transfer::Exported => {
                 ui.heading("Export finished");
                 ui.label(
@@ -200,7 +202,7 @@ fn close_button(ui: &mut egui::Ui) -> Option<TransferAction> {
 }
 
 /// The fixed line for a failed transfer.
-fn fail_text(fail: &TransferFail, export: bool) -> &'static str {
+fn fail_text(fail: &TransferFail, export: bool, items_added: bool) -> &'static str {
     match fail {
         TransferFail::NotFound => messages::IMPORT_NOT_FOUND,
         TransferFail::Exists => messages::EXPORT_EXISTS,
@@ -209,7 +211,7 @@ fn fail_text(fail: &TransferFail, export: bool) -> &'static str {
         TransferFail::TooLarge => messages::IMPORT_TOO_BIG,
         TransferFail::Import(e) => messages::import_parse_error(e),
         TransferFail::Core(e) if export => messages::export_error(e),
-        TransferFail::Core(e) => messages::import_apply_error(e),
+        TransferFail::Core(e) => messages::import_apply_error(e, items_added),
     }
 }
 
@@ -304,7 +306,7 @@ impl PreviewState {
         ui.add_space(8.0);
         let mut action = None;
         ui.horizontal(|ui| {
-            let can = p.logins + p.crypto + p.phrases + p.notes > p.duplicates.min(p.ready);
+            let can = p.logins + p.crypto + p.phrases + p.notes > 0;
             if ui
                 .add_enabled(can, egui::Button::new(IMPORT_LABEL))
                 .clicked()
@@ -321,11 +323,19 @@ impl PreviewState {
 }
 
 impl ExportForm {
-    fn can_submit(&self) -> bool {
-        !self.path.is_empty() && !self.password.is_empty() && self.confirmed
+    fn can_submit(&self, throttle: &ThrottleStatus) -> bool {
+        !self.path.is_empty()
+            && !self.password.is_empty()
+            && self.confirmed
+            && throttle.retry_after.is_none()
     }
 
-    fn show(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) -> Option<TransferAction> {
+    fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        throttle: &ThrottleStatus,
+        io: &mut FieldIo<'_>,
+    ) -> Option<TransferAction> {
         ui.heading("Export");
         ui.label(EXPORT_WARNING);
         ui.add_space(8.0);
@@ -347,9 +357,9 @@ impl ExportForm {
         let mut action = None;
         ui.horizontal(|ui| {
             let clicked = ui
-                .add_enabled(self.can_submit(), egui::Button::new(EXPORT_LABEL))
+                .add_enabled(self.can_submit(throttle), egui::Button::new(EXPORT_LABEL))
                 .clicked();
-            if (clicked || field.submitted) && self.can_submit() {
+            if (clicked || field.submitted) && self.can_submit(throttle) {
                 action = Some(TransferAction::Job(Job::Export {
                     path: PathBuf::from(self.path.as_str().trim()),
                     password: self.password.take_master_password(),
@@ -359,7 +369,10 @@ impl ExportForm {
                 action = Some(TransferAction::Close);
             }
         });
-        if let Some(error) = self.error {
+        // While throttled the live wait replaces the fixed text.
+        if let Some(wait) = throttle.retry_after.and(messages::throttle_line(throttle)) {
+            ui.label(wait);
+        } else if let Some(error) = self.error {
             ui.label(error);
         }
         action

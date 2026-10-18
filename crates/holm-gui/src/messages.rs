@@ -124,7 +124,7 @@ pub const IMPORT_MALFORMED: &str =
 pub const IMPORT_NOT_ADDED: &str =
     "These items would not fit in the vault, so nothing was imported.";
 /// The import was added in memory, but saving failed.
-pub const IMPORT_UNSAVED: &str = "The items were added but could not be saved yet. Save again, or lock and try the import again.";
+pub const IMPORT_UNSAVED: &str = "The items were added but could not be saved yet. Select Try again to save them, or lock and import the file again.";
 /// The import failed for another reason.
 pub const IMPORT_FAILED: &str = "The import did not finish.";
 /// The export file already exists, so nothing was written.
@@ -288,12 +288,14 @@ pub fn import_parse_error(e: &ImportError) -> &'static str {
 }
 
 /// The line for a failed import step. Only a vault too big to save, or too many items,
-/// leaves nothing added; any other failure leaves the items in memory but unsaved.
+/// leaves nothing added. Any other failure after the rows went in (`items_added`, the
+/// session is dirty) leaves them in memory but unsaved, whatever the error type.
 #[must_use]
-pub fn import_apply_error(e: &CoreError) -> &'static str {
+pub fn import_apply_error(e: &CoreError, items_added: bool) -> &'static str {
     match e {
         CoreError::Vault(VaultError::TooLargeToSave) | CoreError::TooManyItems => IMPORT_NOT_ADDED,
         CoreError::Store(_) | CoreError::Vault(_) => IMPORT_UNSAVED,
+        _ if items_added => IMPORT_UNSAVED,
         _ => IMPORT_FAILED,
     }
 }
@@ -484,11 +486,14 @@ mod tests {
         assert_eq!(save_error(&CoreError::Locked), NOT_SAVED);
         assert_eq!(import_parse_error(&ImportError::Empty), IMPORT_EMPTY);
         assert_eq!(
-            import_apply_error(&CoreError::TooManyItems),
+            import_apply_error(&CoreError::TooManyItems, false),
             IMPORT_NOT_ADDED
         );
+        let body = CoreError::Body(BodyError::Malformed);
+        assert_eq!(import_apply_error(&body, true), IMPORT_UNSAVED);
+        assert_eq!(import_apply_error(&body, false), IMPORT_FAILED);
         assert_eq!(
-            import_apply_error(&CoreError::Store(StoreError::Io(ErrorKind::Other))),
+            import_apply_error(&CoreError::Store(StoreError::Io(ErrorKind::Other)), true),
             IMPORT_UNSAVED
         );
         assert_eq!(

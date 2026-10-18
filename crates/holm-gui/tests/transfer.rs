@@ -221,3 +221,103 @@ fn transfer_texts_hold_no_values() {
         assert!(!has_text(&harness, needle), "{needle} leaked");
     }
 }
+
+#[test]
+fn import_enabled_when_duplicates_outnumber_new_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let (mut harness, _clock) = open(dir.path());
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    click_job(&mut harness, "Import these rows");
+    click_button(&mut harness, "Close");
+
+    // Four rows are already in the vault, one is new.
+    let mut text = std::fs::read_to_string(&source).unwrap();
+    text.push_str(
+        "Example Extra,extra.user,EXAMPLE-pass-2,https://extra.example.com,,Work,login,,,,\n",
+    );
+    let mixed = dir.path().join("mixed.csv");
+    std::fs::write(&mixed, text).unwrap();
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", mixed.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    assert!(!disabled(&harness, "Import these rows"));
+    click_job(&mut harness, "Import these rows");
+    assert!(has_text(&harness, "1 added."));
+    assert!(has_text(&harness, "4 skipped as duplicates."));
+}
+
+/// Makes the vault folder read-only for a while; restores it on drop.
+struct ReadOnly(PathBuf);
+
+impl ReadOnly {
+    fn new(dir: &Path) -> ReadOnly {
+        let folder = dir.join("Holm");
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+        ReadOnly(folder)
+    }
+
+    fn restore(&self) {
+        std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+}
+
+impl Drop for ReadOnly {
+    fn drop(&mut self) {
+        self.restore();
+    }
+}
+
+#[test]
+fn import_save_failure_keeps_banner_and_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let (mut harness, _clock) = open(dir.path());
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    let guard = ReadOnly::new(dir.path());
+    click_job(&mut harness, "Import these rows");
+    // The report is not there; the pane shows the honest text and the banner.
+    let _ = harness.get_by_label(messages::IMPORT_UNSAVED);
+    let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
+    assert!(button(&harness, "Try again"));
+    click_button(&mut harness, "Cancel");
+    // The items are in the list and the banner stays.
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 1);
+    assert!(button(&harness, "Try again"));
+
+    guard.restore();
+    click_job(&mut harness, "Try again");
+    assert!(!button(&harness, "Try again"));
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 1);
+}
+
+#[test]
+fn export_throttle_shows_live_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.csv");
+    let (mut harness, clock) = open(dir.path());
+    start_export(&mut harness, &out, OTHER_PASSWORD);
+    click_job(&mut harness, "Export");
+    for _ in 0..2 {
+        type_into(&mut harness, "Master password to export", OTHER_PASSWORD);
+        click_job(&mut harness, "Export");
+    }
+    let _ = harness.get_by_label("Too many tries. Try again in 2 s.");
+    type_into(&mut harness, "Master password to export", PASSWORD);
+    assert!(disabled(&harness, "Export"));
+
+    clock.advance(Duration::from_secs(1));
+    harness.step();
+    let _ = harness.get_by_label("Too many tries. Try again in 1 s.");
+    assert!(disabled(&harness, "Export"));
+
+    clock.advance(Duration::from_secs(1));
+    harness.step();
+    assert!(harness.query_by_label_contains("Try again in").is_none());
+    assert!(!disabled(&harness, "Export"));
+    assert!(!out.exists());
+}

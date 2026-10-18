@@ -19,6 +19,7 @@ use holm_core::search::Query;
 use holm_core::session::Session;
 use holm_core::settings::REHIDE_PASSWORD_SECS;
 use holm_core::text::{SecretText, Text};
+use holm_core::throttle::ThrottleStatus;
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -28,7 +29,7 @@ use super::transfer::{Transfer, TransferAction};
 use crate::clipboard::SecretClipboard;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
-use crate::worker::{Job, JobKind, TransferResult};
+use crate::worker::{Job, JobKind, TransferFail, TransferResult};
 
 /// Label of the new-login button.
 pub(crate) const NEW_LABEL: &str = "New login";
@@ -118,6 +119,15 @@ pub(crate) struct VaultView {
     transfer: Option<Transfer>,
 }
 
+/// Whether a failed import left nothing added: the vault was too big to save, or the
+/// batch had too many items.
+fn import_rolled_back(e: &CoreError) -> bool {
+    matches!(
+        e,
+        CoreError::Vault(VaultError::TooLargeToSave) | CoreError::TooManyItems
+    )
+}
+
 impl fmt::Debug for VaultView {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VaultView")
@@ -148,18 +158,35 @@ impl VaultView {
         }
     }
 
-    /// Takes the answer of a transfer job. Called after `on_done`.
-    pub(crate) fn on_transfer_done(&mut self, kind: JobKind, result: Option<TransferResult>) {
+    /// Takes the answer of a transfer job. Called after `on_done`. `session` is the
+    /// session the job gave back: a dirty one after a failed import means the rows went
+    /// in and only the save failed.
+    pub(crate) fn on_transfer_done(
+        &mut self,
+        kind: JobKind,
+        result: Option<TransferResult>,
+        session: &Session<FsStore>,
+    ) {
         if !kind.is_transfer() {
             return;
         }
-        if matches!(result, Some(TransferResult::Imported(_))) {
-            self.rows_stale = true;
+        let dirty = session.is_dirty();
+        match &result {
+            Some(TransferResult::Imported(_)) => self.rows_stale = true,
+            Some(TransferResult::Failed(TransferFail::Core(e)))
+                if kind == JobKind::Import && dirty && !import_rolled_back(e) =>
+            {
+                // The rows are in memory: list them and show the failed-save banner.
+                self.rows_stale = true;
+                self.save_error = Some(messages::save_error(e));
+                self.save_failed = true;
+            }
+            _ => {}
         }
         if let Some(result) = result
             && let Some(transfer) = &mut self.transfer
         {
-            transfer.on_result(result);
+            transfer.on_result(result, dirty);
         }
     }
 
@@ -294,6 +321,7 @@ impl VaultView {
         session: Option<&Session<FsStore>>,
         now: Duration,
         idle_left: Option<Duration>,
+        throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<VaultAction> {
         if self.search.as_str() != self.searched.as_str() {
@@ -357,7 +385,8 @@ impl VaultView {
         let job = egui::CentralPanel::default()
             .show(ui, |ui| {
                 if self.transfer.is_some() {
-                    self.show_transfer(ui, io)
+                    let retry = self.show_save_banner(ui, session);
+                    self.show_transfer(ui, throttle, io).or(retry)
                 } else {
                     self.show_detail(ui, session, now, io)
                 }
@@ -370,9 +399,14 @@ impl VaultView {
     }
 
     /// The import or export screen in place of the detail pane.
-    fn show_transfer(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) -> Option<Job> {
+    fn show_transfer(
+        &mut self,
+        ui: &mut egui::Ui,
+        throttle: &ThrottleStatus,
+        io: &mut FieldIo<'_>,
+    ) -> Option<Job> {
         let transfer = self.transfer.as_mut()?;
-        match transfer.show(ui, io)? {
+        match transfer.show(ui, throttle, io)? {
             TransferAction::Job(job) => Some(job),
             TransferAction::Close => {
                 self.transfer = None;
@@ -449,12 +483,13 @@ impl VaultView {
     }
 
     /// The central panel.
-    fn show_detail(
+    /// The failed-save banner with its retry button, above whatever the central panel
+    /// shows. Visible while the session is dirty, so no pane hides unsaved changes. Clears
+    /// itself once the session is clean. While a job holds the session it stays as it is.
+    fn show_save_banner(
         &mut self,
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
-        now: Duration,
-        io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let mut job = None;
         if self.save_failed
@@ -466,9 +501,23 @@ impl VaultView {
                 job = Some(Job::Save);
             }
             ui.separator();
-        } else if !session.is_some_and(Session::is_dirty) {
+        } else if session.is_some_and(|s| !s.is_dirty()) {
             self.save_failed = false;
             self.save_error = None;
+        }
+        job
+    }
+
+    fn show_detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        session: Option<&Session<FsStore>>,
+        now: Duration,
+        io: &mut FieldIo<'_>,
+    ) -> Option<Job> {
+        let mut job = None;
+        if let Some(save) = self.show_save_banner(ui, session) {
+            job = Some(save);
         }
         if let Some(status) = self.status {
             ui.label(status);

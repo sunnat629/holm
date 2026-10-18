@@ -76,7 +76,7 @@ Phase 5 (platform hardening and GUI polish)
 - Vault folder owner and ACL check (today only the mode is checked).
 - Paste of a copied password into a plain field (Title, Username, Web address): refuse or warn (Task 5 M1).
 - Strip a foreign `Event::Paste` (Task 5 M2).
-- Clear egui `TextEdit` undo memory after a lock (Task 6 M9).
+- Clear egui `TextEdit` undo memory after a lock (Task 6 M9). Covers the import and export path fields and the vault search box.
 - IME preedit strings while a SecretField has focus.
 - Existing vault folder that others can read (0755, the owner's has an old `harbor.vault`) is accepted and never tightened: warn or tighten.
 - After a minimise lock the last vault frame stays painted and in the Dock thumbnail: paint a locked frame before the window hides (Task 6 M3).
