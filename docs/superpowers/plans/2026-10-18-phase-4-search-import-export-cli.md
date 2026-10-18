@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Branch `phase-4`, cut from `main` at `32249f4` (Phases 0–3 merged). One PR at the end; nothing merges without an Opus yes on the phase.
+- Branch `phase-4`, cut from `main` at `32249f4` (Phases 0–3 merged). One PR at the end; nothing merges without a security-review yes on the phase.
 - **Security floor (owner ruling, binding):** no plaintext on disk except the export file the user asked for; every secret in a wiping type (`SecretText`, `GatedSecret`, `MasterPassword`, `SecretBuf`, `Zeroizing`); no logging of secrets; every unlock, phrase reveal, export and password change goes through `Throttle::attempt`.
 - Every crate but `holm-platform` keeps `[lints] workspace = true` (`unsafe_code = "forbid"`). `holm-platform`'s new modules start with `#![forbid(unsafe_code)]`. No `unsafe` anywhere in Phase 4.
 - **No new crates.** A dependency already in `Cargo.lock` may gain a new dependent only as listed in Tech Stack. Each `[workspace.dependencies]` change passes `cargo deny --all-features --locked check` and `cargo vet --locked`. Vet order as in Phase 3: imports, then `cargo vet trust` only for publishers an imported set already trusts, then exemptions with a note. Never write a Holm audit to get past vet. `holm-core` and `holm-crypto` get no exemptions and no new normal dependencies: `cargo tree -p holm-core -e normal --locked` is identical before and after Phase 4.
@@ -26,7 +26,7 @@
 - Every file under `crates/holm-gui/tests/` keeps `#![cfg(target_os = "macos")]`. `holm-cli` builds and tests on every OS; `--copy` is macOS-only for now and says so elsewhere.
 - `clippy -D warnings` and `rustfmt --check` clean. Each task: TDD, then commit, then `scripts/ci-local.sh` must print `ALL GATES PASSED`, then `git push`. GitHub Actions is never run.
 - One GitHub issue per task (label `phase-4`; #21, #23 and #24 keep their Phase 2 labels and are not edited), listed in `docs/tasks/BACKLOG.md`. Every task writes one lesson (format below) and adds its row to `docs/learn/README.md`.
-- Review depth (2026-10-18 process): Opus reviews Tasks 2, 3, 4, 5 and 6 (parsers, secrets, files, terminal) and the whole phase; Sonnet reviews Tasks 1, 7 and 8 plus the GUI look. Only Critical or Important findings block, one fix round per task; nits go to the phase's final fix wave.
+- Review depth (2026-10-18 process): security review covers Tasks 2, 3, 4, 5 and 6 (parsers, secrets, files, terminal) and the whole phase; code review covers Tasks 1, 7 and 8 plus the GUI look. Only Critical or Important findings block, one fix round per task; nits go to the phase's final fix wave.
 
 ## Lesson format
 
@@ -41,7 +41,7 @@ No real secrets in examples.
 
 ## Security decisions
 
-Proposed by the planner for the security COS; each becomes a line in `docs/DECISIONS.md` in the task named.
+Proposed by the planner for the maintainer; each becomes a line in `docs/DECISIONS.md` in the task named.
 
 - **Own CSV and JSON code (Task 2).** Holm parses and writes CSV and its narrow JSON import shape with std-only code in `holm_core::plain` instead of the `csv` crate (not in `Cargo.lock`) and `serde_json` at runtime. Every cell is decoded into a `Zeroizing<String>` sized once from its raw span, so no reallocation leaves a copy. This closes the DECISIONS gap "csv and serde_json scratch copies are not wiped" and adds no crate to `holm-core`. Cost: about 400 lines of parser to fuzz and review; `serde_json` stays as a dev-only differential oracle.
 - **Formula injection (Task 4): no escaping, unchanged.** Prefixing `'` or a tab to cells starting with `=`, `+`, `-`, `@` would change real passwords and break re-import into Holm or another manager (spec §8.8: no lock-in). Instead: every cell is quoted, the fixed `EXPORT_WARNING` says not to open the file in a spreadsheet app, and both the CLI and the GUI require the master password plus an explicit confirmation after showing it. A test pins `=SUM(A1)` round-tripping verbatim.
@@ -50,7 +50,7 @@ Proposed by the planner for the security COS; each becomes a line in `docs/DECIS
 - **Per-process throttle in the CLI (Task 5).** The throttle lives in memory (spec §11), so each one-shot `holm` process starts with a fresh counter. A one-shot command allows 3 tries; after that it exits. A script that loops `holm list` still pays one full Argon2 per guess, which is the real protection spec §11 names. `holm shell` keeps one throttle for its whole life.
 - **Single instance (Task 5).** Every CLI command that opens a vault takes `holm_platform::lock::acquire` on the vault's folder first and holds it until exit, so the CLI and the GUI never write the same vault at once (closes CRYPTO.md "holm-cli must take it too").
 - **CLI copy (Task 6).** `--copy` writes through arboard with the concealed pasteboard type, then the process stays in the foreground for the vault's `clipboard_clear_secs` and clears the clipboard only if it still holds Holm's value (spec §8.4). Enter or Ctrl-C clears at once and exits. The session is locked before the wait, so only the copied value is in memory. A recovery phrase is copied only after the master password is typed again (`reveal_phrase`), even right after unlock.
-- **vet notes for desktop crates (Task 5, Task 6).** `rustix` and `arboard` (and their already-vetted trees) now reach `holm-cli` too. Criteria and end dates stay; the notes of the affected `trusted` and exemption entries change from "GUI-only" / `gui-only, pre-release; …` to "desktop clients (holm-gui, holm-cli)" / `desktop-only, pre-release; audit or replace before Phase 6`, and DECISIONS records the widened scope. If `cargo vet` asks for any entry beyond a note change, stop and report to the COS.
+- **vet notes for desktop crates (Task 5, Task 6).** `rustix` and `arboard` (and their already-vetted trees) now reach `holm-cli` too. Criteria and end dates stay; the notes of the affected `trusted` and exemption entries change from "GUI-only" / `gui-only, pre-release; …` to "desktop clients (holm-gui, holm-cli)" / `desktop-only, pre-release; audit or replace before Phase 6`, and DECISIONS records the widened scope. If `cargo vet` asks for any entry beyond a note change, stop and report to the maintainer.
 
 ## Deferred (not in Phase 4)
 
@@ -346,4 +346,4 @@ Rules:
 
 ---
 
-Phase 4 ends with the Opus whole-branch security review, the final fix wave, and a 600 s run of each of the 7 fuzz targets. Then the PR from `phase-4` to `main`. Phase 5 (platform hardening and GUI polish) starts from the BACKLOG lists Task 1 and Task 8 maintain.
+Phase 4 ends with the whole-branch security review, the final fix wave, and a 600 s run of each of the 7 fuzz targets. Then the PR from `phase-4` to `main`. Phase 5 (platform hardening and GUI polish) starts from the BACKLOG lists Task 1 and Task 8 maintain.
