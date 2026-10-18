@@ -13,3 +13,35 @@
 pub mod fs_store;
 pub mod lock;
 pub mod paths;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    //! Helpers shared by this crate's unit tests.
+
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    /// Held while a test runs a child process, and by a test that needs a dropped
+    /// lock to be free at once. A child process briefly holds copies of this
+    /// process's open files (until its `exec` closes them), and a copy keeps a
+    /// `File::try_lock` lock alive after the test drops its own handle.
+    static CHILD_PROCESSES: Mutex<()> = Mutex::new(());
+
+    /// Waits until no test is starting a child process, and blocks new ones until
+    /// the guard drops.
+    pub(crate) fn no_child_processes() -> MutexGuard<'static, ()> {
+        CHILD_PROCESSES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Creates a FIFO at `path` with the `mkfifo` tool (std has no `mkfifo`).
+    #[cfg(unix)]
+    pub(crate) fn make_fifo(path: &std::path::Path) {
+        let _guard = no_child_processes();
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+    }
+}

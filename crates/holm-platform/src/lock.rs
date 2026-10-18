@@ -5,7 +5,9 @@
 //! life of the app (Security decision, single instance). The lock is an exclusive,
 //! non-blocking std [`File::try_lock`] on `<folder>/holm.lock`. Dropping the
 //! [`InstanceLock`] releases it, and the OS releases it if the process dies, so a
-//! crash never leaves a stale lock behind.
+//! crash never leaves a stale lock behind. (A child process that Holm starts at the
+//! same moment holds a copy of the file until its `exec`, which delays the release
+//! that long.)
 //!
 //! Rules kept here:
 //! - the lock file is created with mode 0600 on Unix and is never written to: it is
@@ -125,6 +127,9 @@ mod tests {
 
     #[test]
     fn released_on_drop() {
+        // A child process started by another test could hold a copy of the lock
+        // file for a moment and keep the lock alive after the drop.
+        let _no_children = crate::test_support::no_child_processes();
         let dir = tempfile::tempdir().unwrap();
         let first = acquire(dir.path()).unwrap();
         drop(first);
@@ -190,11 +195,7 @@ mod tests {
     fn fifo_lock_file_refused_without_blocking() {
         let dir = tempfile::tempdir().unwrap();
         let fifo = dir.path().join(LOCK_FILE_NAME);
-        let made = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .unwrap();
-        assert!(made.success());
+        crate::test_support::make_fifo(&fifo);
         assert_eq!(
             acquire(dir.path()).err(),
             Some(LockError::Io(ErrorKind::InvalidInput))

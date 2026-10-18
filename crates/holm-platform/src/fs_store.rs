@@ -521,11 +521,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let fifo = dir.path().join("fifo");
-        let made = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .unwrap();
-        assert!(made.success());
+        crate::test_support::make_fifo(&fifo);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let opened = open_for_read(&fifo).map(|f| f.metadata().unwrap().is_file());
