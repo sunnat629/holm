@@ -18,9 +18,13 @@
 use chacha20poly1305::XChaCha20Poly1305;
 use chacha20poly1305::aead::{AeadInOut, KeyInit};
 use holm_core::body::{BODY_SCHEMA_VERSION, VaultData};
-use holm_core::envelope::{self, VaultError};
+use holm_core::clock::SystemClock;
+use holm_core::envelope::VaultError;
+use holm_core::error::CoreError;
 use holm_core::format::{HEADER_LEN, Header, WRAP_AAD_LEN};
 use holm_core::padding::{PAD_BLOCK, pad};
+use holm_core::session::Session;
+use holm_core::store::{StoreError, VaultStore};
 use holm_crypto::MasterPassword;
 use holm_crypto::aead::TAG_LEN;
 use holm_crypto::kdf::{KdfParams, derive_kek};
@@ -34,6 +38,30 @@ const SALT: [u8; 32] = [0x11; 32];
 const DEK: [u8; 32] = [0x22; 32];
 const WRAP_NONCE: [u8; 24] = [0x33; 24];
 const BODY_NONCE: [u8; 24] = [0x44; 24];
+
+/// A read-only store over fixed bytes. The password check is `envelope::open`, which
+/// is crate-private (every password check goes through the throttle), so these tests
+/// open the vault through a `Session`.
+struct BytesStore(Vec<u8>);
+
+impl VaultStore for BytesStore {
+    fn read(&mut self) -> Result<Vec<u8>, StoreError> {
+        Ok(self.0.clone())
+    }
+    fn replace(&mut self, _: &[u8]) -> Result<(), StoreError> {
+        Err(StoreError::Io(std::io::ErrorKind::PermissionDenied))
+    }
+    fn create_new(&mut self, _: &[u8]) -> Result<(), StoreError> {
+        Err(StoreError::Io(std::io::ErrorKind::PermissionDenied))
+    }
+    fn remove_stale_temps(&mut self) -> Result<usize, StoreError> {
+        Ok(0)
+    }
+}
+
+fn session() -> Session<BytesStore> {
+    Session::new(BytesStore(GOLDEN.to_vec()), Box::new(SystemClock::new()))
+}
 
 fn pw(s: &str) -> MasterPassword {
     MasterPassword::new(s.to_owned())
@@ -86,22 +114,24 @@ fn golden_vault_opens_and_decodes_to_schema_v1() {
     let (h, _) = Header::parse(GOLDEN).unwrap();
     assert_eq!(h.kdf, KdfParams::FLOOR);
     // The decomposed form ("e" + combining acute) opens it too, which pins NFC.
-    let (_, plain) = envelope::open(GOLDEN, &pw("cafe\u{301} golden")).unwrap();
-    assert_eq!(&plain.expose()[..2], &BODY_SCHEMA_VERSION.to_le_bytes());
-    let data = VaultData::decode(plain.expose()).unwrap();
-    assert_eq!(data.item_count(), 0);
-    assert_eq!(
-        data.encode().unwrap().expose(),
-        VaultData::new_default().encode().unwrap().expose()
-    );
+    let mut s = session();
+    s.unlock(&pw("cafe\u{301} golden")).unwrap();
+    assert!(s.is_unlocked());
+    assert!(!s.is_dirty());
+    // The body round trip: the default body is schema 1 and re-encodes identically.
+    let body = VaultData::new_default().encode().unwrap();
+    assert_eq!(&body.expose()[..2], &BODY_SCHEMA_VERSION.to_le_bytes());
+    assert_eq!(VaultData::decode(body.expose()).unwrap().item_count(), 0);
 }
 
 #[test]
 fn golden_vault_refuses_a_wrong_password() {
+    let mut s = session();
     assert_eq!(
-        envelope::open(GOLDEN, &pw("cafe golden")).unwrap_err(),
-        VaultError::WrongPasswordOrCorrupt
+        s.unlock(&pw("cafe golden")).unwrap_err(),
+        CoreError::Vault(VaultError::WrongPasswordOrCorrupt)
     );
+    assert!(!s.is_unlocked());
 }
 
 #[test]

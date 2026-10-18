@@ -181,7 +181,10 @@ pub(crate) fn create_with_kek(
 /// password or any change to the file; [`VaultError::BadPadding`] for an
 /// authenticated body with malformed padding; [`VaultError::Crypto`] if key
 /// derivation fails.
-pub fn open(file: &[u8], password: &MasterPassword) -> Result<(VaultKeys, SecretBuf), VaultError> {
+pub(crate) fn open(
+    file: &[u8],
+    password: &MasterPassword,
+) -> Result<(VaultKeys, SecretBuf), VaultError> {
     let (header, _) = Header::parse(file)?;
     let kek = derive_kek(password, &header.salt, &header.kdf)?;
     open_with_kek(file, &kek)
@@ -262,7 +265,10 @@ pub fn rekey(
 /// # Errors
 /// [`VaultError::WrongPasswordOrCorrupt`] if the password is wrong;
 /// [`VaultError::Crypto`] if key derivation fails.
-pub fn verify_password(keys: &VaultKeys, password: &MasterPassword) -> Result<(), VaultError> {
+pub(crate) fn verify_password(
+    keys: &VaultKeys,
+    password: &MasterPassword,
+) -> Result<(), VaultError> {
     let header = &keys.header;
     let kek = derive_kek(password, &header.salt, &header.kdf)?;
     let encoded = header.encode();
@@ -478,6 +484,25 @@ mod tests {
         let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
         let default_body = crate::body::VaultData::new_default().encode().unwrap();
         assert_eq!(body.expose(), default_body.expose());
+        assert_eq!(keys.header, h);
+        assert_eq!(
+            open(file, &pw("cafe golden")).unwrap_err(),
+            VaultError::WrongPasswordOrCorrupt
+        );
+    }
+
+    /// The pre-schema golden vault (Phase 1): its body is plain bytes, not a vault
+    /// body, so it is a second regression vector that only the envelope layer can open.
+    /// Password `"caf\u{e9} golden"` at `KdfParams::FLOOR`; random salt, DEK and nonces.
+    #[test]
+    fn golden_envelope_vault_opens() {
+        const GOLDEN_BODY: &[u8] = b"Holm golden vault v1\n";
+        let file = include_bytes!("../tests/vectors/golden-v1-envelope.vault");
+        assert_eq!(file.len(), HEADER_LEN + PAD_BLOCK + TAG_LEN);
+        let (h, _) = Header::parse(file).unwrap();
+        assert_eq!(h.kdf, KdfParams::FLOOR);
+        let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
+        assert_eq!(body.expose(), GOLDEN_BODY);
         assert_eq!(keys.header, h);
         assert_eq!(
             open(file, &pw("cafe golden")).unwrap_err(),
