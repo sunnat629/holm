@@ -7,8 +7,9 @@
 //! ([`SecretInput::take_master_password`], [`SecretInput::take_secret_text`]) hands over
 //! the allocation itself, with no copy.
 //!
-//! Only [`SecretInput::push_str`] writes bytes, one whole UTF-8 character at a time, so the
-//! contents are always valid UTF-8.
+//! Only [`SecretInput::push_str`] (one whole UTF-8 character at a time) and
+//! [`SecretInput::from_secret`] (a whole `&str`) write bytes, so the contents are always
+//! valid UTF-8.
 
 use core::fmt;
 
@@ -46,14 +47,20 @@ impl SecretInput {
         }
     }
 
-    /// A buffer of capacity `cap` pre-filled with `text`, for editing a stored secret.
-    /// The same rules as [`push_str`](SecretInput::push_str) apply: control characters are
-    /// skipped and the text stops at `cap` bytes.
+    /// A buffer of capacity `cap` holding exactly `text`, for editing a stored secret.
+    ///
+    /// The copy is byte-exact: unlike typed input, nothing is filtered, because a stored
+    /// secret may hold characters (such as a tab) that core allows, and saving the edit
+    /// must not change it. Returns `None`, and allocates nothing, when `text` is longer
+    /// than `cap` bytes; it never truncates.
     #[must_use]
-    pub fn from_secret(text: &str, cap: usize) -> SecretInput {
+    pub fn from_secret(text: &str, cap: usize) -> Option<SecretInput> {
+        if text.len() > cap {
+            return None;
+        }
         let mut buf = SecretInput::with_capacity(cap);
-        buf.push_str(text);
-        buf
+        buf.bytes.extend_from_slice(text.as_bytes());
+        Some(buf)
     }
 
     /// Appends `s`, one character at a time. Control characters are skipped. It stops at
@@ -163,8 +170,8 @@ fn is_continuation(byte: u8) -> bool {
     byte & 0b1100_0000 == 0b1000_0000
 }
 
-/// Turns `bytes` into a `String` without copying. Only `push_str` writes the bytes, so
-/// they are valid UTF-8; if that ever stopped being true, the bytes are wiped and the
+/// Turns `bytes` into a `String` without copying. Only `push_str` and `from_secret` write
+/// the bytes, so they are valid UTF-8; if that ever stopped being true, the bytes are wiped and the
 /// secret comes back empty rather than panicking.
 fn into_string(bytes: Vec<u8>) -> String {
     match String::from_utf8(bytes) {
@@ -257,7 +264,8 @@ mod tests {
 
     #[test]
     fn take_secret_text_moves_the_text() {
-        let mut buf = SecretInput::from_secret("EXAMPLE-secret", ITEM_SECRET_CAP);
+        let mut buf =
+            SecretInput::from_secret("EXAMPLE-secret", ITEM_SECRET_CAP).expect("fits the cap");
         let text = buf.take_secret_text();
         assert_eq!(text.expose(), "EXAMPLE-secret");
         assert!(buf.is_empty());
@@ -296,10 +304,27 @@ mod tests {
     }
 
     #[test]
-    fn from_secret_prefills_and_respects_cap() {
-        let buf = SecretInput::from_secret("EXAMPLE", 4);
+    fn from_secret_round_trips_byte_exact() {
+        // Core allows a tab (and other controls except NUL, CR and LF) in item secrets,
+        // so a stored secret must come back unchanged after an edit with no typing.
+        for stored in ["EXAMPLE\tpw", "EXAMPLE\u{7f}\u{85}pw", "EXAMPLE-é€😀"] {
+            let mut buf = SecretInput::from_secret(stored, ITEM_SECRET_CAP).expect("fits");
+            assert_eq!(buf.bytes, stored.as_bytes());
+            assert_eq!(buf.cap, ITEM_SECRET_CAP);
+            assert_eq!(buf.take_secret_text().expose(), stored);
+        }
+        // Exactly at the cap is accepted.
+        let buf = SecretInput::from_secret("EXAM", 4).expect("fits exactly");
         assert_eq!(buf.bytes, b"EXAM");
-        assert_eq!(buf.cap, 4);
+    }
+
+    #[test]
+    fn from_secret_over_cap_is_refused() {
+        assert!(SecretInput::from_secret("EXAMPLE", 4).is_none());
+        // A multi-byte character that would cross the cap is refused, not cut.
+        assert!(SecretInput::from_secret("EXAé", 4).is_none());
+        let too_long = "x".repeat(ITEM_SECRET_CAP + 1);
+        assert!(SecretInput::from_secret(&too_long, ITEM_SECRET_CAP).is_none());
     }
 
     #[test]

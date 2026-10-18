@@ -53,7 +53,7 @@ fn take_bytes(&mut self) -> Vec<u8> {
 
 `mem::replace` puts a fresh, empty buffer in the field and returns the old one. `String::from_utf8` takes that `Vec<u8>` by value and reuses its allocation, and `MasterPassword::new` takes the `String` by value. The bytes never move in memory. We cannot simply move `self.bytes` out, because `SecretInput` implements `Drop`, and Rust does not let you move a field out of a type with a destructor.
 
-`from_utf8` can only fail on invalid UTF-8, which cannot happen because `push_str` is the only writer and writes whole characters. If it ever did, the error hands the bytes back, we wipe them and return an empty secret. There is no `expect`, so no panic message can carry anything.
+`from_utf8` can only fail on invalid UTF-8, which cannot happen: the only writers are `push_str`, which writes whole characters, and `from_secret`, which copies a whole `&str` byte for byte (with no filtering, so editing a stored secret that holds a tab saves it unchanged, and `None` when it is over the cap instead of cutting it). If it ever did, the error hands the bytes back, we wipe them and return an empty secret. There is no `expect`, so no panic message can carry anything.
 
 In Kotlin you'd write `val out = buffer; buffer = CharArray(MAX)`, which swaps references just like this. The difference is that Rust's type system guarantees nobody else still holds the old reference.
 
