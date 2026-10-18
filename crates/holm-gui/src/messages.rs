@@ -111,6 +111,8 @@ pub const PASTE_TOO_LONG: &str = "That's too long to paste here, so nothing was 
 pub const UNSAVED_ON_LOCK: &str =
     "Some changes are not saved yet. Locking now without saving discards them.";
 
+/// The typed path is empty or does not start at the top folder of the disk.
+pub const PATH_NOT_ABSOLUTE: &str = "Type the full path, from the top folder of the disk.";
 /// No file at the typed path, so nothing was read.
 pub const IMPORT_NOT_FOUND: &str = "Holm found no file at that path. Check the path and try again.";
 /// The file could not be read.
@@ -157,7 +159,8 @@ pub const EYE_LABEL: &str = "Show password while held";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 51] = [
+const ALL: [&str; 52] = [
+    PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,

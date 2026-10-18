@@ -3,7 +3,8 @@
 //! For now this is [`fs_store`], the vault file on disk with durable writes,
 //! [`paths`], where the vault lives by default, [`lock`], one Holm at a time per
 //! vault folder, and [`private_file`], the owner-only export file and the capped read
-//! of an import file. All four use the standard library only. On macOS the optional
+//! of an import file. [`transfer`] is the one import and export flow shared by the CLI
+//! and the GUI. All five use the standard library only. On macOS the optional
 //! `gui-window` feature adds `window`, the window's minimised state from AppKit. The
 //! optional `tty` feature (holm-cli) adds [`tty`]: the no-echo password prompt on the
 //! controlling terminal, through rustix's safe termios API. The optional `clipboard`
@@ -28,6 +29,7 @@ pub mod fs_store;
 pub mod lock;
 pub mod paths;
 pub mod private_file;
+pub mod transfer;
 #[cfg(feature = "tty")]
 pub mod tty;
 #[cfg(all(feature = "gui-window", target_os = "macos"))]

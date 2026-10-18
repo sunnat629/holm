@@ -8,8 +8,6 @@
 //! No screen text ever holds a value from the file or the typed path; every line is a
 //! fixed message or a count.
 
-use std::path::PathBuf;
-
 use eframe::egui;
 use egui::TextBuffer as _;
 use holm_core::export::EXPORT_WARNING;
@@ -22,7 +20,8 @@ use super::FieldIo;
 use super::login_form::{LineBuf, line_field};
 use crate::messages;
 use crate::secret_input::{MASTER_CAP, SecretInput};
-use crate::worker::{Job, TransferFail, TransferResult};
+use crate::worker::{Job, TransferResult};
+use holm_platform::transfer::{TransferError, typed_path};
 
 /// Label of the path field.
 pub(crate) const PATH_LABEL: &str = "File path";
@@ -202,16 +201,17 @@ fn close_button(ui: &mut egui::Ui) -> Option<TransferAction> {
 }
 
 /// The fixed line for a failed transfer.
-fn fail_text(fail: &TransferFail, export: bool, items_added: bool) -> &'static str {
+fn fail_text(fail: &TransferError, export: bool, items_added: bool) -> &'static str {
     match fail {
-        TransferFail::NotFound => messages::IMPORT_NOT_FOUND,
-        TransferFail::Exists => messages::EXPORT_EXISTS,
-        TransferFail::ReadFailed => messages::IMPORT_READ_FAILED,
-        TransferFail::WriteFailed => messages::EXPORT_WRITE_FAILED,
-        TransferFail::TooLarge => messages::IMPORT_TOO_BIG,
-        TransferFail::Import(e) => messages::import_parse_error(e),
-        TransferFail::Core(e) if export => messages::export_error(e),
-        TransferFail::Core(e) => messages::import_apply_error(e, items_added),
+        TransferError::NotFound => messages::IMPORT_NOT_FOUND,
+        TransferError::NotAbsolute => messages::PATH_NOT_ABSOLUTE,
+        TransferError::Exists => messages::EXPORT_EXISTS,
+        TransferError::ReadFailed => messages::IMPORT_READ_FAILED,
+        TransferError::WriteFailed => messages::EXPORT_WRITE_FAILED,
+        TransferError::TooLarge => messages::IMPORT_TOO_BIG,
+        TransferError::Import(e) => messages::import_parse_error(e),
+        TransferError::Core(e) if export => messages::export_error(e),
+        TransferError::Core(e) => messages::import_apply_error(e, items_added),
     }
 }
 
@@ -248,20 +248,26 @@ impl ImportForm {
             self.error = None;
         }
         ui.add_space(8.0);
-        let path = self.path.as_str().trim();
-        let can_read = !path.is_empty();
+        let can_read = !self.path.as_str().is_empty();
         let mut action = None;
+        let mut refused = false;
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(can_read, egui::Button::new(READ_LABEL))
                 .clicked()
             {
-                action = Some(TransferAction::Job(Job::PreviewImport(PathBuf::from(path))));
+                match typed_path(self.path.as_str()) {
+                    Ok(path) => action = Some(TransferAction::Job(Job::PreviewImport(path))),
+                    Err(_) => refused = true,
+                }
             }
             if ui.button(CANCEL_LABEL).clicked() {
                 action = Some(TransferAction::Close);
             }
         });
+        if refused {
+            self.error = Some(messages::PATH_NOT_ABSOLUTE);
+        }
         if let Some(error) = self.error {
             ui.label(error);
         }
@@ -342,6 +348,7 @@ impl ExportForm {
         if line_field(ui, io, PATH_LABEL, &mut self.path) {
             self.error = None;
         }
+        ui.checkbox(&mut self.confirmed, EXPORT_CONFIRM_LABEL);
         let field = io.secret_field(
             ui,
             "export-password",
@@ -352,7 +359,6 @@ impl ExportForm {
         if field.changed {
             self.error = None;
         }
-        ui.checkbox(&mut self.confirmed, EXPORT_CONFIRM_LABEL);
         ui.add_space(8.0);
         let mut action = None;
         ui.horizontal(|ui| {
@@ -360,10 +366,16 @@ impl ExportForm {
                 .add_enabled(self.can_submit(throttle), egui::Button::new(EXPORT_LABEL))
                 .clicked();
             if (clicked || field.submitted) && self.can_submit(throttle) {
-                action = Some(TransferAction::Job(Job::Export {
-                    path: PathBuf::from(self.path.as_str().trim()),
-                    password: self.password.take_master_password(),
-                }));
+                // Check the path first: the password stays typed if it is refused.
+                match typed_path(self.path.as_str()) {
+                    Ok(path) => {
+                        action = Some(TransferAction::Job(Job::Export {
+                            path,
+                            password: self.password.take_master_password(),
+                        }));
+                    }
+                    Err(_) => self.error = Some(messages::PATH_NOT_ABSOLUTE),
+                }
             }
             if ui.button(CANCEL_LABEL).clicked() {
                 action = Some(TransferAction::Close);

@@ -28,7 +28,8 @@ use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
 use super::transfer::{Transfer, TransferAction};
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
-use crate::worker::{Job, JobKind, TransferFail, TransferResult};
+use crate::worker::{Job, JobKind, TransferResult};
+use holm_platform::transfer::TransferError;
 
 /// Label of the new-login button.
 pub(crate) const NEW_LABEL: &str = "New login";
@@ -116,6 +117,9 @@ pub(crate) struct VaultView {
     other_types: usize,
     /// The open import or export screen, if any.
     transfer: Option<Transfer>,
+    /// Whether the session had unsaved changes when the running job started. A dirty
+    /// session after an import only means rows went in if it was clean before.
+    dirty_before_job: bool,
 }
 
 /// Whether a failed import left nothing added: the vault was too big to save, or the
@@ -154,7 +158,13 @@ impl VaultView {
             searched: Zeroizing::new(String::new()),
             other_types: 0,
             transfer: None,
+            dirty_before_job: false,
         }
+    }
+
+    /// Remembers whether the session was dirty as a job started.
+    pub(crate) fn note_job_start(&mut self, dirty: bool) {
+        self.dirty_before_job = dirty;
     }
 
     /// Takes the answer of a transfer job. Called after `on_done`. `session` is the
@@ -169,10 +179,17 @@ impl VaultView {
         if !kind.is_transfer() {
             return;
         }
-        let dirty = session.is_dirty();
+        // Dirty now but not before: this job put changes in memory.
+        let dirty = session.is_dirty() && !self.dirty_before_job;
+        if result.is_none() {
+            // The worker came back without an answer: do not leave the screen busy.
+            self.transfer = None;
+            self.status = Some(messages::WORKER_LOST);
+            return;
+        }
         match &result {
             Some(TransferResult::Imported(_)) => self.rows_stale = true,
-            Some(TransferResult::Failed(TransferFail::Core(e)))
+            Some(TransferResult::Failed(TransferError::Core(e)))
                 if kind == JobKind::Import && dirty && !import_rolled_back(e) =>
             {
                 // The rows are in memory: list them and show the failed-save banner.
@@ -306,7 +323,8 @@ impl VaultView {
                 | JobKind::Unlock
                 | JobKind::PreviewImport
                 | JobKind::Import
-                | JobKind::Export,
+                | JobKind::Export
+                | JobKind::Backup,
                 _,
             ) => {}
         }

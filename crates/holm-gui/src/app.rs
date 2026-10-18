@@ -416,6 +416,7 @@ impl HolmApp {
                         JobKind::PreviewImport => "Reading the file.",
                         JobKind::Import => "Importing. This takes a moment.",
                         JobKind::Export => "Exporting. This takes a moment.",
+                        JobKind::Backup => "Writing the backup. This takes a moment.",
                     });
                     None
                 }
@@ -546,11 +547,15 @@ impl HolmApp {
             return;
         };
         let kind = job.kind();
-        let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
-        {
-            Screen::Vault(view) => Some(view),
-            _ => None,
-        };
+        let dirty = session.is_dirty();
+        let mut keep =
+            match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST)) {
+                Screen::Vault(view) => Some(view),
+                _ => None,
+            };
+        if let Some(view) = &mut keep {
+            view.note_job_start(dirty);
+        }
         let ctx = ctx.clone();
         let rx = (self.spawner)(session, job, Box::new(move || ctx.request_repaint()));
         self.screen = Screen::Working {
@@ -629,7 +634,8 @@ impl HolmApp {
                 | JobKind::Save
                 | JobKind::PreviewImport
                 | JobKind::Import
-                | JobKind::Export,
+                | JobKind::Export
+                | JobKind::Backup,
                 Err(_),
             ) => Screen::Fatal(messages::WORKER_LOST),
         };

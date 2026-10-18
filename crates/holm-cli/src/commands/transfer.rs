@@ -15,14 +15,12 @@ use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::export::EXPORT_WARNING;
 use holm_core::import::{
-    IMPORT_DELETE_SOURCE_WARNING, ImportBatch, ImportFormat, ImportPreview, MAX_IMPORT_BYTES,
-    RowIssue, RowProblem, parse,
+    IMPORT_DELETE_SOURCE_WARNING, ImportBatch, ImportPreview, RowIssue, RowProblem,
 };
 use holm_core::rules::FieldError;
 use holm_core::session::Session;
-use holm_core::store::StoreError;
 use holm_platform::fs_store::FsStore;
-use holm_platform::private_file::{read_capped, write_new_private_file};
+use holm_platform::transfer::{self, TransferError, export_backup, export_plain, refuse_existing};
 
 use crate::Env;
 use crate::args::{ExportArgs, ImportArgs};
@@ -48,15 +46,32 @@ fn absolute(path: &Path) -> Result<PathBuf, CliError> {
     std::path::absolute(path).map_err(|_| CliError::DirError)
 }
 
-/// A read error for an import file. `read_capped`'s own text talks about the vault
-/// file and its limit, so it is never shown.
-fn read_error(e: &StoreError) -> CliError {
+/// A read error for an import file. The shared reader's own text talks about the
+/// vault file and its limit, so it is never shown. A failed read is probed once more
+/// to tell a folder or a refused file from any other failure.
+fn read_error(e: TransferError, file: &Path) -> CliError {
     match e {
-        StoreError::Io(ErrorKind::NotFound) => CliError::ImportFileMissing,
-        StoreError::NotARegularFile => CliError::ImportNotAFile,
-        StoreError::TooLarge => CliError::ImportTooLarge,
-        StoreError::Io(ErrorKind::PermissionDenied) => CliError::ImportNoAccess,
-        _ => CliError::ImportReadFailed,
+        TransferError::NotFound => CliError::ImportFileMissing,
+        TransferError::TooLarge => CliError::ImportTooLarge,
+        TransferError::Import(e) => CliError::Import(e),
+        _ => match std::fs::metadata(file) {
+            Ok(m) if !m.is_file() => CliError::ImportNotAFile,
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => CliError::ImportNoAccess,
+            _ => CliError::ImportReadFailed,
+        },
+    }
+}
+
+/// The error for a failed [`Session::import`]. Only a save error leaves the items
+/// added in memory, so only that is [`CliError::ImportNotSaved`]; an error before
+/// any row went in is [`CliError::Failed`].
+#[must_use]
+pub fn import_error(e: &CoreError) -> CliError {
+    match e {
+        CoreError::TooManyItems => CliError::ImportTooManyItems,
+        CoreError::Vault(VaultError::TooLargeToSave) => CliError::ImportTooLargeToSave,
+        CoreError::Store(_) | CoreError::Body(_) | CoreError::Vault(_) => CliError::ImportNotSaved,
+        _ => CliError::Failed,
     }
 }
 
@@ -166,20 +181,7 @@ pub fn import(
 /// The `Import…` read and parse errors of [`CliError`].
 pub(crate) fn read_import(args: &ImportArgs) -> Result<ImportBatch, CliError> {
     let file = absolute(&args.file).map_err(|_| CliError::ImportReadFailed)?;
-    let format = args.format.unwrap_or_else(|| {
-        let json = file
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-        if json {
-            ImportFormat::Json
-        } else {
-            ImportFormat::Csv
-        }
-    });
-    let bytes = read_capped(&file, MAX_IMPORT_BYTES).map_err(|e| read_error(&e))?;
-    let batch = parse(&bytes, format).map_err(CliError::Import)?;
-    drop(bytes);
-    Ok(batch)
+    transfer::read_import(&file, args.format).map_err(|e| read_error(e, &file))
 }
 
 /// The body of [`import`] on an open session, for `holm shell` too: the preview,
@@ -205,15 +207,7 @@ pub(crate) fn import_into(
         &format!("Type import to add {}: ", count(to_add, "item", "items")),
         "import",
     )?;
-    let report = match session.import(batch) {
-        Ok(r) => r,
-        Err(CoreError::TooManyItems) => return Err(CliError::ImportTooManyItems),
-        Err(CoreError::Vault(VaultError::TooLargeToSave)) => {
-            return Err(CliError::ImportTooLargeToSave);
-        }
-        // Any other save error leaves the items in memory, unsaved.
-        Err(_) => return Err(CliError::ImportNotSaved),
-    };
+    let report = session.import(batch).map_err(|e| import_error(&e))?;
     writeln!(out, "Imported {}.", count(report.imported, "item", "items"))?;
     if report.uncategorised > 0 {
         writeln!(
@@ -255,9 +249,10 @@ pub fn export(
 /// [`CliError::DirError`] or [`CliError::FileExists`].
 pub(crate) fn export_target(args: &ExportArgs) -> Result<PathBuf, CliError> {
     let file = absolute(&args.file)?;
-    if vault::exists(&file) {
-        return Err(CliError::FileExists);
-    }
+    refuse_existing(&file).map_err(|e| match e {
+        TransferError::Exists => CliError::FileExists,
+        _ => CliError::ExportWriteFailed,
+    })?;
     Ok(file)
 }
 
@@ -272,14 +267,10 @@ pub(crate) fn export_to(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     if backup {
-        session
-            .save_backup(&mut FsStore::new(file))
-            .map_err(|e| match e {
-                CoreError::VaultExists | CoreError::Store(StoreError::AlreadyExists) => {
-                    CliError::FileExists
-                }
-                _ => CliError::BackupFailed,
-            })?;
+        export_backup(session, file).map_err(|e| match e {
+            TransferError::Exists => CliError::FileExists,
+            _ => CliError::BackupFailed,
+        })?;
         writeln!(
             out,
             "Saved an encrypted backup. It opens with the same master password."
@@ -289,17 +280,12 @@ pub(crate) fn export_to(
     writeln!(err, "{EXPORT_WARNING}")?;
     confirm(term, "Type export to continue: ", "export")?;
     let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
-    let csv = session.export_csv(&password).map_err(|e| write_error(&e))?;
-    drop(password);
-    let items = session
-        .active_items()
-        .map_err(|_| CliError::Failed)?
-        .count();
-    write_new_private_file(file, csv.expose()).map_err(|e| match e {
-        StoreError::AlreadyExists => CliError::FileExists,
+    let items = export_plain(session, &password, file).map_err(|e| match e {
+        TransferError::Core(e) => write_error(&e),
+        TransferError::Exists => CliError::FileExists,
         _ => CliError::ExportWriteFailed,
     })?;
-    drop(csv);
+    drop(password);
     writeln!(
         out,
         "Exported {} to the file. Delete it as soon as you are done.",

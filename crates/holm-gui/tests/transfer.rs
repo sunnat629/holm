@@ -321,3 +321,158 @@ fn export_throttle_shows_live_wait() {
     assert!(!disabled(&harness, "Export"));
     assert!(!out.exists());
 }
+
+type Done = std::sync::mpsc::Receiver<holm_gui::worker::WorkDone>;
+type Wake = Box<dyn Fn() + Send>;
+
+fn done(
+    session: holm_core::session::Session<holm_platform::fs_store::FsStore>,
+    kind: holm_gui::worker::JobKind,
+    transfer: Option<holm_gui::worker::TransferResult>,
+) -> Done {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(holm_gui::worker::WorkDone {
+        session,
+        kind,
+        result: Ok(()),
+        added: None,
+        returned: None,
+        transfer,
+    })
+    .unwrap();
+    rx
+}
+
+/// Real worker for everything except transfer jobs, which come back with no answer.
+fn transfer_goes_missing(
+    session: holm_core::session::Session<holm_platform::fs_store::FsStore>,
+    job: holm_gui::worker::Job,
+    wake: Wake,
+) -> Done {
+    if job.kind().is_transfer() {
+        return done(session, job.kind(), None);
+    }
+    holm_gui::worker::spawn(session, job, wake)
+}
+
+static PREVIEWS_SENT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn counts_previews(
+    session: holm_core::session::Session<holm_platform::fs_store::FsStore>,
+    job: holm_gui::worker::Job,
+    wake: Wake,
+) -> Done {
+    if job.kind() == holm_gui::worker::JobKind::PreviewImport {
+        PREVIEWS_SENT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    holm_gui::worker::spawn(session, job, wake)
+}
+
+static IMPORTS_SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The first import runs for real; the second one fails at once without touching the
+/// session, as an early failure does.
+fn second_import_fails_early(
+    session: holm_core::session::Session<holm_platform::fs_store::FsStore>,
+    job: holm_gui::worker::Job,
+    wake: Wake,
+) -> Done {
+    if job.kind() == holm_gui::worker::JobKind::Import
+        && IMPORTS_SEEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1
+    {
+        let failed = holm_gui::worker::TransferResult::Failed(
+            holm_platform::transfer::TransferError::Core(holm_core::error::CoreError::Locked),
+        );
+        return done(session, holm_gui::worker::JobKind::Import, Some(failed));
+    }
+    holm_gui::worker::spawn(session, job, wake)
+}
+
+fn open_with(dir: &Path, spawner: holm_gui::worker::Spawner) -> Harness<'static, HolmApp> {
+    make_vault(dir, PASSWORD);
+    let (app, _clock) = test_app(dir);
+    let mut harness = harness(app.with_spawner(spawner));
+    harness.run();
+    type_into(&mut harness, "Master password", PASSWORD);
+    harness.key_press(Key::Enter);
+    harness.step();
+    run_until(&mut harness, vault_screen, WAIT);
+    harness.run();
+    harness
+}
+
+#[test]
+fn export_tick_drawn_above_password() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    click_button(&mut harness, "Export...");
+    let tick = harness
+        .get_by_label("I understand this file is not encrypted")
+        .rect()
+        .min
+        .y;
+    let password = harness
+        .get_by_label("Master password to export")
+        .rect()
+        .min
+        .y;
+    assert!(tick < password, "tick {tick} not above password {password}");
+}
+
+#[test]
+fn busy_resets_when_transfer_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let mut harness = open_with(dir.path(), transfer_goes_missing);
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    let _ = harness.get_by_label(messages::WORKER_LOST);
+    assert!(!button(&harness, "Read file"));
+    assert!(button(&harness, "Import..."));
+}
+
+#[test]
+fn relative_import_path_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = open_with(dir.path(), counts_previews);
+    let before = PREVIEWS_SENT.load(std::sync::atomic::Ordering::SeqCst);
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", "source.csv");
+    click_button(&mut harness, "Read file");
+    let _ = harness.get_by_label(messages::PATH_NOT_ABSOLUTE);
+    assert_eq!(
+        PREVIEWS_SENT.load(std::sync::atomic::Ordering::SeqCst),
+        before
+    );
+}
+
+#[test]
+fn dirty_before_import_not_reported_as_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let mut harness = open_with(dir.path(), second_import_fails_early);
+    // First import: rows go in, the save fails, the vault stays dirty.
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    let guard = ReadOnly::new(dir.path());
+    click_job(&mut harness, "Import these rows");
+    click_button(&mut harness, "Cancel");
+    assert!(button(&harness, "Try again"));
+    guard.restore();
+
+    // Second import fails before it adds anything: it must not claim rows were added.
+    let mut text = std::fs::read_to_string(&source).unwrap();
+    text.push_str(
+        "Example Extra,extra.user,EXAMPLE-pass-2,https://extra.example.com,,Work,login,,,,\n",
+    );
+    let mixed = dir.path().join("mixed.csv");
+    std::fs::write(&mixed, text).unwrap();
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", mixed.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    click_job(&mut harness, "Import these rows");
+    let _ = harness.get_by_label(messages::IMPORT_FAILED);
+    assert!(harness.query_by_label(messages::IMPORT_UNSAVED).is_none());
+}

@@ -13,17 +13,14 @@ use std::thread;
 
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::import::{
-    ImportBatch, ImportError, ImportFormat, ImportPreview, ImportReport, MAX_IMPORT_BYTES,
-};
+use holm_core::import::{ImportBatch, ImportPreview, ImportReport};
 use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::session::Session;
-use holm_core::store::StoreError;
 use holm_core::text::SecretText;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
-use holm_platform::private_file::{read_capped, write_new_private_file};
+use holm_platform::transfer::{self, TransferError};
 
 /// One piece of work for the worker. `Debug` names the kind only.
 pub enum Job {
@@ -48,6 +45,11 @@ pub enum Job {
         /// The master password, checked on the worker and wiped there.
         password: MasterPassword,
     },
+    /// Write an encrypted backup of the vault to a new file.
+    Backup {
+        /// Where to write. It must not exist.
+        path: PathBuf,
+    },
 }
 
 impl Job {
@@ -63,6 +65,7 @@ impl Job {
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
             Job::Export { .. } => JobKind::Export,
+            Job::Backup { .. } => JobKind::Backup,
         }
     }
 }
@@ -79,6 +82,7 @@ impl fmt::Debug for Job {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
             }
             Job::Export { .. } => write!(f, "Job::Export(<path and password hidden>)"),
+            Job::Backup { .. } => write!(f, "Job::Backup(<path hidden>)"),
         }
     }
 }
@@ -102,6 +106,8 @@ pub enum JobKind {
     Import,
     /// Writing the export file.
     Export,
+    /// Writing the encrypted backup file.
+    Backup,
 }
 
 impl JobKind {
@@ -111,28 +117,9 @@ impl JobKind {
     pub fn is_transfer(self) -> bool {
         matches!(
             self,
-            JobKind::PreviewImport | JobKind::Import | JobKind::Export
+            JobKind::PreviewImport | JobKind::Import | JobKind::Export | JobKind::Backup
         )
     }
-}
-
-/// Why an import or export did not happen. A fixed shape: no path, no file content.
-#[derive(Debug, PartialEq, Eq)]
-pub enum TransferFail {
-    /// The import file does not exist.
-    NotFound,
-    /// The export path already exists, so nothing was written.
-    Exists,
-    /// The import file could not be read.
-    ReadFailed,
-    /// The export file could not be written.
-    WriteFailed,
-    /// The file is over the import size limit.
-    TooLarge,
-    /// The file was read but refused as a whole.
-    Import(ImportError),
-    /// The session refused (wrong password, throttled, locked, too many items, save error).
-    Core(CoreError),
 }
 
 /// How an import or export went. `Debug` shows counts only.
@@ -141,10 +128,10 @@ pub enum TransferResult {
     Previewed(Box<ImportBatch>, ImportPreview),
     /// The rows were added.
     Imported(ImportReport),
-    /// The export file was written.
+    /// The export or backup file was written.
     Exported,
     /// It did not happen.
-    Failed(TransferFail),
+    Failed(TransferError),
 }
 
 impl fmt::Debug for TransferResult {
@@ -244,13 +231,25 @@ pub fn spawn(
                 Job::Import(batch) => {
                     transfer = Some(match session.import(*batch) {
                         Ok(report) => TransferResult::Imported(report),
-                        Err(e) => TransferResult::Failed(TransferFail::Core(e)),
+                        Err(e) => TransferResult::Failed(TransferError::Core(e)),
                     });
                     Ok(())
                 }
                 Job::Export { path, password } => {
-                    transfer = Some(export_file(&mut session, &path, &password));
+                    transfer = Some(
+                        match transfer::export_plain(&mut session, &password, &path) {
+                            Ok(_) => TransferResult::Exported,
+                            Err(e) => TransferResult::Failed(e),
+                        },
+                    );
                     drop(password);
+                    Ok(())
+                }
+                Job::Backup { path } => {
+                    transfer = Some(match transfer::export_backup(&mut session, &path) {
+                        Ok(()) => TransferResult::Exported,
+                        Err(e) => TransferResult::Failed(e),
+                    });
                     Ok(())
                 }
             };
@@ -270,49 +269,15 @@ pub fn spawn(
     rx
 }
 
-/// Reads the file (size capped before reading), parses it by extension and previews it.
+/// Reads and parses the file through the shared flow, then previews it.
 fn preview_file(session: &Session<FsStore>, path: &std::path::Path) -> TransferResult {
-    let fail = |e| TransferResult::Failed(e);
-    let bytes = match read_capped(path, MAX_IMPORT_BYTES) {
+    let batch = match transfer::read_import(path, None) {
         Ok(b) => b,
-        Err(StoreError::NotFound) => return fail(TransferFail::NotFound),
-        Err(StoreError::TooLarge) => return fail(TransferFail::TooLarge),
-        Err(_) => return fail(TransferFail::ReadFailed),
+        Err(e) => return TransferResult::Failed(e),
     };
-    let is_json = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-    let format = if is_json {
-        ImportFormat::Json
-    } else {
-        ImportFormat::Csv
-    };
-    let batch = match holm_core::import::parse(&bytes, format) {
-        Ok(b) => b,
-        Err(e) => return fail(TransferFail::Import(e)),
-    };
-    drop(bytes);
     match session.preview_import(&batch) {
         Ok(preview) => TransferResult::Previewed(Box::new(batch), preview),
-        Err(e) => fail(TransferFail::Core(e)),
-    }
-}
-
-/// Checks the password, builds the CSV and writes it to a new 0600 file.
-fn export_file(
-    session: &mut Session<FsStore>,
-    path: &std::path::Path,
-    password: &MasterPassword,
-) -> TransferResult {
-    let csv = match session.export_csv(password) {
-        Ok(c) => c,
-        Err(e) => return TransferResult::Failed(TransferFail::Core(e)),
-    };
-    match write_new_private_file(path, csv.expose()) {
-        Ok(()) => TransferResult::Exported,
-        Err(StoreError::AlreadyExists) => TransferResult::Failed(TransferFail::Exists),
-        Err(_) => TransferResult::Failed(TransferFail::WriteFailed),
+        Err(e) => TransferResult::Failed(TransferError::Core(e)),
     }
 }
 

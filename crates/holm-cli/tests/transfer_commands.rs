@@ -11,10 +11,14 @@ use std::rc::Rc;
 
 use common::{FakeTerminal, Kind, PW, Ran, init, run, session, vault_dir};
 use holm_cli::CliError;
+use holm_cli::commands::transfer::import_error;
 use holm_core::clock::SystemClock;
+use holm_core::envelope::VaultError;
+use holm_core::error::CoreError;
 use holm_core::export::EXPORT_WARNING;
 use holm_core::import::{IMPORT_DELETE_SOURCE_WARNING, MAX_IMPORT_BYTES};
 use holm_core::session::Session;
+use holm_core::store::StoreError;
 use holm_crypto::MasterPassword;
 use holm_platform::fs_store::FsStore;
 
@@ -268,4 +272,30 @@ fn export_backup_opens_with_same_password() {
     let mut s = Session::new(FsStore::new(&backup), Box::new(SystemClock::new()));
     s.unlock(&MasterPassword::new(PW.to_owned())).unwrap();
     assert_eq!(s.active_items().unwrap().count(), 4);
+}
+
+#[test]
+fn import_core_error_before_rows_is_failed_not_unsaved() {
+    // Nothing went in, so nothing can be "added but not saved".
+    for e in [CoreError::Locked, CoreError::UnknownCategory] {
+        assert!(matches!(import_error(&e), CliError::Failed), "{e:?}");
+    }
+    // Only a failed save leaves the items in memory.
+    let io = StoreError::Io(std::io::ErrorKind::Other);
+    assert!(matches!(
+        import_error(&CoreError::Store(io)),
+        CliError::ImportNotSaved
+    ));
+    assert!(matches!(
+        import_error(&CoreError::Vault(VaultError::Crypto)),
+        CliError::ImportNotSaved
+    ));
+    assert!(matches!(
+        import_error(&CoreError::TooManyItems),
+        CliError::ImportTooManyItems
+    ));
+    assert!(matches!(
+        import_error(&CoreError::Vault(VaultError::TooLargeToSave)),
+        CliError::ImportTooLargeToSave
+    ));
 }
