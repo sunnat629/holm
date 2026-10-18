@@ -15,3 +15,10 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+holm-core.workspace = true
+holm-crypto.workspace = true
+holm-platform = { workspace = true, features = ["tty", "clipboard"] }
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

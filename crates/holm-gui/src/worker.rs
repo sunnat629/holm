@@ -7,17 +7,23 @@
 //! sender drops with it, and the UI sees a disconnected channel.
 
 use core::fmt;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::import::{
+    ImportBatch, ImportError, ImportFormat, ImportPreview, ImportReport, MAX_IMPORT_BYTES,
+};
 use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::session::Session;
+use holm_core::store::StoreError;
 use holm_core::text::SecretText;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
+use holm_platform::private_file::{read_capped, write_new_private_file};
 
 /// One piece of work for the worker. `Debug` names the kind only.
 pub enum Job {
@@ -31,6 +37,17 @@ pub enum Job {
     Update(ItemId, ItemInput),
     /// Write the unsaved changes to disk.
     Save,
+    /// Read and parse the import file at this path, and preview it. Nothing is added.
+    PreviewImport(PathBuf),
+    /// Add the rows of a previewed batch and save.
+    Import(Box<ImportBatch>),
+    /// Check the password, then write the plaintext CSV to a new private file.
+    Export {
+        /// Where to write. It must not exist.
+        path: PathBuf,
+        /// The master password, checked on the worker and wiped there.
+        password: MasterPassword,
+    },
 }
 
 impl Job {
@@ -43,6 +60,9 @@ impl Job {
             Job::Add(_) => JobKind::Add,
             Job::Update(..) => JobKind::Update,
             Job::Save => JobKind::Save,
+            Job::PreviewImport(_) => JobKind::PreviewImport,
+            Job::Import(_) => JobKind::Import,
+            Job::Export { .. } => JobKind::Export,
         }
     }
 }
@@ -55,6 +75,10 @@ impl fmt::Debug for Job {
             }
             Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
             Job::Save => write!(f, "Job::Save"),
+            Job::PreviewImport(_) | Job::Import(_) => {
+                write!(f, "Job::{:?}(<file hidden>)", self.kind())
+            }
+            Job::Export { .. } => write!(f, "Job::Export(<path and password hidden>)"),
         }
     }
 }
@@ -72,6 +96,66 @@ pub enum JobKind {
     Update,
     /// Saving unsaved changes.
     Save,
+    /// Reading an import file.
+    PreviewImport,
+    /// Adding the rows of an import.
+    Import,
+    /// Writing the export file.
+    Export,
+}
+
+impl JobKind {
+    /// True for the import and export jobs. A failure there is shown on the screen and
+    /// never locks the vault.
+    #[must_use]
+    pub fn is_transfer(self) -> bool {
+        matches!(
+            self,
+            JobKind::PreviewImport | JobKind::Import | JobKind::Export
+        )
+    }
+}
+
+/// Why an import or export did not happen. A fixed shape: no path, no file content.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransferFail {
+    /// The import file does not exist.
+    NotFound,
+    /// The export path already exists, so nothing was written.
+    Exists,
+    /// The import file could not be read.
+    ReadFailed,
+    /// The export file could not be written.
+    WriteFailed,
+    /// The file is over the import size limit.
+    TooLarge,
+    /// The file was read but refused as a whole.
+    Import(ImportError),
+    /// The session refused (wrong password, throttled, locked, too many items, save error).
+    Core(CoreError),
+}
+
+/// How an import or export went. `Debug` shows counts only.
+pub enum TransferResult {
+    /// The file was read. The batch waits for the user's go-ahead.
+    Previewed(Box<ImportBatch>, ImportPreview),
+    /// The rows were added.
+    Imported(ImportReport),
+    /// The export file was written.
+    Exported,
+    /// It did not happen.
+    Failed(TransferFail),
+}
+
+impl fmt::Debug for TransferResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransferResult::Previewed(..) => write!(f, "Previewed"),
+            TransferResult::Imported(r) => write!(f, "Imported({})", r.imported),
+            TransferResult::Exported => write!(f, "Exported"),
+            TransferResult::Failed(e) => write!(f, "Failed({e:?})"),
+        }
+    }
 }
 
 /// The worker's answer: the session handed back, and how the work went.
@@ -87,6 +171,8 @@ pub struct WorkDone {
     /// The input of an add or update that failed with `TooLargeToSave`, handed back so
     /// the form can be rebuilt. Always `None` otherwise. Wipes itself on drop.
     pub returned: Option<ItemInput>,
+    /// The outcome of an import or export job. `None` for every other kind.
+    pub transfer: Option<TransferResult>,
 }
 
 impl fmt::Debug for WorkDone {
@@ -126,6 +212,7 @@ pub fn spawn(
             let kind = job.kind();
             let mut added = None;
             let mut returned = None;
+            let mut transfer = None;
             let result = match job {
                 Job::Create(password, params) => {
                     let result = session.create(&password, &params);
@@ -150,6 +237,22 @@ pub fn spawn(
                     result
                 }
                 Job::Save => session.save(),
+                Job::PreviewImport(path) => {
+                    transfer = Some(preview_file(&session, &path));
+                    Ok(())
+                }
+                Job::Import(batch) => {
+                    transfer = Some(match session.import(*batch) {
+                        Ok(report) => TransferResult::Imported(report),
+                        Err(e) => TransferResult::Failed(TransferFail::Core(e)),
+                    });
+                    Ok(())
+                }
+                Job::Export { path, password } => {
+                    transfer = Some(export_file(&mut session, &path, &password));
+                    drop(password);
+                    Ok(())
+                }
             };
             // A send fails only if the app is gone; the session then drops here,
             // which wipes an unlocked vault.
@@ -159,11 +262,58 @@ pub fn spawn(
                 result,
                 added,
                 returned,
+                transfer,
             });
         });
     // On a spawn error the closure, and with it `tx`, is already dropped.
     drop(started);
     rx
+}
+
+/// Reads the file (size capped before reading), parses it by extension and previews it.
+fn preview_file(session: &Session<FsStore>, path: &std::path::Path) -> TransferResult {
+    let fail = |e| TransferResult::Failed(e);
+    let bytes = match read_capped(path, MAX_IMPORT_BYTES) {
+        Ok(b) => b,
+        Err(StoreError::NotFound) => return fail(TransferFail::NotFound),
+        Err(StoreError::TooLarge) => return fail(TransferFail::TooLarge),
+        Err(_) => return fail(TransferFail::ReadFailed),
+    };
+    let is_json = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    let format = if is_json {
+        ImportFormat::Json
+    } else {
+        ImportFormat::Csv
+    };
+    let batch = match holm_core::import::parse(&bytes, format) {
+        Ok(b) => b,
+        Err(e) => return fail(TransferFail::Import(e)),
+    };
+    drop(bytes);
+    match session.preview_import(&batch) {
+        Ok(preview) => TransferResult::Previewed(Box::new(batch), preview),
+        Err(e) => fail(TransferFail::Core(e)),
+    }
+}
+
+/// Checks the password, builds the CSV and writes it to a new 0600 file.
+fn export_file(
+    session: &mut Session<FsStore>,
+    path: &std::path::Path,
+    password: &MasterPassword,
+) -> TransferResult {
+    let csv = match session.export_csv(password) {
+        Ok(c) => c,
+        Err(e) => return TransferResult::Failed(TransferFail::Core(e)),
+    };
+    match write_new_private_file(path, csv.expose()) {
+        Ok(()) => TransferResult::Exported,
+        Err(StoreError::AlreadyExists) => TransferResult::Failed(TransferFail::Exists),
+        Err(_) => TransferResult::Failed(TransferFail::WriteFailed),
+    }
 }
 
 /// A zeroizing copy of a login input, so it survives core consuming the original.

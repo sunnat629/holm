@@ -10,6 +10,8 @@
 //! clock and the idle timer, and [`throttle`] slows repeated failed unlocks.
 //! [`store`] is the trait the vault file is read and written through, [`session`]
 //! creates, unlocks, saves and locks a vault, and [`error`] holds its one error type.
+//! [`import`] reads CSV and JSON import files into a vault, all or nothing, and
+//! [`export`] writes every item outside the Trash as plaintext CSV after a password check.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:
@@ -81,6 +83,7 @@ pub mod envelope;
 #[cfg(all(feature = "fuzzing", not(fuzzing)))]
 compile_error!("the fuzzing feature is only for cargo-fuzz builds (needs --cfg fuzzing)");
 pub mod error;
+pub mod export;
 pub mod format;
 // Test-only API for the fuzz targets. Absent from a normal build; see the
 // `fuzzing` feature in Cargo.toml.
@@ -88,9 +91,13 @@ pub mod format;
 #[doc(hidden)]
 pub mod fuzzing;
 pub mod generator;
+pub mod import;
 pub mod item;
 pub mod padding;
+// Own CSV and JSON code for import and export.
+pub(crate) mod plain;
 pub mod rules;
+pub mod search;
 pub mod session;
 pub mod settings;
 pub mod store;

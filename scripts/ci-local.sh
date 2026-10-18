@@ -170,7 +170,7 @@ fuzz_gate() {
   cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
   cargo audit --file fuzz/Cargo.lock || return 1
   local t seeds
-  for t in parse_header parse_header_structured unpad open_fixed_key decode_body; do
+  for t in parse_header parse_header_structured unpad open_fixed_key decode_body import_csv import_json; do
     mkdir -p "fuzz/corpus/$t"
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi

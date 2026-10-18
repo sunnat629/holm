@@ -331,8 +331,8 @@ Known gaps:
   volumes) is skipped, so on those volumes a completed rename may not survive a power loss.
 - Windows write-through and the Windows directory sync wait for Phase 5. The lock that
   stops two Holm processes opening the same vault (`holm.lock`, see below) arrived in
-  Phase 3, but only `holm-gui` takes it; `FsStore` and `Session` do not, so `holm-cli`
-  must take it too (Phase 4).
+  Phase 3. `holm-gui` and `holm-cli` (Phase 4) both take it before asking for a password;
+  `FsStore` and `Session` do not, so any new client must take it too.
 
 ## The macOS app (Phase 3)
 
@@ -392,6 +392,102 @@ Known gaps:
   Phase 5 screen must say the new password may already be needed. Phase 5.
 - 206 `cargo vet` exemptions cover the GUI crates (note `gui-only, pre-release; audit or
   replace before Phase 6`). They must be audited or replaced before Phase 6.
+
+## The command line (Phase 4)
+
+`holm-cli` is one-shot: each command takes `holm.lock`, asks for the master password,
+does its work and locks the vault on exit. There is no background agent.
+
+- Passwords are read only from `/dev/tty`, never from argv, an environment variable,
+  stdin or a pipe. With no controlling terminal the command stops with fixed text. A
+  flag that looks like a password flag is a usage error that never repeats its value.
+- `holm_platform::tty` puts the terminal in raw mode with echo off (safe rustix termios
+  API, no `unsafe`) and edits the line itself into one pre-sized `Zeroizing` buffer that
+  never grows. The bytes are moved into the `String` without a copy and on into
+  `MasterPassword`. The single-byte read buffer is wiped.
+- A guard restores the saved terminal mode on return, on error and on panic. After a
+  refusal or Ctrl-C it flushes unread input first, so the rest of a pasted password
+  does not reach the shell. `ISIG` is off, so Ctrl-C arrives as a byte and takes the
+  same path.
+- `get` prints every secret field as `(hidden)`, never its value or length. Display text
+  goes through a filter that replaces control characters (Unicode `Cc`) and the bidi
+  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It does
+  not replace U+2028/U+2029 or zero-width characters; core already refuses control and
+  bidi characters in display fields, and widening the filter is in `BACKLOG.md`.
+- Messages are fixed text: never a path, a value or a library message.
+
+`holm shell` keeps one unlocked session in one process, for many commands:
+
+- It takes `holm.lock` once and holds it until it ends. It keeps one `Session` for its
+  whole life, and `Session::lock` drops only the keys and the data, so the unlock
+  throttle carries over a lock and an unlock: within one shell, the fourth wrong
+  password waits.
+- It locks when the vault's auto-lock time passes without a typed line (the session's
+  idle timer, monotonic or a forward wall-clock jump), on `lock`, and on `exit`, `quit`,
+  Ctrl-D or Ctrl-C at the prompt. Each prompt waits with a deadline, and the idle check
+  runs before a typed line does, so a line typed after the idle time runs against a
+  locked vault. An idle lock never waits or asks: unsaved changes are discarded and the
+  message says so. `lock` and `exit` save first, and if that fails they lock only after
+  `discard` is typed. After Ctrl-D or Ctrl-C at the prompt, the discard prompt drops
+  the changes only if the input ends there too (Ctrl-D, or the terminal closes);
+  Ctrl-C there keeps the vault open. Every lock clears the clipboard if it still
+  holds Holm's value, or if it can't be read back (then Holm says it could not check).
+- A command's own prompts (a hidden entry, `Type … to continue`, the discard prompt)
+  wait with a deadline too: the auto-lock time from when the prompt starts. If it
+  passes, the command is cancelled before it changes anything, and the shell idle-locks
+  (wipes the session, clears the clipboard) before the line counts as activity.
+- Inside the shell the master password is asked again only where the spec asks: export
+  (again), `passwd` (the current one) and copying a recovery phrase.
+- `--copy` returns to the prompt at once and schedules the clear for the vault's clear
+  time, which the prompt's deadline then runs.
+- There is no history. Each line and each word lives in a wiping buffer; the words reach
+  the parser by moving, not copying, and are wiped after it. Passwords are never read
+  from a line; they are typed at the hidden prompt.
+
+Known gaps:
+
+- A process killed by a signal from outside (`kill`, SIGTERM, SIGHUP) skips the guard
+  and can leave the terminal with echo off until `stty sane`. Handling signals would
+  need `unsafe` or a new crate. Phase 5.
+- The unlock throttle lives in the `Session`, so it starts fresh in every process, and
+  three tries in one command never reach its first wait. A `holm shell` keeps its
+  throttle until it ends, but a new shell starts fresh. A script that runs `holm` in a
+  loop is limited only by Argon2 and the instance lock: the same bound as an attacker
+  with a copy of the file.
+- The terminal driver, the shell's line discipline before raw mode starts, and the
+  kernel's tty buffers can hold typed bytes Holm cannot wipe.
+- `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
+- `holm shell` does not lock on OS sleep, screen lock or logout yet; after a wake the
+  first line is checked against the idle time (wall clock included) before it runs.
+  Phase 5.
+- Command arguments (titles, usernames, web addresses, paths) are copied into plain
+  `String`s by the parser and are not wiped. They are public fields, never secrets.
+
+## Import and export (Phase 4)
+
+- Import reads CSV and JSON with Holm's own std-only parsers. Cells land in wiping
+  buffers that are sized once and never reallocate. The file is read through a capped
+  reader (16 MiB, regular files only, no FIFO, no growing file). A bad file fails
+  whole, with fixed text and a line number, never a cell value. Rows with problems are
+  skipped and reported by row number only.
+- Export writes plaintext CSV: every password, in the clear. The file is created new
+  (never over an existing file or through a symlink) with mode 0600 on Unix. If the
+  write or its sync fails, the partial file is first truncated to zero bytes and synced
+  through the open handle, then removed. The remove is best effort (it can fail on the
+  same flaky or removable volume, or if the path was swapped meanwhile); the truncate
+  means a failed remove leaves an empty file, not partial plaintext. The truncate is
+  best effort too: if the volume refuses it as well, some of the plaintext can stay on
+  disk. The master password is asked again first and `EXPORT_WARNING` is shown before
+  any byte is written.
+- Export does not escape cells that start with `=`, `+`, `-` or `@`. Escaping would
+  change the stored value, so a re-import would not match byte for byte. The warning
+  names spreadsheets instead, because that is where formula injection happens.
+- The GUI takes the file path as typed text (no file dialog, so no new crate). The path
+  sits in a plain egui `TextEdit`, so it stays in that widget's undo history until the
+  app closes. It is a display field, not a secret. The vault search box is a plain
+  `TextEdit` too and shares this exposure: what the user typed to search (a title,
+  username or URL fragment) stays in its undo history after a lock until the app closes.
+  Windows file permissions on the export file are Phase 5.
 
 ## Not claimed
 

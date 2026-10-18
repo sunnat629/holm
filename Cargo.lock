@@ -1451,6 +1451,13 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "holm-cli"
 version = "0.0.0"
+dependencies = [
+ "holm-core",
+ "holm-crypto",
+ "holm-platform",
+ "tempfile",
+ "zeroize",
+]
 
 [[package]]
 name = "holm-core"
@@ -1507,12 +1514,15 @@ dependencies = [
 name = "holm-platform"
 version = "0.0.0"
 dependencies = [
+ "arboard",
  "holm-core",
  "holm-crypto",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "raw-window-handle",
+ "rustix 1.1.5",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]

@@ -39,16 +39,16 @@ pub(crate) const CANCEL_LABEL: &str = "Cancel";
 /// Its storage is allocated once at [`MAX_LINE_BYTES`]; input that would not fit is
 /// cut off, and control characters are dropped. Because it never grows, no copy of a
 /// typed value is left behind in freed memory.
-struct LineBuf(Zeroizing<String>);
+pub(crate) struct LineBuf(Zeroizing<String>);
 
 impl LineBuf {
     /// An empty buffer with its full capacity allocated.
-    fn new() -> LineBuf {
+    pub(crate) fn new() -> LineBuf {
         LineBuf(Zeroizing::new(String::with_capacity(MAX_LINE_BYTES)))
     }
 
     /// A buffer holding `text`, or `None` when it does not fit.
-    fn from_text(text: &str) -> Option<LineBuf> {
+    pub(crate) fn from_text(text: &str) -> Option<LineBuf> {
         let mut buf = LineBuf::new();
         (text.len() <= MAX_LINE_BYTES).then(|| {
             buf.0.push_str(text);
@@ -57,18 +57,18 @@ impl LineBuf {
     }
 
     /// Moves the content out as [`Text`] (no copy) and leaves the buffer empty.
-    fn take_text(&mut self) -> Text {
+    pub(crate) fn take_text(&mut self) -> Text {
         let moved = core::mem::replace(&mut *self.0, String::with_capacity(MAX_LINE_BYTES));
         Text::new(moved)
     }
 
     /// Whether the buffer holds nothing.
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
     /// Byte length of the content.
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
@@ -322,7 +322,7 @@ impl LoginForm {
 
 /// One labelled single-line field. Notes its focus in `io` (a Cmd+V then pastes into it
 /// through `HolmApp`'s `raw_input_hook`). Returns whether the text changed.
-fn line_field(
+pub(crate) fn line_field(
     ui: &mut egui::Ui,
     io: &mut FieldIo<'_>,
     label: &'static str,

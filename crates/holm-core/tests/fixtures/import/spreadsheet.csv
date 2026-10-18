@@ -1,0 +1,4 @@
+﻿Title,Username,Password,Website,Notes,Category,Type
+Sheet Login,sheet.user,EXAMPLE-sheet-pw,https://sheet.example.com,"line one
+line two",Work,login
+

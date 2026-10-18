@@ -37,8 +37,10 @@ impl Category {
     }
 }
 
-/// The key two names are compared by: trimmed, NFC, lowercase.
-pub(crate) fn name_key(name: &str) -> Zeroizing<String> {
+/// The key two category names are compared by: trimmed, NFC, lowercase. Two names
+/// with the same key are the same category, so a client that looks a category up by
+/// a typed name (holm-cli's `--category`) compares keys, not raw strings.
+pub fn name_key(name: &str) -> Zeroizing<String> {
     fold(name.trim())
 }
 

@@ -55,6 +55,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "import_csv"
+path = "fuzz_targets/import_csv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_json"
+path = "fuzz_targets/import_json.rs"
+test = false
+doc = false
+bench = false
+
 [lints.rust]
 unsafe_code = "forbid"
 
