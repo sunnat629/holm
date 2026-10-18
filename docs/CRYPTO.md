@@ -233,8 +233,8 @@ attacker who tries repeats would find it sooner; the 1,024-character limit caps 
 
 ## The vault body (schema v1)
 
-The padded plaintext is a `u16` little-endian schema version (1), then the `postcard`
-encoding of the settings, the categories, the items and the next category id.
+The padded plaintext is the body: inside the padding, a `u16` little-endian schema
+version (1), then the `postcard` encoding of the settings, the categories, the items and the next category id.
 `VaultData::decode` treats it as hostile even though the AEAD has authenticated it,
 because a buggy or newer writer is enough to produce bad bytes:
 

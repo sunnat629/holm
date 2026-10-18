@@ -31,7 +31,7 @@ In Kotlin you'd write `fun reveal(id: ItemId): String`. The JVM keeps that `Stri
 
 - `items.iter().position(|i| i.id == id)` gives `Option<usize>`: an index, or nothing. We turn "nothing" into `NotFound` with `ok_or`.
 - `for item in data.items.iter_mut()` visits each item with write access. `delete_category` uses it to set `category = None`.
-- `retain(|i| keep(i))` drops everything the closure rejects, in place.
+- `retain(|i| keep(i))` drops everything the closure rejects, in place. Holm does not use it: `empty_trash` has to remember each removed item and its index so a failed save can put them back, and `retain` throws the rejected items away.
 
 In Kotlin you'd write `indexOfFirst { it.id == id }`, `forEach { it.category = null }` and `removeAll { ... }`. The Rust versions keep an index instead of a second reference to the element, which is what lets us borrow `items` again later.
 
@@ -60,7 +60,7 @@ A doc comment can hold a code block marked `compile_fail,E0624`. The test passes
    Check: `cargo test -p holm-core empty_phrase_on_update_keeps_phrase --locked`
 2. Make `GatedSecret::expose` `pub` and run the doctests. Which ones fail, and with what message? Undo the change.
    Check: `cargo test -p holm-core --doc GatedSecret --locked`
-3. Remove the `move` from the undo closure in `set_favourite`. Read the compiler error about `old`, then put `move` back and explain why it is needed.
+3. In `delete_forever`, add `let _ = data.items.len();` after the `commit_or_undo` call and build. Read the error (`cannot borrow *self as mutable more than once at a time`): `data` borrows `self`, and `commit_or_undo` needs `self` again, so `data` must be finished before the call. Remove the line again. (Removing `move` from the undo closures does not fail here, because `commit_or_undo` takes `impl FnOnce` with no `'static` bound; `move` is only a habit that makes the ownership visible.)
    Check: `cargo build -p holm-core --locked`
 
 ## Read next

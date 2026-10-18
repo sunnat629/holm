@@ -47,7 +47,7 @@ File::open(dir)?.sync_all()?;             // DirSynced (Unix)
 - `write_all` only hands bytes to the OS cache. Nothing is on the disk yet.
 - `sync_all` (temp) waits until the temp's bytes are on the disk. Without it, the OS may write the rename to disk before the data, and after a power cut the vault name points at an empty file. On macOS `sync_all` uses `F_FULLFSYNC`, which also flushes the drive's own cache.
 - `rename` within one directory is atomic: anyone looking sees the old file or the new one, never a mix. It also replaces a symlink itself instead of following it.
-- `sync_all` (directory) makes the rename itself survive a power cut. Some FAT and exFAT volumes cannot sync a directory and say `Unsupported`; we accept that and fail on any other error.
+- `sync_all` (directory) makes the rename itself survive a power cut. Some FAT and exFAT volumes cannot sync a directory and say `Unsupported` (or a raw `ENOTSUP` or `EINVAL`, which macOS std leaves uncategorised); we accept that and fail on any other error.
 
 `create_new` for a brand-new vault uses `hard_link(temp, path)` instead of `rename`, because `rename` would overwrite a file that appeared in the meantime, while `hard_link` fails if anything is there. exFAT has no hard links, so there we fall back to an exclusive create of the vault path.
 

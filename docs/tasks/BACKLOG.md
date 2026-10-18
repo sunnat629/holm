@@ -37,7 +37,7 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 - Replace the cargo-deny-action download with a checksummed install. Trigger: when Actions is re-enabled.
 - [x] Fixed-key full-open fuzz target. Done in Phase 2 Task 13 (#25): `open_fixed_key` and `decode_body`.
 - SBOM with `cargo-cyclonedx`. Closes in Phase 6 (release work).
-- `--all-features` release guard (`test-vectors` must not ship). Closes in Phase 6.
+- `--all-features` release guard (`test-vectors` and `fuzzing` must not ship). Closes in Phase 6.
 - Linux and Windows are untested until Actions returns. Trigger: Actions re-enabled.
 - Upstream `chacha20` does not wipe its HChaCha20 subkey. Track an upstream issue or PR; revisit on each chacha20 bump.
 - `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.

@@ -89,7 +89,7 @@ if !leftover.is_empty() {
 - `take_from_bytes` returns the value and the unread rest. Holm insists the rest is empty. Extra bytes mean a buggy writer or a body from a format we do not understand, and ignoring them would hide data that could later be lost on save.
 - Encode is deterministic: one vault always gives the same bytes, so the golden test pins the writer. Decode is not canonical. Postcard accepts an overlong varint (`158, 0` reads as 30), and clamping maps clipboard 0 and 5 to the same setting. That is fine because the body is AEAD-authenticated and Holm always re-encodes canonically, but never compare body bytes to detect a change.
 
-In Kotlin you'd write: `ProtoBuf.decodeFromByteArray(bytes)`, which ignores trailing data, so you would decode from a stream and check `input.available() == 0` yourself.
+In Kotlin you'd write: `ProtoBuf.decodeFromByteArray(bytes)`, which reads one message from the whole array and does not tell you about a stray tail, so you would decode from a stream and check `input.available() == 0` yourself.
 
 ### Measure before you allocate
 

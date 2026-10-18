@@ -196,7 +196,7 @@ reliance ends, so every crate in the shipped tree now has a recorded reason to b
    `--locked` would refuse, and `--offline` still keeps Cargo off the network. Undo with
    `git checkout Cargo.toml Cargo.lock`.
 3. In `supply-chain/audits.toml`, delete the `[[trusted.syn]]` entry (its header and the
-   lines under it). Check: `cargo vet --locked` prints `Vetting Failed!` and
+   lines under it), then run `cargo vet fmt` so the file is tidy. Check: `cargo vet --locked` prints `Vetting Failed!` and
    `syn:2.0.119 missing ["safe-to-deploy"]` (and the same for 3.0.9). Undo with
    `git checkout supply-chain/audits.toml`.
 
