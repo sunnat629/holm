@@ -21,24 +21,15 @@ use holm_platform::fs_store::FsStore;
 use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
 
+use crate::clipboard::SecretClipboard;
 use crate::messages;
 use crate::screens::create::CreateForm;
 use crate::screens::unlock::UnlockForm;
-use crate::screens::{Screen, VaultView};
+use crate::screens::{FieldFocus, FieldIo, Screen, VaultView};
 use crate::worker::{self, Job, JobKind, Spawner, WorkDone};
 
 /// How often the UI polls a running worker, in case its wake-up repaint is missed.
 const WORKER_POLL: Duration = Duration::from_millis(200);
-
-/// Where secrets go when the user copies one. A stub until the clipboard task fills
-/// it in; [`NoClipboard`] does nothing.
-pub trait SecretClipboard {}
-
-/// A clipboard that never holds anything.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoClipboard;
-
-impl SecretClipboard for NoClipboard {}
 
 /// Everything the app needs from outside: where the vault is, how hard Argon2 works
 /// for a new vault, the clocks, and the clipboard.
@@ -51,7 +42,7 @@ pub struct AppConfig {
     pub session_clock: Box<dyn Clock>,
     /// The UI's clock (clipboard timer and lock notes in later tasks).
     pub ui_clock: Box<dyn Clock>,
-    /// The clipboard for copied secrets.
+    /// The clipboard for copied secrets and pastes.
     pub clipboard: Box<dyn SecretClipboard>,
 }
 
@@ -83,9 +74,11 @@ pub struct HolmApp {
     kdf: KdfParams,
     /// The UI's clock.
     ui_clock: Box<dyn Clock>,
-    /// The clipboard for copied secrets.
-    #[expect(dead_code, reason = "the copy buttons use it (Task 5)")]
+    /// The clipboard for copied secrets and pastes. The only clipboard the app uses.
     clipboard: Box<dyn SecretClipboard>,
+    /// Which kind of field had focus at the end of the last frame, for
+    /// [`raw_input_hook`](eframe::App::raw_input_hook), which runs before the next one.
+    focus: FieldFocus,
     /// Starts the worker: [`worker::spawn`], or a fake in tests.
     spawner: Spawner,
 }
@@ -131,6 +124,7 @@ impl HolmApp {
             kdf,
             ui_clock,
             clipboard,
+            focus: FieldFocus::None,
             spawner: spawn_worker,
         };
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
@@ -207,8 +201,13 @@ impl HolmApp {
         let now = self.ui_clock.monotonic();
         let screen = &mut self.screen;
         let session = self.session.as_ref();
+        let mut io = FieldIo {
+            clipboard: &mut *self.clipboard,
+            focus: FieldFocus::None,
+        };
         if let Screen::Vault(view) = screen {
-            let job = view.show(ui, session, now);
+            let job = view.show(ui, session, now, &mut io);
+            self.focus = io.focus;
             if let Some(job) = job {
                 self.start(ui.ctx(), job);
                 ui.ctx().request_discard("the screen changed");
@@ -217,8 +216,10 @@ impl HolmApp {
         }
         let job = egui::CentralPanel::default()
             .show(ui, |ui| match screen {
-                Screen::Create(form) => form.show(ui).map(|password| Job::Create(password, kdf)),
-                Screen::Unlock(form) => form.show(ui, &throttle).map(Job::Unlock),
+                Screen::Create(form) => form
+                    .show(ui, &mut io)
+                    .map(|password| Job::Create(password, kdf)),
+                Screen::Unlock(form) => form.show(ui, &mut io, &throttle).map(Job::Unlock),
                 Screen::Working { job, .. } => {
                     ui.heading(match job {
                         JobKind::Create => "Creating your vault. This takes a moment.",
@@ -234,6 +235,7 @@ impl HolmApp {
                 }
             })
             .inner;
+        self.focus = io.focus;
         if let Some(job) = job {
             self.start(ui.ctx(), job);
             // This pass drew the form that just went away; draw the new screen
@@ -269,6 +271,18 @@ impl HolmApp {
             Screen::Unlock(form) => form.buffers_empty(),
             Screen::Vault(view) => view.buffers_empty(),
             Screen::Working { .. } | Screen::Fatal(_) => true,
+        }
+    }
+
+    /// How many characters the current form's secret buffers hold. For tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn secret_char_count(&self) -> usize {
+        match &self.screen {
+            Screen::Create(form) => form.password.char_count() + form.confirm.char_count(),
+            Screen::Unlock(form) => form.password.char_count(),
+            Screen::Vault(view) => view.secret_char_count(),
+            Screen::Working { .. } | Screen::Fatal(_) => 0,
         }
     }
 
@@ -364,6 +378,19 @@ fn until_next_second(wait: Duration) -> Duration {
     }
 }
 
+/// Whether `event` is a Cmd+V press (a key repeat counts: one paste per press).
+fn is_paste_key(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::Key {
+            key: egui::Key::V,
+            pressed: true,
+            modifiers,
+            ..
+        } if modifiers.command
+    )
+}
+
 impl eframe::App for HolmApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tick(ctx);
@@ -371,6 +398,37 @@ impl eframe::App for HolmApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+    }
+
+    /// Runs before egui sees a frame's input. Copy and cut events are dropped, so
+    /// nothing in the window is copied except through the Copy button (egui makes none
+    /// itself, because `clipboard_shortcuts` is off; this holds even if one arrives).
+    ///
+    /// When a plain field (title, username, web address) had focus last frame, each
+    /// Cmd+V press gets an `Event::Paste` with the clipboard's text right after it. The
+    /// `Zeroizing` copy is wiped here; egui's `String` copy is not, which is acceptable
+    /// for these fields, never for a secret. A secret field pastes by itself (through
+    /// [`crate::clipboard::paste_into`]), and with no text field focused the clipboard is
+    /// not read at all.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        raw.events
+            .retain(|e| !matches!(e, egui::Event::Copy | egui::Event::Cut));
+        if self.focus != FieldFocus::Plain || !raw.events.iter().any(is_paste_key) {
+            return;
+        }
+        let Some(text) = self.clipboard.get_text() else {
+            return;
+        };
+        let events = core::mem::take(&mut raw.events);
+        raw.events.reserve(events.len() + 1);
+        for event in events {
+            let paste = is_paste_key(&event);
+            raw.events.push(event);
+            if paste {
+                raw.events
+                    .push(egui::Event::Paste(text.as_str().to_owned()));
+            }
+        }
     }
 }
 

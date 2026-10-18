@@ -84,10 +84,16 @@ pub const SECRET_TOO_LONG: &str =
     "This password is too long to edit here, so it is shown read-only.";
 /// No login is selected.
 pub const SELECT_OR_ADD: &str = "Select a login, or add one.";
+/// The password was copied. Fixed text for Phase 3, which has no clipboard clearing.
+pub const COPIED: &str = "Password copied. Holm doesn't clear the clipboard yet, so copy something else when you're done.";
+/// The clipboard did not take the password.
+pub const COPY_FAILED: &str = "Couldn't copy. Try again.";
+/// A paste would not fit the field, so nothing was pasted.
+pub const PASTE_TOO_LONG: &str = "That's too long to paste here, so nothing was pasted.";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 29] = [
+const ALL: [&str; 32] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -117,6 +123,9 @@ const ALL: [&str; 29] = [
     NOT_SAVED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
+    COPIED,
+    COPY_FAILED,
+    PASTE_TOO_LONG,
 ];
 
 /// The line the unlock screen shows for an unlock error.

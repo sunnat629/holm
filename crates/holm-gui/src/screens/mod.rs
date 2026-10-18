@@ -10,10 +10,74 @@ pub(crate) mod vault;
 
 use std::sync::mpsc::Receiver;
 
+use eframe::egui;
+
+use crate::clipboard::{Paste, SecretClipboard, paste_into};
+use crate::messages;
+use crate::secret_input::SecretInput;
+use crate::widgets::secret_field::{SecretFieldOutput, secret_field};
 use crate::worker::{JobKind, WorkDone};
 use create::CreateForm;
 use unlock::UnlockForm;
 pub(crate) use vault::VaultView;
+
+/// Which kind of field had keyboard focus when the frame ended.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FieldFocus {
+    /// No text field.
+    #[default]
+    None,
+    /// A plain text field (title, username, web address).
+    Plain,
+    /// A secret field.
+    Secret,
+}
+
+/// What a screen's fields need from the app for one frame: the clipboard (to paste and
+/// copy), and a note of which kind of field has focus, for the next frame's
+/// `raw_input_hook`.
+pub(crate) struct FieldIo<'a> {
+    /// The app's clipboard.
+    pub(crate) clipboard: &'a mut dyn SecretClipboard,
+    /// The focus seen so far this frame.
+    pub(crate) focus: FieldFocus,
+}
+
+impl FieldIo<'_> {
+    /// Draws a [`secret_field`] and pastes into `buf` when it asks for a paste (Cmd+V
+    /// while focused). A paste counts as a change. A paste too long for `buf` adds
+    /// nothing and sets `error` to a fixed line instead.
+    pub(crate) fn secret_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        id_salt: &str,
+        label: &'static str,
+        buf: &mut SecretInput,
+        error: &mut Option<&'static str>,
+    ) -> SecretFieldOutput {
+        let mut out = secret_field(ui, id_salt, label, buf);
+        if out.has_focus {
+            self.focus = FieldFocus::Secret;
+        }
+        if out.paste_requested {
+            match paste_into(self.clipboard, buf) {
+                Paste::Pasted => out.changed = true,
+                Paste::TooLong => *error = Some(messages::PASTE_TOO_LONG),
+                Paste::Nothing => {}
+            }
+            // The field drew itself before the paste; draw it again with the new text.
+            ui.ctx().request_repaint();
+        }
+        out
+    }
+
+    /// Notes that a plain text field has focus, when `focused`.
+    pub(crate) fn note_plain(&mut self, focused: bool) {
+        if focused {
+            self.focus = FieldFocus::Plain;
+        }
+    }
+}
 
 /// The screen the app shows now.
 pub(crate) enum Screen {

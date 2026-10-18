@@ -1,13 +1,16 @@
 #![cfg(target_os = "macos")]
-//! Shared helpers for the `holm-gui` integration tests: a fake clock, an app on a
-//! temporary vault path, a kittest harness and a step-until loop.
+//! Shared helpers for the `holm-gui` integration tests: a fake clock, a fake
+//! clipboard, an app on a temporary vault path, a kittest harness and a step-until
+//! loop.
 
 #![allow(
     dead_code,
     reason = "each test file uses a different subset of these helpers"
 )]
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -18,8 +21,10 @@ use holm_core::item::Timestamp;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
-use holm_gui::app::{AppConfig, HolmApp, NoClipboard};
+use holm_gui::app::{AppConfig, HolmApp};
+use holm_gui::clipboard::{ClipboardError, NoClipboard, SecretClipboard};
 use holm_platform::fs_store::FsStore;
+use zeroize::Zeroizing;
 
 /// A strong test master password (fake, contains `EXAMPLE`).
 pub const PASSWORD: &str = "correct-Horse-battery-staple-EXAMPLE-9";
@@ -62,6 +67,51 @@ impl Clock for TestClock {
     }
 }
 
+/// What a [`FakeClipboard`] saw and what it serves. Fake data only.
+#[derive(Default)]
+pub struct FakeClipboardState {
+    /// Every text passed to `set_secret`, in order (failed calls included).
+    pub sets: Vec<Zeroizing<String>>,
+    /// What `get_text` returns.
+    pub paste: Option<String>,
+    /// How many times `get_text` was called.
+    pub gets: usize,
+    /// Whether `set_secret` fails.
+    pub fail: bool,
+}
+
+/// A clipboard for tests: records `set_secret` calls and serves `paste`. Clones share
+/// the same state, so the test keeps one and the app gets another.
+#[derive(Clone, Default)]
+pub struct FakeClipboard(pub Rc<RefCell<FakeClipboardState>>);
+
+impl FakeClipboard {
+    /// A fake whose `get_text` serves `text`.
+    pub fn serving(text: &str) -> FakeClipboard {
+        let fake = FakeClipboard::default();
+        fake.0.borrow_mut().paste = Some(text.to_owned());
+        fake
+    }
+}
+
+impl SecretClipboard for FakeClipboard {
+    fn set_secret(&mut self, text: &str) -> Result<(), ClipboardError> {
+        let mut state = self.0.borrow_mut();
+        state.sets.push(Zeroizing::new(text.to_owned()));
+        if state.fail {
+            Err(ClipboardError::Refused)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_text(&mut self) -> Option<Zeroizing<String>> {
+        let mut state = self.0.borrow_mut();
+        state.gets += 1;
+        state.paste.clone().map(Zeroizing::new)
+    }
+}
+
 /// The vault path the test apps use under `dir`: `<dir>/Holm/holm.vault`.
 pub fn vault_path(dir: &Path) -> PathBuf {
     dir.join("Holm").join("holm.vault")
@@ -70,13 +120,21 @@ pub fn vault_path(dir: &Path) -> PathBuf {
 /// A `HolmApp` on `<dir>/Holm/holm.vault` with `KdfParams::FLOOR`, one shared
 /// `TestClock` for the session and the UI, and no clipboard.
 pub fn test_app(dir: &Path) -> (HolmApp, TestClock) {
+    test_app_with_clipboard(dir, Box::new(NoClipboard))
+}
+
+/// [`test_app`] with `clipboard` instead of none.
+pub fn test_app_with_clipboard(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+) -> (HolmApp, TestClock) {
     let clock = TestClock::new();
     let app = HolmApp::new(AppConfig {
         vault_path: vault_path(dir),
         kdf: KdfParams::FLOOR,
         session_clock: Box::new(clock.clone()),
         ui_clock: Box::new(clock.clone()),
-        clipboard: Box::new(NoClipboard),
+        clipboard,
     });
     (app, clock)
 }

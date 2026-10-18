@@ -4,9 +4,9 @@ use eframe::egui;
 use holm_core::strength::{self, StrengthReport};
 use holm_crypto::MasterPassword;
 
+use super::FieldIo;
 use crate::messages;
 use crate::secret_input::{MASTER_CAP, SecretInput};
-use crate::widgets::secret_field::secret_field;
 use crate::widgets::strength_meter::strength_meter;
 
 /// Label of the first password field.
@@ -94,12 +94,23 @@ impl CreateForm {
     }
 
     /// Draws the form. Returns the password when a submit went through.
-    pub(crate) fn show(&mut self, ui: &mut egui::Ui) -> Option<MasterPassword> {
+    pub(crate) fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        io: &mut FieldIo<'_>,
+    ) -> Option<MasterPassword> {
         ui.heading("Create your vault");
         ui.label("Choose a master password. It is the only key to your vault.");
         ui.add_space(8.0);
 
-        let first = secret_field(ui, "create-password", PASSWORD_LABEL, &mut self.password);
+        let mut refused = None;
+        let first = io.secret_field(
+            ui,
+            "create-password",
+            PASSWORD_LABEL,
+            &mut self.password,
+            &mut refused,
+        );
         if first.changed {
             self.update_report();
         }
@@ -107,9 +118,18 @@ impl CreateForm {
             strength_meter(ui, report);
         }
         ui.add_space(4.0);
-        let second = secret_field(ui, "create-confirm", CONFIRM_LABEL, &mut self.confirm);
+        let second = io.secret_field(
+            ui,
+            "create-confirm",
+            CONFIRM_LABEL,
+            &mut self.confirm,
+            &mut refused,
+        );
         if first.changed || second.changed {
             self.error = None;
+        }
+        if refused.is_some() {
+            self.error = refused;
         }
         ui.add_space(4.0);
         if ui

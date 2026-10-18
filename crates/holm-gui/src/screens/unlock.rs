@@ -4,9 +4,9 @@ use eframe::egui;
 use holm_core::throttle::ThrottleStatus;
 use holm_crypto::MasterPassword;
 
+use super::FieldIo;
 use crate::messages;
 use crate::secret_input::{MASTER_CAP, SecretInput};
-use crate::widgets::secret_field::secret_field;
 
 /// Label of the password field (the same words as on the create screen).
 pub(crate) const PASSWORD_LABEL: &str = "Master password";
@@ -54,11 +54,18 @@ impl UnlockForm {
     pub(crate) fn show(
         &mut self,
         ui: &mut egui::Ui,
+        io: &mut FieldIo<'_>,
         throttle: &ThrottleStatus,
     ) -> Option<MasterPassword> {
         ui.heading("Unlock your vault");
         ui.add_space(8.0);
-        let field = secret_field(ui, "unlock-password", PASSWORD_LABEL, &mut self.password);
+        let field = io.secret_field(
+            ui,
+            "unlock-password",
+            PASSWORD_LABEL,
+            &mut self.password,
+            &mut self.error,
+        );
         if field.changed {
             self.error = None;
         }

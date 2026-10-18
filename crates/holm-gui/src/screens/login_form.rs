@@ -17,8 +17,8 @@ use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::text::{SecretText, Text};
 use zeroize::Zeroizing;
 
+use super::FieldIo;
 use crate::secret_input::{ITEM_SECRET_CAP, SecretInput};
-use crate::widgets::secret_field::secret_field;
 
 /// Label of the title field.
 pub(crate) const TITLE_LABEL: &str = "Title";
@@ -255,7 +255,7 @@ impl LoginForm {
     }
 
     /// Draws the form and reports what was pressed.
-    pub(crate) fn show(&mut self, ui: &mut egui::Ui) -> FormAction {
+    pub(crate) fn show(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) -> FormAction {
         ui.heading(if self.id.is_some() {
             "Edit login"
         } else {
@@ -263,13 +263,25 @@ impl LoginForm {
         });
         ui.add_space(8.0);
         let mut touched = false;
-        touched |= line_field(ui, TITLE_LABEL, &mut self.title);
-        touched |= line_field(ui, USERNAME_LABEL, &mut self.username);
-        touched |= line_field(ui, URL_LABEL, &mut self.url);
+        touched |= line_field(ui, io, TITLE_LABEL, &mut self.title);
+        touched |= line_field(ui, io, USERNAME_LABEL, &mut self.username);
+        touched |= line_field(ui, io, URL_LABEL, &mut self.url);
         ui.add_space(4.0);
-        touched |= secret_field(ui, "login-password", PASSWORD_LABEL, &mut self.password).changed;
+        let mut refused = None;
+        touched |= io
+            .secret_field(
+                ui,
+                "login-password",
+                PASSWORD_LABEL,
+                &mut self.password,
+                &mut refused,
+            )
+            .changed;
         if touched {
             self.error = None;
+        }
+        if refused.is_some() {
+            self.error = refused;
         }
         ui.add_space(8.0);
         let mut action = FormAction::None;
@@ -288,16 +300,24 @@ impl LoginForm {
     }
 }
 
-/// One labelled single-line field. Returns whether the text changed.
-fn line_field(ui: &mut egui::Ui, label: &'static str, buf: &mut LineBuf) -> bool {
+/// One labelled single-line field. Notes its focus in `io` (a Cmd+V then pastes into it
+/// through `HolmApp`'s `raw_input_hook`). Returns whether the text changed.
+fn line_field(
+    ui: &mut egui::Ui,
+    io: &mut FieldIo<'_>,
+    label: &'static str,
+    buf: &mut LineBuf,
+) -> bool {
     let label_id = ui.label(label).id;
-    ui.add(
-        egui::TextEdit::singleline(buf)
-            .char_limit(MAX_LINE_BYTES / 4)
-            .desired_width(320.0),
-    )
-    .labelled_by(label_id)
-    .changed()
+    let response = ui
+        .add(
+            egui::TextEdit::singleline(buf)
+                .char_limit(MAX_LINE_BYTES / 4)
+                .desired_width(320.0),
+        )
+        .labelled_by(label_id);
+    io.note_plain(response.has_focus());
+    response.changed()
 }
 
 #[cfg(test)]

@@ -16,7 +16,9 @@ use holm_core::settings::REHIDE_PASSWORD_SECS;
 use holm_core::text::{SecretText, Text};
 use holm_platform::fs_store::FsStore;
 
+use super::FieldIo;
 use super::login_form::{FormAction, LoginForm};
+use crate::clipboard::SecretClipboard;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
 use crate::worker::{Job, JobKind};
@@ -29,6 +31,8 @@ pub(crate) const EDIT_LABEL: &str = "Edit";
 pub(crate) const REVEAL_LABEL: &str = "Reveal";
 /// Label of the hide button.
 pub(crate) const HIDE_LABEL: &str = "Hide";
+/// Label of the copy-password button.
+pub(crate) const COPY_LABEL: &str = "Copy";
 /// Label of the retry-save button.
 pub(crate) const RETRY_LABEL: &str = "Try again";
 /// How a hidden password looks.
@@ -60,6 +64,8 @@ pub(crate) struct VaultView {
     status: Option<&'static str>,
     /// Whether the last write failed and left changes unsaved in memory.
     save_failed: bool,
+    /// The fixed line under the password after the Copy button, if any.
+    copy_note: Option<&'static str>,
 }
 
 impl fmt::Debug for VaultView {
@@ -82,6 +88,7 @@ impl VaultView {
             reveal_until: None,
             status: None,
             save_failed: false,
+            copy_note: None,
         }
     }
 
@@ -90,6 +97,14 @@ impl VaultView {
         match &self.mode {
             DetailMode::Edit(form) => form.buffers_empty(),
             DetailMode::Empty | DetailMode::View => true,
+        }
+    }
+
+    /// Characters held by the form's secret buffer (0 when no form is open).
+    pub(crate) fn secret_char_count(&self) -> usize {
+        match &self.mode {
+            DetailMode::Edit(form) => form.password.char_count(),
+            DetailMode::Empty | DetailMode::View => 0,
         }
     }
 
@@ -118,6 +133,7 @@ impl VaultView {
         self.rows_stale = true;
         self.reveal_until = None;
         self.status = None;
+        self.copy_note = None;
         match (kind, result) {
             (JobKind::Add, Ok(())) | (JobKind::Update, Ok(())) => {
                 self.save_failed = false;
@@ -164,6 +180,7 @@ impl VaultView {
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         if self.rows_stale
             && let Some(session) = session
@@ -184,7 +201,7 @@ impl VaultView {
             .exact_size(260.0)
             .show(ui, |ui| self.show_list(ui));
         egui::CentralPanel::default()
-            .show(ui, |ui| self.show_detail(ui, session, now))
+            .show(ui, |ui| self.show_detail(ui, session, now, io))
             .inner
     }
 
@@ -194,6 +211,7 @@ impl VaultView {
             self.selected = None;
             self.reveal_until = None;
             self.status = None;
+            self.copy_note = None;
             self.mode = DetailMode::Edit(LoginForm::new_blank());
         }
         ui.separator();
@@ -216,6 +234,7 @@ impl VaultView {
             self.mode = DetailMode::View;
             self.reveal_until = None;
             self.status = None;
+            self.copy_note = None;
         }
     }
 
@@ -225,6 +244,7 @@ impl VaultView {
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let mut job = None;
         if let Some(status) = self.status {
@@ -242,7 +262,7 @@ impl VaultView {
             DetailMode::Empty => {
                 ui.label(messages::SELECT_OR_ADD);
             }
-            DetailMode::Edit(form) => match form.show(ui) {
+            DetailMode::Edit(form) => match form.show(ui, io) {
                 FormAction::None => {}
                 FormAction::Cancel => {
                     self.mode = match self.selected {
@@ -252,7 +272,7 @@ impl VaultView {
                 }
                 FormAction::Save => job = self.save_form(session),
             },
-            DetailMode::View => job = job.or(self.show_item(ui, session, now)),
+            DetailMode::View => job = job.or(self.show_item(ui, session, now, io.clipboard)),
         }
         job
     }
@@ -293,12 +313,13 @@ impl VaultView {
         }
     }
 
-    /// The selected login, read-only.
+    /// The selected login, read-only, with the Copy button for its password.
     fn show_item(
         &mut self,
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        clipboard: &mut dyn SecretClipboard,
     ) -> Option<Job> {
         let item = self
             .selected
@@ -347,10 +368,21 @@ impl VaultView {
                     }
                 }
             }
+            // Only through Holm's clipboard (concealed), never egui's `copy_text`.
+            if ui.button(COPY_LABEL).clicked() {
+                self.copy_note = Some(match clipboard.set_secret(password.expose()) {
+                    Ok(()) => messages::COPIED,
+                    Err(_) => messages::COPY_FAILED,
+                });
+            }
         });
+        if let Some(note) = self.copy_note {
+            ui.label(note);
+        }
         ui.add_space(8.0);
         if ui.button(EDIT_LABEL).clicked() {
             self.reveal_until = None;
+            self.copy_note = None;
             match LoginForm::from_item(item) {
                 Some(form) => {
                     self.status = None;

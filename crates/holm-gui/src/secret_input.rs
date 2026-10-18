@@ -81,6 +81,26 @@ impl SecretInput {
         }
     }
 
+    /// Appends `s` only if all of it fits, and returns whether it did.
+    ///
+    /// Control characters are skipped, as in [`push_str`](SecretInput::push_str), and do
+    /// not count. When the rest would take the buffer past its capacity, nothing is added
+    /// and it returns `false`: for a paste, which must never be cut short without the
+    /// user knowing.
+    #[must_use]
+    pub fn try_push_str(&mut self, s: &str) -> bool {
+        let needed: usize = s
+            .chars()
+            .filter(|c| !c.is_control())
+            .map(char::len_utf8)
+            .sum();
+        if needed > self.cap - self.bytes.len() {
+            return false;
+        }
+        self.push_str(s);
+        true
+    }
+
     /// Removes the last character, if any, and wipes its bytes.
     pub fn pop_char(&mut self) {
         // UTF-8 continuation bytes look like 0b10xx_xxxx; the character starts at the
@@ -230,6 +250,22 @@ mod tests {
         assert_eq!(buf.bytes.len(), cap);
         assert_eq!(buf.bytes.as_ptr(), ptr);
         assert_eq!(buf.bytes.capacity(), capacity);
+    }
+
+    #[test]
+    fn try_push_str_is_all_or_nothing() {
+        let mut buf = SecretInput::with_capacity(8);
+        let ptr = buf.bytes.as_ptr();
+        assert!(buf.try_push_str("abc"));
+        // "défgh" is 6 bytes and only 5 are left: refused whole, not cut.
+        assert!(!buf.try_push_str("défgh"));
+        assert_eq!(buf.bytes, b"abc");
+        // Control characters do not count toward the fit.
+        assert!(buf.try_push_str("de\r\nf\tgh"));
+        assert_eq!(buf.bytes, b"abcdefgh");
+        assert!(!buf.try_push_str("i"));
+        assert!(buf.try_push_str("\n"), "nothing to add always fits");
+        assert_eq!(buf.bytes.as_ptr(), ptr, "no reallocation");
     }
 
     #[test]

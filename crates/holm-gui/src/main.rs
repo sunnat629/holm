@@ -26,7 +26,8 @@ mod macos {
     use eframe::egui;
     use holm_core::clock::SystemClock;
     use holm_crypto::kdf::KdfParams;
-    use holm_gui::app::{AppConfig, HolmApp, NoClipboard};
+    use holm_gui::app::{AppConfig, HolmApp};
+    use holm_gui::clipboard::SystemClipboard;
 
     /// Shown for any argument list other than none or `--vault <path>`.
     const USAGE: &str = "usage: holm-gui [--vault <path>]";
@@ -86,8 +87,8 @@ mod macos {
                     kdf: KdfParams::DEFAULT,
                     session_clock: Box::new(SystemClock::new()),
                     ui_clock: Box::new(SystemClock::new()),
-                    // The real clipboard arrives with the copy buttons (Task 5).
-                    clipboard: Box::new(NoClipboard),
+                    // Opened on first copy or paste, not here.
+                    clipboard: Box::new(SystemClipboard::new()),
                 })))
             }),
         );
