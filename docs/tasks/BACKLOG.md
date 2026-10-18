@@ -21,16 +21,16 @@ Source of truth: GitHub issues. This file mirrors them for offline reading.
 | [#18](https://github.com/sunnat629/holm/issues/18) | Clock, throttle and idle timer | 2 | `14-time-and-saturating-maths.md` | todo |
 | [#19](https://github.com/sunnat629/holm/issues/19) | Vault store trait and session lifecycle | 2 | `15-generics-and-trait-objects.md` | todo |
 | [#20](https://github.com/sunnat629/holm/issues/20) | Items, trash, categories, settings and the phrase gate | 2 | `16-borrowing-in-practice.md` | todo |
-| [#21](https://github.com/sunnat629/holm/issues/21) | Search, filter and sort | 4 | `29-iterators-and-lifetimes.md` (lessons 17, 19, 20 retired) | todo |
+| [#21](https://github.com/sunnat629/holm/issues/21) | Search, filter and sort | 4 | `29-iterators-and-lifetimes.md` (lessons 17, 19, 20 retired) | done |
 | [#22](https://github.com/sunnat629/holm/issues/22) | holm-platform durable file store and crash tests | 2 | `18-files-fsync-and-processes.md` | todo |
-| [#23](https://github.com/sunnat629/holm/issues/23) | Import from CSV and JSON | 4 | `31-hostile-input-all-or-nothing.md` (lessons 17, 19, 20 retired) | todo |
-| [#24](https://github.com/sunnat629/holm/issues/24) | Plaintext CSV export | 4 | `32-building-output-safely.md` (lessons 17, 19, 20 retired) | todo |
+| [#23](https://github.com/sunnat629/holm/issues/23) | Import from CSV and JSON | 4 | `31-hostile-input-all-or-nothing.md` (lessons 17, 19, 20 retired) | done |
+| [#24](https://github.com/sunnat629/holm/issues/24) | Plaintext CSV export | 4 | `32-building-output-safely.md` (lessons 17, 19, 20 retired) | done |
 | [#25](https://github.com/sunnat629/holm/issues/25) | Fuzzing, property tests, full round trip and docs (2a part) | 2 | `21-fuzzing-structured-inputs.md` | todo |
-| [#35](https://github.com/sunnat629/holm/issues/35) | Std-only CSV and JSON readers and the CSV writer | 4 | `30-parsing-untrusted-text.md` | todo |
-| [#36](https://github.com/sunnat629/holm/issues/36) | holm-cli foundation: terminal prompt, instance lock, init, list, get, gen | 4 | `33-a-cli-without-a-framework.md` | todo |
-| [#37](https://github.com/sunnat629/holm/issues/37) | holm-cli write commands: add, edit, rm, passwd, copy, import, export | 4 | `34-moving-secrets-in-and-out.md` | todo |
-| [#38](https://github.com/sunnat629/holm/issues/38) | holm shell | 4 | `35-a-read-eval-loop-with-a-deadline.md` | todo |
-| [#39](https://github.com/sunnat629/holm/issues/39) | GUI search, import and export; Phase 4 docs | 4 | `36-thin-screens-over-the-core.md` | todo |
+| [#35](https://github.com/sunnat629/holm/issues/35) | Std-only CSV and JSON readers and the CSV writer | 4 | `30-parsing-untrusted-text.md` | done |
+| [#36](https://github.com/sunnat629/holm/issues/36) | holm-cli foundation: terminal prompt, instance lock, init, list, get, gen | 4 | `33-a-cli-without-a-framework.md` | done |
+| [#37](https://github.com/sunnat629/holm/issues/37) | holm-cli write commands: add, edit, rm, passwd, copy, import, export | 4 | `34-moving-secrets-in-and-out.md` | done |
+| [#38](https://github.com/sunnat629/holm/issues/38) | holm shell | 4 | `35-a-read-eval-loop-with-a-deadline.md` | done |
+| [#39](https://github.com/sunnat629/holm/issues/39) | GUI search, import and export; Phase 4 docs | 4 | `36-thin-screens-over-the-core.md` | done |
 
 ## Deferred
 
@@ -54,10 +54,10 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 
 Phase 2a ships the core, the durable store and the fuzzing above. These run in Phase 4 under the Phase 4 plan (lessons 17, 19 and 20 are retired), before `holm-cli`:
 
-- Plan Task 1 (#21, was Phase 2 Task 9): search, filter and sort. Lesson 29.
-- Plan Task 3 (#23, was Phase 2 Task 11): import from CSV and JSON. Lesson 31.
-- Plan Task 4 (#24, was Phase 2 Task 12): plaintext CSV export. Lesson 32.
-- The moved parts of Task 13 (#25): the `import_csv` and `import_json` fuzz targets, `tests/import_props.rs`, the `csv_roundtrip_any_fields` property test, and the export and import half of the full round trip.
+- [x] Plan Task 1 (#21, was Phase 2 Task 9): search, filter and sort. Lesson 29.
+- [x] Plan Task 3 (#23, was Phase 2 Task 11): import from CSV and JSON. Lesson 31.
+- [x] Plan Task 4 (#24, was Phase 2 Task 12): plaintext CSV export. Lesson 32.
+- [x] The moved parts of Task 13 (#25): the `import_csv` and `import_json` fuzz targets, `tests/import_props.rs`, the `csv_roundtrip_any_fields` property test, and the export and import half of the full round trip.
 
 ## Deferred from Phase 3 (macOS walking skeleton)
 
@@ -65,9 +65,9 @@ From the Phase 3 plan's Deferred list and the Task 7 known gaps (`docs/CRYPTO.md
 
 Phase 4
 
-- Search in the GUI (Task 9, #21).
-- Import and export in the GUI (Tasks 11 and 12, #23 and #24).
-- `holm-cli` must take the `holm.lock` single-instance lock before opening a vault (today only `holm-gui` does).
+- [x] Search in the GUI (Task 9, #21). Done in Phase 4 Task 8.
+- [x] Import and export in the GUI (Tasks 11 and 12, #23 and #24). Done in Phase 4 Task 8.
+- [x] `holm-cli` must take the `holm.lock` single-instance lock before opening a vault (today only `holm-gui` does). Done in Phase 4 Task 5.
 
 Phase 5 (platform hardening and GUI polish)
 
@@ -84,6 +84,16 @@ Phase 5 (platform hardening and GUI polish)
 - Crash-atomic `create_new` on FAT and exFAT (today an exclusive-create fallback).
 - Keychain and Touch ID option.
 - Memory locking (`mlock`).
+- Password Show or reveal toggle in the CLI or the GUI: open owner decision.
+- GUI clipboard auto-clear and clear-on-lock, and moving `holm-gui`'s `SystemClipboard` onto `holm_platform::clipboard` (the CLI clears already).
+- Native file dialogs for import and export in the GUI: needs a new crate (`rfd`); the Phase 4 screens take a typed path.
+- GUI encrypted backup button: thin GUI; the CLI has `holm export --backup`.
+- Restore from Trash and empty Trash in the CLI: not in spec section 8.10's command list; the GUI trash screen is Phase 5.
+- Multi-line notes and note bodies typed in the CLI: a hidden prompt reads one line; multi-line text comes in by import or the Phase 5 GUI.
+- `--copy` on Linux and Windows: their clipboards need a process that stays alive; comes with the Phase 5 per-OS work.
+- Windows ACLs on the plaintext export file (today 0600 on Unix only).
+- Show the other item types (crypto, recovery phrase, notes) in the GUI list; today a count line only.
+- Password from a file descriptor for scripts (Phase 6 at the earliest; needs an owner call).
 - OS sleep, screen-lock and logout events.
 - `holm shell`: lock on OS sleep, screen lock and logout (today it locks on idle, `lock` and exit only).
 - Screen-capture exclusion (`with_content_protected`).

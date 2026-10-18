@@ -4,7 +4,8 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use holm_core::item::{Item, ItemData, ItemId};
+use holm_core::item::{ItemId, ItemType};
+use holm_core::search::ItemSummary;
 use holm_core::text::Text;
 
 /// One line of the item list. The title and subtitle are zeroizing text.
@@ -27,25 +28,17 @@ impl fmt::Debug for ItemRow {
     }
 }
 
-/// Builds the rows for the logins among `items`, sorted by title (ignoring case), then
-/// by id. Other item types are not listed yet.
+/// Builds the rows for the logins among `summaries` (from `Session::search`), sorted by
+/// title (ignoring case), then by id. Other item types are not listed here.
 #[must_use]
-pub fn build_rows<'a>(items: impl Iterator<Item = &'a Item>) -> Vec<ItemRow> {
-    let mut rows: Vec<ItemRow> = items
-        .filter_map(|item| {
-            let ItemData::Login { username, urls, .. } = item.data() else {
-                return None;
-            };
-            let subtitle = if !username.is_empty() {
-                username.as_str()
-            } else {
-                urls.first().map_or("", Text::as_str)
-            };
-            Some(ItemRow {
-                id: item.id(),
-                title: Text::new(item.title().to_owned()),
-                subtitle: Text::new(subtitle.to_owned()),
-            })
+pub fn build_rows(summaries: &[ItemSummary<'_>]) -> Vec<ItemRow> {
+    let mut rows: Vec<ItemRow> = summaries
+        .iter()
+        .filter(|s| s.item_type == ItemType::Login)
+        .map(|s| ItemRow {
+            id: s.id,
+            title: Text::new(s.title.to_owned()),
+            subtitle: Text::new(s.subtitle.unwrap_or("").to_owned()),
         })
         .collect();
     rows.sort_by(|a, b| {
@@ -65,7 +58,8 @@ fn cmp_ignoring_case(a: &str, b: &str) -> Ordering {
 mod tests {
     use super::*;
     use holm_core::clock::SystemClock;
-    use holm_core::item::ItemInput;
+    use holm_core::item::{ItemData, ItemInput};
+    use holm_core::search::Query;
     use holm_core::session::Session;
     use holm_core::text::SecretText;
     use holm_crypto::MasterPassword;
@@ -96,7 +90,11 @@ mod tests {
         for i in inputs {
             session.add_item(i).unwrap();
         }
-        build_rows(session.active_items().unwrap())
+        let query = Query {
+            item_type: Some(ItemType::Login),
+            ..Query::default()
+        };
+        build_rows(&session.search(&query).unwrap())
     }
 
     #[test]

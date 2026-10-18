@@ -53,7 +53,8 @@ cargo +nightly-2026-10-12 fuzz run import_json fuzz/corpus/import_json fuzz/seed
 
 ## Long run
 
-All seven targets for 600 s each, weekly and before the Phase 2a security review.
+All seven targets for 600 s each, weekly, before the Phase 2a security review and before the Phase 4 security review
+(all seven targets, including `import_csv` and `import_json`).
 Same commands with `-max_total_time=600`. The manual workflow
 `.github/workflows/fuzz.yml` does the same on GitHub. Fuzzing finds bugs; a clean
 run does not prove there are none.

@@ -5,6 +5,7 @@
 
 pub(crate) mod create;
 pub(crate) mod login_form;
+pub(crate) mod transfer;
 pub(crate) mod unlock;
 pub(crate) mod vault;
 

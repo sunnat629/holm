@@ -354,6 +354,9 @@ impl HolmApp {
                         JobKind::Create => "Creating your vault. This takes a moment.",
                         JobKind::Unlock => "Unlocking. This takes a moment.",
                         JobKind::Add | JobKind::Update | JobKind::Save => "Saving.",
+                        JobKind::PreviewImport => "Reading the file.",
+                        JobKind::Import => "Importing. This takes a moment.",
+                        JobKind::Export => "Exporting. This takes a moment.",
                     });
                     None
                 }
@@ -506,13 +509,14 @@ impl HolmApp {
             result,
             added,
             returned,
+            transfer,
         } = done;
         let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
         {
             Screen::Working { keep, .. } => keep,
             _ => None,
         };
-        if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) {
+        if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) || kind.is_transfer() {
             let mut view = keep.unwrap_or_else(VaultView::new);
             // `tick` skips the idle check while a job runs. Ask now, before the
             // finished job counts as activity, so an idle deadline or a sleep during
@@ -523,6 +527,7 @@ impl HolmApp {
                 self.last_activity = self.ui_clock.monotonic();
             }
             view.on_done(kind, &result, added, returned, &session);
+            view.on_transfer_done(kind, transfer);
             self.screen = Screen::Vault(view);
             self.session = Some(session);
             if expired {
@@ -559,9 +564,15 @@ impl HolmApp {
             }
             // Not reached: item jobs only finish with the vault open, and that case
             // returned above. Kept so the match stays exhaustive and fails closed.
-            (JobKind::Add | JobKind::Update | JobKind::Save, Err(_)) => {
-                Screen::Fatal(messages::WORKER_LOST)
-            }
+            (
+                JobKind::Add
+                | JobKind::Update
+                | JobKind::Save
+                | JobKind::PreviewImport
+                | JobKind::Import
+                | JobKind::Export,
+                Err(_),
+            ) => Screen::Fatal(messages::WORKER_LOST),
         };
         self.session = Some(session);
     }

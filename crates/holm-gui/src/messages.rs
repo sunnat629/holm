@@ -11,6 +11,7 @@ use std::time::Duration;
 use holm_core::body::BodyError;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::import::ImportError;
 use holm_core::rules::{Field, FieldError};
 use holm_core::store::StoreError;
 use holm_core::throttle::ThrottleStatus;
@@ -99,9 +100,49 @@ pub const PASTE_TOO_LONG: &str = "That's too long to paste here, so nothing was 
 pub const UNSAVED_ON_LOCK: &str =
     "Some changes are not saved yet. Locking now without saving discards them.";
 
+/// No file at the typed path, so nothing was read.
+pub const IMPORT_NOT_FOUND: &str = "Holm found no file at that path. Check the path and try again.";
+/// The file could not be read.
+pub const IMPORT_READ_FAILED: &str = "Holm could not read that file. Nothing was imported.";
+/// The file is bigger than the import limit.
+pub const IMPORT_TOO_BIG: &str = "That file is too big to import. The limit is 16 MiB.";
+/// The file is not text Holm can read.
+pub const IMPORT_NOT_TEXT: &str =
+    "That file is not plain text in UTF-8, so Holm cannot read it. Nothing was imported.";
+/// The file holds nothing.
+pub const IMPORT_EMPTY: &str = "That file is empty. Nothing was imported.";
+/// The file's columns are not ones Holm knows.
+pub const IMPORT_COLUMNS: &str =
+    "That file's columns are not ones Holm knows how to import. Nothing was imported.";
+/// The file has more columns or rows than the import limit.
+pub const IMPORT_TOO_MANY: &str =
+    "That file has too many columns or rows to import. Nothing was imported.";
+/// The file's text is broken.
+pub const IMPORT_MALFORMED: &str =
+    "That file is damaged or not a CSV or JSON export. Nothing was imported.";
+/// The import would not fit, so nothing was added.
+pub const IMPORT_NOT_ADDED: &str =
+    "These items would not fit in the vault, so nothing was imported.";
+/// The import was added in memory, but saving failed.
+pub const IMPORT_UNSAVED: &str = "The items were added but could not be saved yet. Save again, or lock and try the import again.";
+/// The import failed for another reason.
+pub const IMPORT_FAILED: &str = "The import did not finish.";
+/// The export file already exists, so nothing was written.
+pub const EXPORT_EXISTS: &str =
+    "A file already exists at that path. Holm never overwrites a file. Pick a new name.";
+/// The export file could not be written.
+pub const EXPORT_WRITE_FAILED: &str =
+    "Holm could not write the file there. Check the folder and try again.";
+/// The password typed to confirm the export is wrong.
+pub const EXPORT_WRONG_PASSWORD: &str = "That password is wrong, so nothing was exported.";
+/// Too many wrong passwords in a row.
+pub const EXPORT_THROTTLED: &str = "Too many wrong passwords. Wait a little and try again.";
+/// The export failed for another reason.
+pub const EXPORT_FAILED: &str = "The export did not finish. No file was written.";
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 34] = [
+const ALL: [&str; 50] = [
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -136,6 +177,22 @@ const ALL: [&str; 34] = [
     COPY_FAILED,
     PASTE_TOO_LONG,
     UNSAVED_ON_LOCK,
+    IMPORT_NOT_FOUND,
+    IMPORT_READ_FAILED,
+    IMPORT_TOO_BIG,
+    IMPORT_NOT_TEXT,
+    IMPORT_EMPTY,
+    IMPORT_COLUMNS,
+    IMPORT_TOO_MANY,
+    IMPORT_MALFORMED,
+    IMPORT_NOT_ADDED,
+    IMPORT_UNSAVED,
+    IMPORT_FAILED,
+    EXPORT_EXISTS,
+    EXPORT_WRITE_FAILED,
+    EXPORT_WRONG_PASSWORD,
+    EXPORT_THROTTLED,
+    EXPORT_FAILED,
 ];
 
 /// Why the vault locked.
@@ -214,6 +271,40 @@ pub fn save_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
         _ => NOT_SAVED,
+    }
+}
+
+/// The line for a file that did not parse. Names no row, column or value.
+#[must_use]
+pub fn import_parse_error(e: &ImportError) -> &'static str {
+    match e {
+        ImportError::TooLarge => IMPORT_TOO_BIG,
+        ImportError::NotUtf8 => IMPORT_NOT_TEXT,
+        ImportError::Empty => IMPORT_EMPTY,
+        ImportError::UnknownColumns { .. } | ImportError::DuplicateColumn => IMPORT_COLUMNS,
+        ImportError::TooManyColumns | ImportError::TooManyRows => IMPORT_TOO_MANY,
+        ImportError::Malformed { .. } => IMPORT_MALFORMED,
+    }
+}
+
+/// The line for a failed import step. Only a vault too big to save, or too many items,
+/// leaves nothing added; any other failure leaves the items in memory but unsaved.
+#[must_use]
+pub fn import_apply_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::Vault(VaultError::TooLargeToSave) | CoreError::TooManyItems => IMPORT_NOT_ADDED,
+        CoreError::Store(_) | CoreError::Vault(_) => IMPORT_UNSAVED,
+        _ => IMPORT_FAILED,
+    }
+}
+
+/// The line for a failed export.
+#[must_use]
+pub fn export_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::WrongPassword => EXPORT_WRONG_PASSWORD,
+        CoreError::Throttled { .. } => EXPORT_THROTTLED,
+        _ => EXPORT_FAILED,
     }
 }
 
@@ -391,6 +482,19 @@ mod tests {
         let denied = CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied));
         assert_eq!(save_error(&denied), DIR_PERMISSIONS);
         assert_eq!(save_error(&CoreError::Locked), NOT_SAVED);
+        assert_eq!(import_parse_error(&ImportError::Empty), IMPORT_EMPTY);
+        assert_eq!(
+            import_apply_error(&CoreError::TooManyItems),
+            IMPORT_NOT_ADDED
+        );
+        assert_eq!(
+            import_apply_error(&CoreError::Store(StoreError::Io(ErrorKind::Other))),
+            IMPORT_UNSAVED
+        );
+        assert_eq!(
+            export_error(&CoreError::WrongPassword),
+            EXPORT_WRONG_PASSWORD
+        );
     }
 
     #[test]

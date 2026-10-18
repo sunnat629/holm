@@ -455,6 +455,25 @@ Known gaps:
 - Command arguments (titles, usernames, web addresses, paths) are copied into plain
   `String`s by the parser and are not wiped. They are public fields, never secrets.
 
+## Import and export (Phase 4)
+
+- Import reads CSV and JSON with Holm's own std-only parsers. Cells land in wiping
+  buffers that are sized once and never reallocate. The file is read through a capped
+  reader (16 MiB, regular files only, no FIFO, no growing file). A bad file fails
+  whole, with fixed text and a line number, never a cell value. Rows with problems are
+  skipped and reported by row number only.
+- Export writes plaintext CSV: every password, in the clear. The file is created new
+  (never over an existing file or through a symlink) with mode 0600 on Unix, and a
+  failed write removes the partial file. The master password is asked again first and
+  `EXPORT_WARNING` is shown before any byte is written.
+- Export does not escape cells that start with `=`, `+`, `-` or `@`. Escaping would
+  change the stored value, so a re-import would not match byte for byte. The warning
+  names spreadsheets instead, because that is where formula injection happens.
+- The GUI takes the file path as typed text (no file dialog, so no new crate). The path
+  sits in a plain egui `TextEdit`, so it stays in that widget's undo history until the
+  app closes. It is a display field, not a secret. Windows file permissions on the
+  export file are Phase 5.
+
 ## Not claimed
 
 - Memory is not fully wiped and not locked; see above.
