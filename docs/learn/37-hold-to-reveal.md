@@ -11,8 +11,9 @@ while the mouse button is held on it. The safest state to store is none at all.
 Every password box (create, unlock, export re-entry, login form) now has a small eye at the
 right end, drawn in `crates/holm-gui/src/widgets/secret_field.rs`. While you hold the mouse
 down on it, the box paints the secret as text instead of the 12 fixed dots. Let go, drag off
-it, switch window (Cmd+Tab) or lock, and the dots come back at once. Space works on the
-focused eye for keyboard users.
+it, switch window (Cmd+Tab) or lock, and the dots come back at once. Space held on the
+keyboard-focused eye also reveals; it never types a space into the secret, and typing
+while the eye has focus moves focus back to the field.
 
 ## Rust ideas in this task
 
@@ -31,8 +32,12 @@ keeps a `show` state you must clear on every exit path. Here the "state" is the 
 
 ### 2. `Response::is_pointer_button_down_on`
 
-This stays true while a drag continues outside the widget, so Holm also checks
-`contains_pointer()`. Without it, dragging off the eye would keep the text visible.
+It is true while egui still tracks the press as a click or a drag on the widget. A
+click-only widget (`Sense::click()`) loses that after `max_click_duration` (0.8 s) or a
+move of more than 6 pt, so a long hold would end early. The eye therefore uses
+`Sense::click_and_drag()`, which keeps the press alive for the whole hold. A drag keeps
+it true even when the pointer leaves the widget, so Holm also checks `contains_pointer()`.
+Without it, dragging off the eye would keep the text visible.
 
 ### 3. Painting a galley versus a TextEdit
 

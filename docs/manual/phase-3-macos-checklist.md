@@ -131,7 +131,7 @@ After quitting
 - [ ] Activity Monitor, Network tab: Holm (`holm-gui`) sent and received 0 bytes.
 - [ ] Hold-to-reveal (#40): on the unlock screen type a fake password, hold the eye and the
   text shows; release and 12 dots return. Hold the eye, press Cmd+Tab while still holding:
-  the text is hidden. Drag off the eye while holding: hidden.
+  the text is hidden. Drag off the eye while holding: hidden. Hold it for 5+ s: still shown. Tab to the eye, hold Space: shown, and the password length does not change.
 
 Clean up: delete the fake-data vault with `rm -r "$(dirname "$V")"` for a throwaway one, or the `Holm` folder at the default path if it holds only fake data.
 

@@ -76,7 +76,9 @@ pub fn secret_field(
     let eye_rect = eye_rect(rect);
     let eye_id = ui.make_persistent_id((id_salt, "eye"));
     let eye = ui
-        .interact(eye_rect, eye_id, Sense::click())
+        // click_and_drag, not click: a click-only press is dropped by egui after 0.8 s or a
+        // 6 pt move, which would end the hold early.
+        .interact(eye_rect, eye_id, Sense::click_and_drag())
         .on_hover_cursor(CursorIcon::Default);
     let window_focused = ui.input(|i| i.focused && i.viewport().focused != Some(false));
     let held_by_pointer =
@@ -84,8 +86,25 @@ pub fn secret_field(
     let held_by_key = eye.has_focus() && window_focused && ui.input(|i| i.key_down(Key::Space));
     let revealing = held_by_pointer || held_by_key;
 
-    if response.clicked() || eye.is_pointer_button_down_on() || eye.clicked() {
-        // Holding the eye must not take typing focus away from the field.
+    // Holding the eye must not take typing focus away from the field. Only a pointer press
+    // moves focus; a keyboard "click" (Space or Enter on the focused eye) must not, or the
+    // same frame's Space text would be typed into the secret.
+    let typed_while_eye_focused = eye.has_focus()
+        && ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(e, Event::Text(t) if t != " ")
+                    || matches!(
+                        e,
+                        Event::Key {
+                            key: Key::Backspace,
+                            pressed: true,
+                            ..
+                        }
+                    )
+            })
+        });
+    if response.clicked() || eye.is_pointer_button_down_on() || typed_while_eye_focused {
+        // Typing while the eye has focus hands focus to the field instead of dropping keys.
         response.request_focus();
     }
 
@@ -656,5 +675,96 @@ mod tests {
                 .any(|t| t.contains("EXAMPLE"))
         });
         assert!(!leaked);
+    }
+
+    #[test]
+    fn eye_long_hold_keeps_reveal() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        press_eye(&mut harness);
+        assert!(harness.state().last.revealing);
+        // 140 steps of 0.25 s: far past egui's 0.8 s click timeout.
+        for _ in 0..140 {
+            harness.step();
+            assert!(harness.state().last.revealing);
+        }
+        assert_eq!(secret_texts(&harness), 1);
+        assert_eq!(dots(&harness), 0);
+    }
+
+    #[test]
+    fn eye_small_drag_off_hides() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        let eye = harness
+            .get_all_by_role_and_label(Role::Button, EYE_LABEL)
+            .next()
+            .expect("first eye")
+            .rect();
+        let inside = Pos2::new(eye.min.x + 2.0, eye.center().y);
+        harness.hover_at(inside);
+        harness.step();
+        harness.drag_at(inside);
+        harness.step();
+        assert!(harness.state().last.revealing);
+        // 5 pt left: out of the eye, but under egui's 6 pt click-drag threshold.
+        harness.hover_at(Pos2::new(inside.x - 5.0, inside.y));
+        harness.step();
+        assert!(!harness.state().last.revealing);
+        assert_eq!(secret_texts(&harness), 0);
+        assert_eq!(dots(&harness), 12);
+    }
+
+    fn space(harness: &mut Harness<'static, Form>, pressed: bool, repeat: bool) {
+        harness.event(Event::Key {
+            key: Key::Space,
+            physical_key: None,
+            pressed,
+            repeat,
+            modifiers: Modifiers::NONE,
+        });
+        if pressed {
+            harness.event(Event::Text(" ".to_owned()));
+        }
+        harness.step();
+    }
+
+    fn focus_eye(harness: &mut Harness<'static, Form>) {
+        harness
+            .get_all_by_role_and_label(Role::Button, EYE_LABEL)
+            .next()
+            .expect("first eye")
+            .focus();
+        harness.run();
+    }
+
+    #[test]
+    fn space_on_focused_eye_reveals_and_never_types() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        assert!(!harness.state().last.has_focus);
+        space(&mut harness, true, false);
+        assert!(harness.state().last.revealing);
+        space(&mut harness, true, true);
+        assert!(harness.state().last.revealing);
+        assert_eq!(harness.state().first.char_count(), 10);
+        space(&mut harness, false, false);
+        harness.run();
+        assert!(!harness.state().last.revealing);
+        assert_eq!(harness.state().first.char_count(), 10);
+        assert_eq!(secret_texts(&harness), 0);
+    }
+
+    #[test]
+    fn typing_with_eye_focused_goes_to_the_field() {
+        let mut harness = harness();
+        type_secret(&mut harness);
+        focus_eye(&mut harness);
+        harness.event(Event::Text("x".to_owned()));
+        harness.run();
+        assert_eq!(harness.state().first.char_count(), 11);
+        assert!(harness.state().last.has_focus);
+        assert!(harness.state().second.is_empty());
     }
 }
