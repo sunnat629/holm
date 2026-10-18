@@ -462,7 +462,11 @@ pub(crate) fn username_with(
     spec: &UsernameSpec,
 ) -> Result<Text, GeneratorError> {
     let list = wordlist();
-    let mut out = String::new();
+    // Pre-sized so the buffer never grows (a grow would leave an unwiped copy behind).
+    let longest = list.iter().map(|w| w.len()).max().unwrap_or(0);
+    let mut out: Zeroizing<String> = Zeroizing::new(String::with_capacity(
+        usize::from(spec.words) * longest + usize::from(spec.digits),
+    ));
     for _ in 0..spec.words {
         out.push_str(list[index_below(rng, list.len())?]);
     }
@@ -470,7 +474,7 @@ pub(crate) fn username_with(
         let d = u8::try_from(index_below(rng, 10)?).map_err(|_| GeneratorError::Rng)?;
         out.push(char::from(b'0' + d));
     }
-    Ok(Text::new(out))
+    Ok(Text::new(core::mem::take(&mut *out)))
 }
 
 #[cfg(test)]
