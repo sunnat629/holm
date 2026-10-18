@@ -93,6 +93,9 @@ pub(crate) struct MemStore {
     pub(crate) fail_after_write: Option<StoreError>,
     /// Makes every `read` fail.
     pub(crate) fail_reads: bool,
+    /// Sets [`MemStore::fail_reads`] when a `replace` fails, so the read-back after
+    /// a failed write fails while the read before it worked.
+    pub(crate) fail_reads_after_failed_replace: bool,
     /// Makes every `remove_stale_temps` fail.
     pub(crate) fail_temp_cleanup: bool,
     /// How many times `remove_stale_temps` was called.
@@ -127,12 +130,17 @@ impl VaultStore for MemStore {
     }
 
     fn replace(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
-        self.check_write(bytes)?;
-        self.bytes = Some(bytes.to_vec());
-        match self.fail_after_write.take() {
-            Some(e) => Err(e),
-            None => Ok(()),
+        let result = self.check_write(bytes).and_then(|()| {
+            self.bytes = Some(bytes.to_vec());
+            match self.fail_after_write.take() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }
+        });
+        if result.is_err() && self.fail_reads_after_failed_replace {
+            self.fail_reads = true;
         }
+        result
     }
 
     fn create_new(&mut self, bytes: &[u8]) -> Result<(), StoreError> {

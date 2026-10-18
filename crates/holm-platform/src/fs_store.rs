@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! [`FsStore`]: the vault as one file on disk, with durable, crash-safe writes.
 //!
 //! A save never writes into the vault file itself. It writes a new temp file in the
@@ -120,9 +121,9 @@ const EINVAL: i32 = 22;
 
 /// `O_NONBLOCK` for [`open_for_read`], or `None` where its value is not known here
 /// (std only, no `libc`). It makes opening a FIFO return at once instead of waiting
-/// for a writer. A regular file ignores it.
+/// for a writer. A regular file ignores it. [`crate::lock`] uses it too.
 #[cfg(unix)]
-const O_NONBLOCK: Option<i32> = if cfg!(any(
+pub(crate) const O_NONBLOCK: Option<i32> = if cfg!(any(
     target_vendor = "apple",
     target_os = "freebsd",
     target_os = "openbsd",
@@ -141,6 +142,36 @@ const O_NONBLOCK: Option<i32> = if cfg!(any(
     )
 )) {
     Some(0o4000)
+} else {
+    None
+};
+
+/// `O_NOFOLLOW`, or `None` where its value is not known here (std only, no `libc`).
+/// With it, opening a path whose last part is a symlink fails instead of following
+/// it. [`crate::lock`] adds it to the lock file's open.
+#[cfg(unix)]
+pub(crate) const O_NOFOLLOW: Option<i32> = if cfg!(any(
+    target_vendor = "apple",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+)) {
+    Some(0x0100)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(target_arch = "x86_64", target_arch = "x86")
+)) {
+    Some(0o400000)
+} else if cfg!(all(
+    any(target_os = "linux", target_os = "android"),
+    any(
+        target_arch = "aarch64",
+        target_arch = "arm",
+        target_arch = "riscv64"
+    )
+)) {
+    Some(0o100000)
 } else {
     None
 };
@@ -521,11 +552,7 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let fifo = dir.path().join("fifo");
-        let made = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .unwrap();
-        assert!(made.success());
+        crate::test_support::make_fifo(&fifo);
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let opened = open_for_read(&fifo).map(|f| f.metadata().unwrap().is_file());

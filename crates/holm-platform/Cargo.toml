@@ -7,12 +7,28 @@ rust-version.workspace = true
 repository.workspace = true
 description = "Holm platform code: the vault file on disk, with durable writes"
 
-[lints]
-workspace = true
+# The workspace lints, except `unsafe_code` is `deny` here, not `forbid`, so the one
+# module behind `gui-window` can allow it. Every other module carries its own
+# `#![forbid(unsafe_code)]`, because a `--workspace` build turns the feature on. Keep the rest in step with [workspace.lints.rust].
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
+[features]
+default = []
+# The window's minimised state, read from AppKit (macOS only; the deps are target-gated,
+# so elsewhere this feature compiles nothing). For holm-gui. holm-cli does not request it; in a `--workspace` build, feature
+# unification turns it on for every member.
+gui-window = ["dep:raw-window-handle", "dep:objc2", "dep:objc2-app-kit"]
 
 [dependencies]
 holm-core.workspace = true
 holm-crypto.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+raw-window-handle = { workspace = true, optional = true }
+objc2 = { workspace = true, optional = true }
+objc2-app-kit = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

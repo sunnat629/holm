@@ -40,6 +40,7 @@ One line per deferral. Each names the phase or trigger that closes it. Reasons a
 - `--all-features` release guard (`test-vectors` and `fuzzing` must not ship). Closes in Phase 6.
 - Linux and Windows are untested until Actions returns. Trigger: Actions re-enabled.
 - Upstream `chacha20` does not wipe its HChaCha20 subkey. Track an upstream issue or PR; revisit on each chacha20 bump.
+- NFD stale-temp: a stale temp file left by a name that differs only by Unicode normalisation (NFD) is not found by the stale-temp sweep. Trigger: Phase 5 platform hardening.
 - `mlock` for Argon2 memory and keys. Closes in the `holm-platform` phase.
 - Remove the oracle-only `cargo audit` ignores (RUSTSEC-2026-0367, -0368, -0369, zip 8.6.0). Trigger: `libsodium-sys-stable` moves to zip 9.
 - Optional: a separate `deny.toml` for `fuzz/` and `oracle/`. Trigger: if their dependency graphs drift from the product's.
@@ -52,3 +53,57 @@ Phase 2a ships the core, the durable store and the fuzzing above. These keep the
 - Task 11 (#23): import from CSV and JSON. Lesson 19.
 - Task 12 (#24): plaintext CSV export. Lesson 20.
 - The moved parts of Task 13 (#25): the `import_csv` and `import_json` fuzz targets, `tests/import_props.rs`, the `csv_roundtrip_any_fields` property test, and the export and import half of the full round trip.
+
+## Deferred from Phase 3 (macOS walking skeleton)
+
+From the Phase 3 plan's Deferred list and the Task 7 known gaps (`docs/CRYPTO.md`, "The macOS app (Phase 3)"). Phase 3 ships the single-instance lock and the 30 s idle warning; they are not deferred.
+
+Phase 4
+
+- Search in the GUI (Task 9, #21).
+- Import and export in the GUI (Tasks 11 and 12, #23 and #24).
+- `holm-cli` must take the `holm.lock` single-instance lock before opening a vault (today only `holm-gui` does).
+
+Phase 5 (platform hardening and GUI polish)
+
+- Clipboard auto-clear and clear-on-lock. Until then a copied password stays on the clipboard and macOS Universal Clipboard (Handoff) can carry it to other devices; the Copy button says so.
+- macOS Secure Event Input while a password field has focus.
+- Vault folder owner and ACL check (today only the mode is checked).
+- Paste of a copied password into a plain field (Title, Username, Web address): refuse or warn (Task 5 M1).
+- Strip a foreign `Event::Paste` (Task 5 M2).
+- Clear egui `TextEdit` undo memory after a lock (Task 6 M9).
+- IME preedit strings while a SecretField has focus.
+- Existing vault folder that others can read (0755, the owner's has an old `harbor.vault`) is accepted and never tightened: warn or tighten.
+- After a minimise lock the last vault frame stays painted and in the Dock thumbnail: paint a locked frame before the window hides (Task 6 M3).
+- Clipboard clear on lock and the Universal Clipboard / Handoff exposure check (see first item).
+- Crash-atomic `create_new` on FAT and exFAT (today an exclusive-create fallback).
+- Keychain and Touch ID option.
+- Memory locking (`mlock`).
+- OS sleep, screen-lock and logout events.
+- Screen-capture exclusion (`with_content_protected`).
+- Per-OS durable save.
+- Windows and Linux GUI (winit `x11` and `wayland` features), and compiling the Linux and Windows builds at all (nothing compiles them while Actions is off).
+- A change-password screen that handles `PasswordChangeUncertain` (the session may already hold the new keys; say so, don't just report failure).
+- The three-pane layout, categories, trash, settings, generator UI and the other 16 screens.
+- Recovery phrase, crypto address and secure note items; notes on logins (an edit keeps existing notes unchanged until then).
+- Icons (Phosphor subset).
+- Latin subsetting of the fonts.
+- The spec §8.0 last-used vault path (Phase 3 uses the default path or `--vault`).
+- Revealed text: drop egui's galley and AccessKit copies sooner, if egui allows it (F11).
+- After a save error the new item's id is not selected: find it by comparing row ids before and after the rebuild (Task 4 M-1).
+- Non-store errors (`TooManyItems`, RNG failure, `NotFound`) get the "change is open in Holm" copy though nothing was committed: give them their own text (Task 4 M-2).
+- Re-hide and countdown repaint fire up to 1 s late: reuse `until_next_second` (Task 4 M-3; same for the lock warning countdown, Task 6 M8).
+- Add the missing `field_error_messages_have_no_values` test and the reveal tests (not selectable, hides on leaving the item or on Edit) (Task 4 M-9, M-10).
+- `char_limit(MAX_LINE_BYTES / 4)` cuts a long paste at 256 chars while the core allows 1024 bytes: drop it or size it in bytes (Task 4 M-11).
+- Prompt before an open edit form is discarded by a row click or New login (Task 4 M-12).
+- Manual lock drops typed, unsubmitted edits without asking: ask or note "discarded" when the form buffers are not empty (Task 6 M1).
+- `record_activity` counts every event, including focus loss and AccessKit requests: count user-input events only (Task 6 M2).
+- Cmd+L pressed during a running job is lost: add a pending-lock flag that `finish` honours (Task 6 M3).
+- "Save and lock" saves on the UI thread, so a hung volume freezes the window and blocks the idle lock: send it through `Job::Save` with a lock-after flag (Task 6 M4).
+- Error-path tests for `LockError::Io` and a failed worker spawn; `PermissionDenied` copy is shown for every EACCES (Task 3 M8, M9).
+- Quitting mid-Argon2 drops the instance lock while the worker owns the session; harmless (`create_new` never overwrites), revisit with the lock work (Task 3 M10).
+
+Phase 6 (release)
+
+- Clear the 206 `cargo vet` exemptions noted `gui-only, pre-release; audit or replace before Phase 6`, and renew or drop the 49 GUI `trusted` entries that end 2026-12-31.
+- Code signing and notarisation (owner approval).
