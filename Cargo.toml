@@ -13,6 +13,8 @@ repository = "https://github.com/sunnat629/holm"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# cargo-fuzz sets `--cfg fuzzing`; holm-core checks it to forbid its `fuzzing` feature elsewhere.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.dependencies]
 # Internal crates

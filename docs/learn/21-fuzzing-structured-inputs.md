@@ -45,7 +45,14 @@ pub mod fuzzing;
 
 `holm_core::fuzzing::open_with_kek` opens a vault with a raw key and no Argon2. That makes one open take microseconds instead of a second, which a fuzzer needs. It is also exactly the shortcut an attacker would want inside a real build, because it skips the password policy and the cost. So the module only exists when `cfg(test)` is on (our own unit tests) or when someone asks for the feature. Only `fuzz/Cargo.toml` does: `holm-core = { path = "...", features = ["fuzzing"] }`.
 
-Features are additive and unify across a build: if any crate in one build turns `fuzzing` on, everyone in that build gets it. That is why `fuzz/` is its own workspace, and why Phase 6 adds a release guard that fails if `fuzzing` or `test-vectors` is on. `scripts/ci-local.sh` lints the feature in its own `clippy-fuzzing` gate, because no other gate compiles it.
+Features are additive and unify across a build: if any crate in one build turns `fuzzing` on, everyone in that build gets it. That is why `fuzz/` is its own workspace. It is also why the feature cannot build on its own: cargo-fuzz passes `--cfg fuzzing` to rustc, and holm-core refuses the feature without it:
+
+```rust
+#[cfg(all(feature = "fuzzing", not(fuzzing)))]
+compile_error!("the fuzzing feature is only for cargo-fuzz builds (needs --cfg fuzzing)");
+```
+
+A feature is something any crate in the graph can ask for, but a `--cfg` comes only from whoever runs the build. So a stray `features = ["fuzzing"]` or `--all-features` stops the build instead of shipping the shortcut. The workspace declares `cfg(fuzzing)` under `unexpected_cfgs` so rustc does not warn about an unknown name. `scripts/ci-local.sh` proves the guard with its `fuzzing-guard` gate (a plain `cargo check --features fuzzing` must fail on that message) and lints the module in `clippy-fuzzing` with `RUSTFLAGS="--cfg fuzzing"`.
 
 In Kotlin you'd put the helper in a `testFixtures` source set. A Cargo feature is closer to a build flag that changes the library itself, which is why it needs the warning comment.
 

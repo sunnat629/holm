@@ -75,6 +75,11 @@ pub mod body;
 pub mod category;
 pub mod clock;
 pub mod envelope;
+// The `fuzzing` feature seals and opens vaults with a raw KEK and no Argon2. It builds
+// only under cargo-fuzz, which sets `--cfg fuzzing`, so no normal or `--all-features`
+// build can ship it. scripts/ci-local.sh (fuzzing-guard) proves this still fails.
+#[cfg(all(feature = "fuzzing", not(fuzzing)))]
+compile_error!("the fuzzing feature is only for cargo-fuzz builds (needs --cfg fuzzing)");
 pub mod error;
 pub mod format;
 // Test-only API for the fuzz targets. Absent from a normal build; see the

@@ -22,7 +22,9 @@ cargo install --locked cargo-fuzz --version 0.13.2
 
 `open_fixed_key` skips Argon2 through `holm_core::fuzzing`, which exists only with
 holm-core's `fuzzing` feature. Only this workspace turns it on; it must never be
-enabled in a shipping build.
+enabled in a shipping build. The feature also needs `--cfg fuzzing`, which cargo-fuzz
+sets by default: any other build with the feature on stops with a `compile_error!`
+(do not pass `--no-cfg-fuzzing`).
 
 The seeds for the two body targets are written by an ignored test. Re-run it after
 a change to the body or the envelope (the sealed seeds use fresh nonces, so the

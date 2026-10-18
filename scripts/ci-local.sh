@@ -106,8 +106,28 @@ wordlist_gate() {
 gate wordlist wordlist_gate
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
+# holm-core's `fuzzing` feature (seal and open with a raw KEK, no Argon2) only builds with
+# `--cfg fuzzing`, which cargo-fuzz sets by default. A normal build that turns the feature
+# on must stop with holm-core's compile_error!, and this gate proves it does.
+FUZZING_GUARD_MSG="the fuzzing feature is only for cargo-fuzz builds"
+fuzzing_guard_gate() {
+  local out
+  # Clear inherited RUSTFLAGS, so a shell that already sets --cfg fuzzing cannot hide a failure.
+  if out=$(env -u RUSTFLAGS -u CARGO_ENCODED_RUSTFLAGS cargo check -p holm-core --features fuzzing --locked 2>&1); then
+    echo "holm-core built with --features fuzzing and no --cfg fuzzing" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -qF "$FUZZING_GUARD_MSG" || {
+    printf '%s\n' "$out" >&2
+    echo "the build failed, but not on the fuzzing guard" >&2
+    return 1
+  }
+}
+gate fuzzing-guard fuzzing_guard_gate
 # No other gate compiles holm-core's `fuzzing` module (test-only API for fuzz/) with clippy.
-gate clippy-fuzzing cargo clippy -p holm-core --features fuzzing --all-targets --locked -- -D warnings
+# Its own target dir, so the changed RUSTFLAGS do not force the other gates to rebuild.
+gate clippy-fuzzing env RUSTFLAGS="--cfg fuzzing" CARGO_TARGET_DIR=target/cfg-fuzzing \
+  cargo clippy -p holm-core --features fuzzing --all-targets --locked -- -D warnings
 gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit

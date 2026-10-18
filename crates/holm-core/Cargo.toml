@@ -13,7 +13,8 @@ workspace = true
 [features]
 # Exposes `holm_core::fuzzing`: vault files sealed and opened with a raw KEK,
 # no Argon2 and a fixed salt. Only the test-only `fuzz/` workspace turns this
-# on. Never enable it in a shipping build.
+# on. Never enable it in a shipping build: without `--cfg fuzzing` (set by
+# cargo-fuzz) the crate stops with a compile_error!.
 fuzzing = []
 
 [dependencies]
