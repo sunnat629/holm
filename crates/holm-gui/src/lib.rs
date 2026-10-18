@@ -11,3 +11,6 @@
 
 #[cfg(target_os = "macos")]
 pub mod fonts;
+pub mod secret_input;
+#[cfg(target_os = "macos")]
+pub mod widgets;

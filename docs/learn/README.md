@@ -29,6 +29,7 @@ security, three exercises, and what to read next in
 | 18 | [Files, fsync and processes](18-files-fsync-and-processes.md): `OpenOptions` with `create_new` and `mode`, `#[cfg(unix)]`, why write-sync-rename-sync survives a crash, checking the file you opened, and a crash test that runs itself as a child process. |
 | 21 | [Fuzzing structured inputs](21-fuzzing-structured-inputs.md): `#[derive(Arbitrary)]` so the fuzzer builds typed inputs, a test-only Cargo feature and why it must never ship, proving an allocation bound with `-malloc_limit_mb`, property tests that generate only valid data, and what an end-to-end test proves that unit tests do not. |
 | 22 | [A GUI crate and its supply chain](22-a-gui-crate-and-its-supply-chain.md): a library and a binary in one crate, macOS-only dependencies, why eframe's feature list is short, fonts built in with `include_bytes!`, a single-instance lock with `File::try_lock`, and `deny` targets plus vet imports, trust and exemptions for a big new graph. |
+| 23 | [A password widget that wipes](23-a-password-widget-that-wipes.md): why `TextEdit` is not for secrets, a `Vec` that never grows, `std::mem::replace` to move a secret out without a copy, reading raw input events, painting dots instead of text, and testing a widget that has no value. |
 
 ## Side tracks
 
