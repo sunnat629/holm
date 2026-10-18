@@ -222,3 +222,47 @@ fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         }
     }
 }
+
+/// A fresh vault, unlocked headless, standing on the vault screen.
+fn open_vault(dir: &Path) -> Harness<'static, HolmApp> {
+    common::make_vault(dir, PASSWORD);
+    let (app, _clock) = test_app_with_clipboard(dir, Box::new(FakeClipboard::default()));
+    let mut harness = common::harness(app);
+    harness.run();
+    try_unlock(&mut harness, PASSWORD);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    harness
+}
+
+/// The toolbar buttons today. A later task adds "Back up" to this list.
+const TOOLBAR_LABELS: [&str; 4] = ["Lock", "Import...", "Export...", "New login"];
+
+#[test]
+fn toolbar_is_one_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    let tops: Vec<f32> = TOOLBAR_LABELS
+        .iter()
+        .map(|label| harness.get_by_label(label).rect().min.y)
+        .collect();
+    for top in &tops {
+        assert!(
+            (top - tops[0]).abs() <= 2.0,
+            "toolbar buttons are not on one row: {tops:?}"
+        );
+    }
+}
+
+#[test]
+fn no_holm_heading_in_toolbar() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    assert_eq!(harness.query_all_by_label("Holm").count(), 0);
+}
+
+#[test]
+fn new_login_button_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    assert_eq!(harness.query_all_by_label("New login").count(), 1);
+}
