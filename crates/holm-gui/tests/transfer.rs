@@ -15,12 +15,12 @@ use common::{
 use eframe::egui::{Event, Key, accesskit::Role};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use holm_gui::app::{HolmApp, ScreenKind};
-use holm_gui::file_dialog::{FileDialog, NoDialog};
 use holm_core::clock::SystemClock;
 use holm_core::search::Query;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
+use holm_gui::app::{HolmApp, ScreenKind};
+use holm_gui::file_dialog::{FileDialog, NoDialog};
 use holm_gui::messages;
 use holm_platform::fs_store::FsStore;
 
@@ -698,8 +698,12 @@ fn start_backup(harness: &mut Harness<'static, HolmApp>, path: &Path) {
 }
 
 fn open_backup(path: &Path) -> Session<FsStore> {
-    let mut copy = Session::new(FsStore::new(path.to_path_buf()), Box::new(SystemClock::new()));
-    copy.unlock(&MasterPassword::new(PASSWORD.to_owned())).unwrap();
+    let mut copy = Session::new(
+        FsStore::new(path.to_path_buf()),
+        Box::new(SystemClock::new()),
+    );
+    copy.unlock(&MasterPassword::new(PASSWORD.to_owned()))
+        .unwrap();
     copy
 }
 

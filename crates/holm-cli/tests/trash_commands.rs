@@ -9,11 +9,23 @@ use common::{FakeTerminal, Kind, PW, init, run, session, vault_dir};
 use holm_core::search::{Query, View};
 
 fn ok(ran: &common::Ran) {
-    assert_eq!(ran.code, ExitCode::SUCCESS, "out: {}\nerr: {}", ran.out, ran.err);
+    assert_eq!(
+        ran.code,
+        ExitCode::SUCCESS,
+        "out: {}\nerr: {}",
+        ran.out,
+        ran.err
+    );
 }
 
 fn failed(ran: &common::Ran) {
-    assert_eq!(ran.code, ExitCode::FAILURE, "out: {}\nerr: {}", ran.out, ran.err);
+    assert_eq!(
+        ran.code,
+        ExitCode::FAILURE,
+        "out: {}\nerr: {}",
+        ran.out,
+        ran.err
+    );
 }
 
 /// Adds a login called `title`; returns its 8-hex prefix.

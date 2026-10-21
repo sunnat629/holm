@@ -385,10 +385,12 @@ pub(crate) fn restore_in(
     let id = match vault::resolve(session, &args.reference, View::Trash) {
         Ok(id) => id,
         Err(CliError::NotFound) => {
-            return Err(match vault::resolve(session, &args.reference, View::Active) {
-                Ok(_) => CliError::NotInTrash,
-                Err(_) => CliError::NotFound,
-            });
+            return Err(
+                match vault::resolve(session, &args.reference, View::Active) {
+                    Ok(_) => CliError::NotInTrash,
+                    Err(_) => CliError::NotFound,
+                },
+            );
         }
         Err(e) => return Err(e),
     };

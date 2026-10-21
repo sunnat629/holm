@@ -507,7 +507,10 @@ impl BackupForm {
         let can = !self.path.is_empty();
         let mut refused = false;
         ui.horizontal(|ui| {
-            if ui.add_enabled(can, egui::Button::new(BACKUP_LABEL)).clicked() {
+            if ui
+                .add_enabled(can, egui::Button::new(BACKUP_LABEL))
+                .clicked()
+            {
                 match typed_path(self.path.as_str()) {
                     Ok(path) => action = Some(TransferAction::Job(Job::Backup { path })),
                     Err(_) => refused = true,
