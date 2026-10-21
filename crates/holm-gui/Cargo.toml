@@ -30,6 +30,7 @@ zeroize.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 eframe.workspace = true
 holm-platform = { workspace = true, features = ["clipboard"] }
+rfd.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 egui_kittest.workspace = true

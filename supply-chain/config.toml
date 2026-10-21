@@ -776,6 +776,11 @@ version = "0.9.5"
 criteria = "safe-to-deploy"
 notes = "gui-only, pre-release; audit or replace before Phase 6"
 
+[[exemptions.rfd]]
+version = "0.17.2"
+criteria = "safe-to-deploy"
+notes = "gui-only, pre-release; audit or replace before Phase 6"
+
 [[exemptions.same-file]]
 version = "1.0.6"
 criteria = "safe-to-deploy"

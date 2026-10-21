@@ -65,6 +65,9 @@ arboard = { version = "=3.7.0", default-features = false }
 raw-window-handle = { version = "=0.6.2", default-features = false, features = ["std"] }
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }
+# Native open and save dialogs (holm-gui, macOS only). No default features: no async
+# runtime, no xdg-portal, no GTK. Newest release at least 14 days old when added.
+rfd = { version = "=0.17.2", default-features = false }
 
 # Dev and test only
 proptest = "1.12"

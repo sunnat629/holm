@@ -23,6 +23,7 @@ use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_gui::app::{AppConfig, HolmApp, WindowState};
 use holm_gui::clipboard::{Clip, ClipCheck, ClipboardError, NoClipboard, SecretClipboard};
+use holm_gui::file_dialog::{FileDialog, NoDialog};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -153,13 +154,32 @@ pub fn test_app_with_clipboard(
     dir: &Path,
     clipboard: Box<dyn SecretClipboard>,
 ) -> (HolmApp, TestClock) {
+    build_app(dir, clipboard, |_| Box::new(NoDialog::default()))
+}
+
+/// [`test_app`] with the file dialog `make` builds from the app's clock (so a fake
+/// dialog can move time while it is "open").
+pub fn test_app_with_dialog(
+    dir: &Path,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
+    build_app(dir, Box::new(NoClipboard), make)
+}
+
+fn build_app(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
     let clock = TestClock::new();
+    let file_dialog = make(&clock);
     let app = HolmApp::new(AppConfig {
         vault_path: vault_path(dir),
         kdf: KdfParams::FLOOR,
         session_clock: Box::new(clock.clone()),
         ui_clock: Box::new(clock.clone()),
         clipboard,
+        file_dialog,
     });
     (app, clock)
 }

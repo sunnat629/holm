@@ -25,7 +25,8 @@ use zeroize::Zeroizing;
 
 use super::FieldIo;
 use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
-use super::transfer::{Transfer, TransferAction};
+use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
+use crate::file_dialog::DialogKind;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
 use crate::worker::{Job, JobKind, TransferResult};
@@ -74,6 +75,8 @@ pub(crate) enum VaultAction {
     SaveAndLock,
     /// The lock dialog's "Lock anyway": lock and discard unsaved changes.
     LockAnyway,
+    /// Open the native file dialog now: the placeholder frame has been painted.
+    ChooseFile(DialogKind),
 }
 
 /// What the right-hand side shows.
@@ -398,13 +401,23 @@ impl VaultView {
                 ui.colored_label(amber, messages::idle_warning(left));
             });
         }
+        let choosing = self.transfer.as_ref().is_some_and(Transfer::is_choosing);
         egui::Panel::left("vault-list")
             .resizable(false)
             .exact_size(260.0)
-            .show(ui, |ui| self.show_list(ui, io));
+            .show(ui, |ui| {
+                if choosing {
+                    ui.label(CHOOSING_FILE);
+                } else {
+                    self.show_list(ui, io);
+                }
+            });
         let job = egui::CentralPanel::default()
             .show(ui, |ui| {
-                if self.transfer.is_some() {
+                if choosing {
+                    ui.label(CHOOSING_FILE);
+                    None
+                } else if self.transfer.is_some() {
                     let retry = self.show_save_banner(ui, session);
                     self.show_transfer(ui, throttle, io).or(retry)
                 } else {
@@ -415,7 +428,20 @@ impl VaultView {
         if self.lock_dialog {
             action = self.show_lock_dialog(ui.ctx()).or(action);
         }
-        action.or(job.map(VaultAction::Job))
+        // The placeholder is on screen; a later frame opens the dialog.
+        let dialog = self
+            .transfer
+            .as_ref()
+            .and_then(|t| t.dialog_due(ui.ctx().cumulative_frame_nr()))
+            .map(VaultAction::ChooseFile);
+        action.or(dialog).or(job.map(VaultAction::Job))
+    }
+
+    /// Takes the file dialog's answer (`None` when cancelled).
+    pub(crate) fn finish_choice(&mut self, path: Option<std::path::PathBuf>) {
+        if let Some(transfer) = &mut self.transfer {
+            transfer.finish_choice(path);
+        }
     }
 
     /// The import or export screen in place of the detail pane.
@@ -432,6 +458,7 @@ impl VaultView {
                 self.transfer = None;
                 None
             }
+            TransferAction::Choose(_) => None,
         }
     }
 

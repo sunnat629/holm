@@ -14,6 +14,8 @@ pub mod app;
 #[cfg(target_os = "macos")]
 pub mod clipboard;
 #[cfg(target_os = "macos")]
+pub mod file_dialog;
+#[cfg(target_os = "macos")]
 pub mod fonts;
 pub mod messages;
 #[cfg(target_os = "macos")]

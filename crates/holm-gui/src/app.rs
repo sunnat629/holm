@@ -32,6 +32,7 @@ use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
 
 use crate::clipboard::SecretClipboard;
+use crate::file_dialog::{DialogKind, FileDialog};
 use crate::messages;
 pub use crate::messages::{LockNote, LockReason};
 use crate::screens::create::CreateForm;
@@ -63,6 +64,8 @@ pub struct AppConfig {
     pub ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets and pastes.
     pub clipboard: Box<dyn SecretClipboard>,
+    /// The native file dialog (a fake in tests).
+    pub file_dialog: Box<dyn FileDialog>,
 }
 
 /// Where the app learns whether its window is minimised. eframe's own
@@ -113,6 +116,8 @@ pub struct HolmApp {
     ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets and pastes. The only clipboard the app uses.
     clipboard: Box<dyn SecretClipboard>,
+    /// The native file dialog. It blocks the main thread while it is open.
+    file_dialog: Box<dyn FileDialog>,
     /// Which kind of field had focus at the end of the last frame, for
     /// [`raw_input_hook`](eframe::App::raw_input_hook), which runs before the next one.
     focus: FieldFocus,
@@ -165,6 +170,7 @@ impl HolmApp {
             session_clock,
             ui_clock,
             clipboard,
+            file_dialog,
         } = config;
         let mut app = HolmApp {
             session: None,
@@ -173,6 +179,7 @@ impl HolmApp {
             kdf,
             ui_clock,
             clipboard,
+            file_dialog,
             focus: FieldFocus::None,
             vault_path: vault_path.clone(),
             spawner: spawn_worker,
@@ -239,6 +246,23 @@ impl HolmApp {
         };
         self.lock_line = Some(messages::lock_line(&note, auto_lock));
         self.lock_note = Some(note);
+    }
+
+    /// Opens the native file dialog and hands its answer to the vault screen. The dialog
+    /// blocks this thread, so the idle timer may run out meanwhile: the session is
+    /// checked right after, and when it locked the chosen path is dropped unread.
+    fn choose_file(&mut self, ctx: &egui::Context, kind: DialogKind) {
+        let path = match kind {
+            DialogKind::Import => self.file_dialog.pick_import(),
+            DialogKind::Export => self.file_dialog.pick_save("holm-export.csv"),
+            DialogKind::Backup => self.file_dialog.pick_save("holm-backup"),
+        };
+        if self.session.as_ref().is_some_and(Session::idle_expired) {
+            self.lock(LockReason::Idle);
+        } else if let Screen::Vault(view) = &mut self.screen {
+            view.finish_choice(path);
+        }
+        ctx.request_discard("the file dialog closed");
     }
 
     /// Runs the waiting clipboard clear now, if any: clears the clipboard when it still
@@ -393,6 +417,7 @@ impl HolmApp {
                 Some(VaultAction::Lock) => self.request_lock(),
                 Some(VaultAction::SaveAndLock) => self.save_and_lock(),
                 Some(VaultAction::LockAnyway) => self.lock(LockReason::Manual),
+                Some(VaultAction::ChooseFile(kind)) => self.choose_file(ui.ctx(), kind),
             }
             // This pass drew the vault; if the screen changed, draw the new one instead.
             if !matches!(self.screen, Screen::Vault(_)) {

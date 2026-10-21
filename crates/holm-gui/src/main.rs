@@ -93,6 +93,7 @@ mod macos {
                     ui_clock: Box::new(SystemClock::new()),
                     // Opened on first copy or paste, not here.
                     clipboard: Box::new(SystemClipboard::new()),
+                    file_dialog: Box::new(holm_gui::file_dialog::RfdDialog),
                 })))
             }),
         );

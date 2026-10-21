@@ -7,11 +7,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use common::{OTHER_PASSWORD, PASSWORD, TestClock, harness, make_vault, run_until, test_app};
+use common::{
+    OTHER_PASSWORD, PASSWORD, TestClock, harness, make_vault, make_vault_with_auto_lock, run_until,
+    test_app, test_app_with_dialog,
+};
 use eframe::egui::{Event, Key, accesskit::Role};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use holm_gui::app::{HolmApp, ScreenKind};
+use holm_gui::file_dialog::{FileDialog, NoDialog};
 use holm_gui::messages;
 
 const WAIT: Duration = Duration::from_secs(60);
@@ -31,6 +35,11 @@ fn vault_screen(app: &HolmApp) -> bool {
 fn open(dir: &Path) -> (Harness<'static, HolmApp>, TestClock) {
     make_vault(dir, PASSWORD);
     let (app, clock) = test_app(dir);
+    unlock(app, clock)
+}
+
+/// Unlocks an app on an existing vault and waits for the vault screen.
+fn unlock(app: HolmApp, clock: TestClock) -> (Harness<'static, HolmApp>, TestClock) {
     let mut harness = harness(app);
     harness.run();
     type_into(&mut harness, "Master password", PASSWORD);
@@ -475,4 +484,98 @@ fn dirty_before_import_not_reported_as_import() {
     click_job(&mut harness, "Import these rows");
     let _ = harness.get_by_label(messages::IMPORT_FAILED);
     assert!(harness.query_by_label(messages::IMPORT_UNSAVED).is_none());
+}
+
+/// An open vault whose file dialog is `make(&clock)`.
+fn open_with_dialog(
+    dir: &Path,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (Harness<'static, HolmApp>, TestClock) {
+    make_vault(dir, PASSWORD);
+    let (app, clock) = test_app_with_dialog(dir, make);
+    unlock(app, clock)
+}
+
+const CHOOSE: &str = "Choose\u{2026}";
+const CHOOSING_FILE: &str = "Choosing a file\u{2026}";
+
+#[test]
+fn choose_paints_placeholder_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let dialog = NoDialog::returning(PathBuf::from("/tmp/EXAMPLE.csv"));
+    let calls = dialog.counter();
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(dialog));
+    click_button(&mut harness, "Import...");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.step();
+    // The frame after the click shows only the placeholder, and the dialog is not open.
+    assert!(harness.query_all_by_label(CHOOSING_FILE).count() >= 1);
+    assert_eq!(harness.query_all_by_label("Search").count(), 0);
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 0);
+    assert_eq!(calls.get(), 0);
+    harness.step();
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn chosen_path_fills_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let dialog = NoDialog::returning(PathBuf::from("/tmp/EXAMPLE-holm-missing.csv"));
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(dialog));
+    click_button(&mut harness, "Import...");
+    assert!(disabled(&harness, "Read file"));
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    assert!(!disabled(&harness, "Read file"));
+    // The preview job runs on the chosen path (no file there, so a fixed error).
+    click_job(&mut harness, "Read file");
+    let _ = harness.get_by_label(messages::IMPORT_NOT_FOUND);
+}
+
+#[test]
+fn cancelled_dialog_keeps_form() {
+    let dir = tempfile::tempdir().unwrap();
+    let dialog = NoDialog::default();
+    let calls = dialog.counter();
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(dialog));
+    click_button(&mut harness, "Import...");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    assert_eq!(calls.get(), 1);
+    assert!(disabled(&harness, "Read file"));
+    assert_eq!(harness.query_all_by_label(CHOOSING_FILE).count(), 0);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+}
+
+#[test]
+fn locked_while_choosing_drops_path() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault_with_auto_lock(dir.path(), PASSWORD, 60);
+    let source = fixture_copy(dir.path());
+    let (app, clock) = test_app_with_dialog(dir.path(), |clock| {
+        let clock = clock.clone();
+        Box::new(NoDialog::returning(source).with_hook(move || {
+            clock.advance(Duration::from_secs(61));
+        }))
+    });
+    let (mut harness, _clock) = unlock(app, clock);
+    click_button(&mut harness, "Import...");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    // Nothing of the vault or the chosen path is on screen.
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 0);
+    assert!(!has_text(&harness, "source.csv"));
+    assert!(!button(&harness, "Read file"));
+}
+
+#[test]
+fn typed_path_still_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(NoDialog::default()));
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    assert!(button(&harness, "Import these rows"));
 }
