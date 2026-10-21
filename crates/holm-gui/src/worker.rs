@@ -128,8 +128,10 @@ pub enum TransferResult {
     Previewed(Box<ImportBatch>, ImportPreview),
     /// The rows were added.
     Imported(ImportReport),
-    /// The export or backup file was written.
+    /// The export file was written.
     Exported,
+    /// The encrypted backup file was written.
+    BackedUp,
     /// It did not happen.
     Failed(TransferError),
 }
@@ -140,6 +142,7 @@ impl fmt::Debug for TransferResult {
             TransferResult::Previewed(..) => write!(f, "Previewed"),
             TransferResult::Imported(r) => write!(f, "Imported({})", r.imported),
             TransferResult::Exported => write!(f, "Exported"),
+            TransferResult::BackedUp => write!(f, "BackedUp"),
             TransferResult::Failed(e) => write!(f, "Failed({e:?})"),
         }
     }
@@ -247,7 +250,7 @@ pub fn spawn(
                 }
                 Job::Backup { path } => {
                     transfer = Some(match transfer::export_backup(&mut session, &path) {
-                        Ok(()) => TransferResult::Exported,
+                        Ok(()) => TransferResult::BackedUp,
                         Err(e) => TransferResult::Failed(e),
                     });
                     Ok(())

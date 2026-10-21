@@ -13,6 +13,7 @@ use holm_core::error::CoreError;
 use holm_core::generator::generate_password;
 use holm_core::item::{ItemData, ItemInput, ItemType};
 use holm_core::rules::{MAX_LINE_BYTES, MAX_NOTE_BYTES, MAX_SECRET_BYTES};
+use holm_core::search::{Query, View};
 use holm_core::session::Session;
 use holm_core::strength;
 use holm_core::text::{GatedSecret, SecretText, Text};
@@ -20,7 +21,7 @@ use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use crate::Env;
-use crate::args::{AddArgs, CategoryArg, EditArgs, NewPassword, RmArgs};
+use crate::args::{AddArgs, CategoryArg, EditArgs, NewPassword, RefArgs, RmArgs};
 use crate::output::{CliError, clean, write_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
@@ -354,6 +355,89 @@ pub(crate) fn rm_in(
     confirm(term, "Type delete to remove this item for good: ", "delete")?;
     session.delete_forever(id).map_err(|e| write_error(&e))?;
     writeln!(out, "Deleted for good.")?;
+    Ok(())
+}
+
+/// `holm restore REF`: takes a trashed item out of the Trash.
+///
+/// # Errors
+/// [`CliError::NotInTrash`] for an active item, [`CliError::NotFound`],
+/// [`CliError::Ambiguous`], or [`write_error`] of the change.
+pub fn restore(
+    path: &Path,
+    args: &RefArgs,
+    env: &Env,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
+    let mut opened = vault::open(path, env, term, err)?;
+    restore_in(&mut opened.session, args, out)
+}
+
+/// The body of [`restore`] on an open session, for `holm shell` too.
+pub(crate) fn restore_in(
+    session: &mut Session<FsStore>,
+    args: &RefArgs,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    // Only the Trash is searched, so a prefix can't pick an active item by chance.
+    let id = match vault::resolve(session, &args.reference, View::Trash) {
+        Ok(id) => id,
+        Err(CliError::NotFound) => {
+            return Err(match vault::resolve(session, &args.reference, View::Active) {
+                Ok(_) => CliError::NotInTrash,
+                Err(_) => CliError::NotFound,
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    session.restore(id).map_err(|e| write_error(&e))?;
+    writeln!(out, "Restored {}.", short(id))?;
+    Ok(())
+}
+
+/// `holm empty-trash`: deletes everything in the Trash for good, after the word
+/// `empty` is typed. Anything else leaves the Trash alone.
+///
+/// # Errors
+/// A terminal error, or [`write_error`] of the change.
+pub fn empty_trash(
+    path: &Path,
+    env: &Env,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
+    let mut opened = vault::open(path, env, term, err)?;
+    empty_trash_in(&mut opened.session, term, out)
+}
+
+/// The body of [`empty_trash`] on an open session, for `holm shell` too.
+pub(crate) fn empty_trash_in(
+    session: &mut Session<FsStore>,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    let query = Query {
+        view: View::Trash,
+        ..Query::default()
+    };
+    let n = session.search(&query).map_err(|_| CliError::Failed)?.len();
+    if n == 0 {
+        writeln!(out, "Trash is empty.")?;
+        return Ok(());
+    }
+    let noun = if n == 1 { "item" } else { "items" };
+    let prompt = format!("Type empty to delete {n} {noun} forever: ");
+    let typed = term.line(&prompt, MAX_LINE_BYTES, None)?;
+    if typed.as_ref().is_none_or(|t| t.trim() != "empty") {
+        writeln!(out, "Nothing deleted.")?;
+        return Ok(());
+    }
+    let removed = session.empty_trash().map_err(|e| write_error(&e))?;
+    let noun = if removed == 1 { "item" } else { "items" };
+    writeln!(out, "Deleted {removed} {noun} forever.")?;
     Ok(())
 }
 

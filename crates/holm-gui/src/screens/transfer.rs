@@ -42,6 +42,8 @@ pub(crate) const READ_LABEL: &str = "Read file";
 pub(crate) const IMPORT_LABEL: &str = "Import these rows";
 /// Label of the export button.
 pub(crate) const EXPORT_LABEL: &str = "Export";
+/// Label of the backup form's submit button.
+pub(crate) const BACKUP_LABEL: &str = "Back up";
 /// Label of the close button.
 pub(crate) const CLOSE_LABEL: &str = "Close";
 /// Label of the cancel button.
@@ -74,6 +76,12 @@ pub(crate) struct ExportForm {
     error: Option<&'static str>,
 }
 
+/// The backup form: a path only. The copy stays encrypted, so there is no password.
+pub(crate) struct BackupForm {
+    path: LineBuf,
+    error: Option<&'static str>,
+}
+
 /// The preview of a read file. The batch itself waits in `batch` until the user goes ahead.
 pub(crate) struct PreviewState {
     batch: Option<Box<holm_core::import::ImportBatch>>,
@@ -93,6 +101,10 @@ pub(crate) enum Transfer {
     Export(ExportForm),
     /// The export finished.
     Exported,
+    /// The backup form.
+    Backup(BackupForm),
+    /// The backup finished.
+    BackedUp,
     /// A job holds the data; the answer decides the next screen.
     Busy,
     /// The file dialog is about to open, or is open. `prev` is the form to return to.
@@ -123,6 +135,14 @@ impl Transfer {
             path: LineBuf::new(),
             password: SecretInput::with_capacity(MASTER_CAP),
             confirmed: false,
+            error: None,
+        })
+    }
+
+    /// A fresh backup screen.
+    pub(crate) fn backup() -> Transfer {
+        Transfer::Backup(BackupForm {
+            path: LineBuf::new(),
             error: None,
         })
     }
@@ -202,6 +222,15 @@ impl Transfer {
                 }
                 None => form.error = Some(messages::PATH_NOT_ABSOLUTE),
             },
+            Transfer::Backup(form) => match LineBuf::from_text(text) {
+                Some(buf) => {
+                    form.path = buf;
+                    form.error = refuse_existing(&path)
+                        .err()
+                        .map(|e| fail_text(&e, true, false));
+                }
+                None => form.error = Some(messages::PATH_NOT_ABSOLUTE),
+            },
             _ => {}
         }
     }
@@ -210,6 +239,7 @@ impl Transfer {
         match self {
             Transfer::Pick(form) => form.error = Some(text),
             Transfer::Export(form) => form.error = Some(text),
+            Transfer::Backup(form) => form.error = Some(text),
             _ => {}
         }
     }
@@ -217,7 +247,7 @@ impl Transfer {
     /// Takes the answer of a transfer job and moves to the next screen. `self` is the
     /// screen that was open when the job started.
     pub(crate) fn on_result(&mut self, result: TransferResult, items_added: bool) {
-        let was_export = matches!(self, Transfer::Export(_));
+        let was_export = matches!(self, Transfer::Export(_) | Transfer::Backup(_));
         match result {
             TransferResult::Previewed(batch, preview) => {
                 let issues = batch.issues().to_vec();
@@ -229,10 +259,12 @@ impl Transfer {
             }
             TransferResult::Imported(report) => *self = Transfer::Report(report),
             TransferResult::Exported => *self = Transfer::Exported,
+            TransferResult::BackedUp => *self = Transfer::BackedUp,
             TransferResult::Failed(fail) => {
                 let text = fail_text(&fail, was_export, items_added);
                 match self {
                     Transfer::Export(form) => form.error = Some(text),
+                    Transfer::Backup(form) => form.error = Some(text),
                     Transfer::Pick(form) => form.error = Some(text),
                     _ => {
                         *self = Transfer::Pick(ImportForm {
@@ -283,6 +315,15 @@ impl Transfer {
                 ui.label(
                     "The file is written. It is not encrypted. Delete it as soon as you are done.",
                 );
+                close_button(ui)
+            }
+            Transfer::Backup(form) => {
+                let action = form.show(ui, io);
+                self.begin_if_choose(ui, action)
+            }
+            Transfer::BackedUp => {
+                ui.heading("Backup finished");
+                ui.label(messages::BACKUP_DONE);
                 close_button(ui)
             }
             Transfer::Busy | Transfer::Choosing { .. } => None,
@@ -444,6 +485,47 @@ impl PreviewState {
                 action = Some(TransferAction::Close);
             }
         });
+        action
+    }
+}
+
+impl BackupForm {
+    fn show(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) -> Option<TransferAction> {
+        ui.heading("Back up");
+        ui.label("Type the path for the backup file. It is an encrypted copy of this vault and opens with the same master password. Holm never overwrites a file.");
+        ui.add_space(8.0);
+        let mut action = None;
+        ui.horizontal(|ui| {
+            if line_field(ui, io, PATH_LABEL, &mut self.path) {
+                self.error = None;
+            }
+            if ui.button(CHOOSE_LABEL).clicked() {
+                action = Some(TransferAction::Choose(DialogKind::Backup));
+            }
+        });
+        ui.add_space(8.0);
+        let can = !self.path.is_empty();
+        let mut refused = false;
+        ui.horizontal(|ui| {
+            if ui.add_enabled(can, egui::Button::new(BACKUP_LABEL)).clicked() {
+                match typed_path(self.path.as_str()) {
+                    Ok(path) => action = Some(TransferAction::Job(Job::Backup { path })),
+                    Err(_) => refused = true,
+                }
+            }
+            if ui.button(CANCEL_LABEL).clicked() {
+                action = Some(TransferAction::Close);
+            }
+        });
+        if refused {
+            self.error = Some(messages::PATH_NOT_ABSOLUTE);
+        }
+        if let Some(error) = self.error {
+            ui.label(error);
+        }
+        if matches!(action, Some(TransferAction::Job(_))) {
+            self.error = None;
+        }
         action
     }
 }

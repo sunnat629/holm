@@ -85,6 +85,8 @@ Commands:
       --new-password, --generate, --new-notes
   holm rm ID                Move an item to the Trash.
   holm rm --forever ID      Delete an item in the Trash for good.
+  holm restore ID           Take an item out of the Trash.
+  holm empty-trash          Delete everything in the Trash for good.
   holm passwd               Change the master password.
   holm import FILE          Add items from a CSV or JSON file.
       --format csv|json     The file's format (default: from its name).
@@ -166,6 +168,10 @@ fn dispatch(
         Command::Add(args) => write::add(&vault_path(vault, env)?, args, env, term, out, err),
         Command::Edit(args) => write::edit(&vault_path(vault, env)?, args, env, term, out, err),
         Command::Rm(args) => write::rm(&vault_path(vault, env)?, &args, env, term, out, err),
+        Command::Restore(args) => {
+            write::restore(&vault_path(vault, env)?, &args, env, term, out, err)
+        }
+        Command::EmptyTrash => write::empty_trash(&vault_path(vault, env)?, env, term, out, err),
         Command::Passwd => write::passwd(&vault_path(vault, env)?, env, term, out, err),
         Command::Import(args) => {
             transfer::import(&vault_path(vault, env)?, &args, env, term, out, err)

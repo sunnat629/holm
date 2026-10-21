@@ -78,7 +78,7 @@ Commands in the shell:
   exit, quit                Lock the vault and leave. Ctrl-D (or Ctrl-C) at
                             the prompt does the same.
   help                      Show this help.
-  list, get, gen, add, edit, rm, passwd, import, export, version
+  list, get, gen, add, edit, rm, restore, empty-trash, passwd, import, export, version
                             As below, without holm and --vault.
 
 The vault locks itself after its auto-lock time without use. Quote a word that
@@ -506,6 +506,8 @@ impl Shell<'_> {
             Command::Add(args) => write::add_to(session, args, term, out),
             Command::Edit(args) => write::edit_in(session, args, term, out),
             Command::Rm(args) => write::rm_in(session, &args, term, out),
+            Command::Restore(args) => write::restore_in(session, &args, out),
+            Command::EmptyTrash => write::empty_trash_in(session, term, out),
             Command::Passwd => write::passwd_in(session, self.env, term, out, err),
             Command::Import(args) => {
                 let batch = transfer::read_import(&args)?;

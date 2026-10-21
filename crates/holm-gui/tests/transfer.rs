@@ -17,7 +17,12 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use holm_gui::app::{HolmApp, ScreenKind};
 use holm_gui::file_dialog::{FileDialog, NoDialog};
+use holm_core::clock::SystemClock;
+use holm_core::search::Query;
+use holm_core::session::Session;
+use holm_crypto::MasterPassword;
 use holm_gui::messages;
+use holm_platform::fs_store::FsStore;
 
 const WAIT: Duration = Duration::from_secs(60);
 const FIXTURE: &str = "../holm-core/tests/fixtures/import/holm.csv";
@@ -683,4 +688,68 @@ fn opening_a_dialog_clears_a_copied_secret() {
     harness.run();
     // Inside the dialog call the clipboard was already clear.
     assert_eq!(*seen.borrow(), Some((1, None)));
+}
+
+const BACKUP_OPEN: &str = messages::BACKUP_BUTTON;
+
+fn start_backup(harness: &mut Harness<'static, HolmApp>, path: &Path) {
+    click_button(harness, BACKUP_OPEN);
+    type_into(harness, "File path", path.to_str().unwrap());
+}
+
+fn open_backup(path: &Path) -> Session<FsStore> {
+    let mut copy = Session::new(FsStore::new(path.to_path_buf()), Box::new(SystemClock::new()));
+    copy.unlock(&MasterPassword::new(PASSWORD.to_owned())).unwrap();
+    copy
+}
+
+fn count_items(session: &Session<FsStore>) -> usize {
+    session.search(&Query::default()).unwrap().len()
+}
+
+#[test]
+fn backup_button_writes_encrypted_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    seeded_vault(dir.path(), None);
+    let out = dir.path().join("copy.holm");
+    let (app, clock) = test_app(dir.path());
+    let (mut harness, _clock) = unlock(app, clock);
+    start_backup(&mut harness, &out);
+    click_job(&mut harness, "Back up");
+    let _ = harness.get_by_label(messages::BACKUP_DONE);
+    let mode = std::fs::metadata(&out).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    // The copy opens with the same master password and holds the same items.
+    let original = open_backup(&common::vault_path(dir.path()));
+    let copy = open_backup(&out);
+    assert!(count_items(&original) > 0);
+    assert_eq!(count_items(&copy), count_items(&original));
+}
+
+#[test]
+fn backup_refuses_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("copy.holm");
+    std::fs::write(&out, b"keep me").unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    start_backup(&mut harness, &out);
+    click_job(&mut harness, "Back up");
+    let _ = harness.get_by_label(messages::EXPORT_EXISTS);
+    assert_eq!(std::fs::read(&out).unwrap(), b"keep me");
+}
+
+#[test]
+fn backup_holds_no_plaintext() {
+    let dir = tempfile::tempdir().unwrap();
+    seeded_vault(dir.path(), None);
+    let out = dir.path().join("copy.holm");
+    let (app, clock) = test_app(dir.path());
+    let (mut harness, _clock) = unlock(app, clock);
+    start_backup(&mut harness, &out);
+    click_job(&mut harness, "Back up");
+    let _ = harness.get_by_label(messages::BACKUP_DONE);
+    let bytes = std::fs::read(&out).unwrap();
+    assert!(!bytes.is_empty());
+    assert!(!bytes.windows(7).any(|w| w == b"EXAMPLE"));
+    assert!(!bytes.windows(14).any(|w| w == b"Example Portal"));
 }

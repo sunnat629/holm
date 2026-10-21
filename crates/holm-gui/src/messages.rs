@@ -157,13 +157,19 @@ pub const EXPORT_THROTTLED: &str = "Too many wrong passwords. Wait a little and 
 /// The export failed for another reason.
 pub const EXPORT_FAILED: &str = "The export did not finish. No file was written.";
 
+/// Label of the toolbar button that starts a backup. A button label, not a status line,
+/// so it stays out of `ALL`.
+pub const BACKUP_BUTTON: &str = "Back up\u{2026}";
+/// The backup file was written.
+pub const BACKUP_DONE: &str = "Backup saved. It opens with this vault's master password.";
+
 /// Accessibility label of the press-and-hold eye on a password field. It is a button
 /// label, not a status line, so it stays out of `ALL` (which holds full sentences).
 pub const EYE_LABEL: &str = "Show password while held";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 54] = [
+const ALL: [&str; 55] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -218,6 +224,7 @@ const ALL: [&str; 54] = [
     EXPORT_WRONG_PASSWORD,
     EXPORT_THROTTLED,
     EXPORT_FAILED,
+    BACKUP_DONE,
 ];
 
 /// Why the vault locked.
@@ -543,6 +550,12 @@ mod tests {
         // Out-of-range times are clamped like the clear itself.
         assert!(copied_note(0).contains(" 5 seconds"));
         assert!(copied_note(u32::MAX).contains(" 90 seconds"));
+    }
+
+    #[test]
+    fn backup_button_is_plain_label() {
+        assert!(!BACKUP_BUTTON.is_empty());
+        assert!(!BACKUP_BUTTON.contains(['{', '}', '%', '<', '>', '/', '\\']));
     }
 
     #[test]

@@ -389,7 +389,12 @@ impl VaultView {
                 {
                     self.transfer = Some(Transfer::export());
                 }
-                // A later task adds its button here, on the same row.
+                if ui
+                    .add_enabled(idle, egui::Button::new(messages::BACKUP_BUTTON))
+                    .clicked()
+                {
+                    self.transfer = Some(Transfer::backup());
+                }
                 if ui.button(NEW_LABEL).clicked() {
                     self.start_new_login();
                 }

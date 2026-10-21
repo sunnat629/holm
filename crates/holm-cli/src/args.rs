@@ -117,6 +117,10 @@ pub enum Command {
     Edit(EditArgs),
     /// `holm rm [--forever] REF`: to the Trash, or out of it for good.
     Rm(RmArgs),
+    /// `holm restore REF`: take a trashed item out of the Trash.
+    Restore(RefArgs),
+    /// `holm empty-trash`: delete everything in the Trash for good.
+    EmptyTrash,
     /// `holm passwd`: change the master password.
     Passwd,
     /// `holm import FILE [--format csv|json]`.
@@ -140,6 +144,8 @@ impl fmt::Debug for Command {
             Command::Add(_) => "add",
             Command::Edit(_) => "edit",
             Command::Rm(_) => "rm",
+            Command::Restore(_) => "restore",
+            Command::EmptyTrash => "empty-trash",
             Command::Passwd => "passwd",
             Command::Import(_) => "import",
             Command::Export(_) => "export",
@@ -280,6 +286,12 @@ pub struct EditArgs {
     pub new_notes: bool,
 }
 
+/// The arguments of a command that takes one item reference.
+pub struct RefArgs {
+    /// The item's reference.
+    pub reference: String,
+}
+
 /// `rm`'s arguments.
 pub struct RmArgs {
     /// The item's reference.
@@ -352,6 +364,8 @@ pub fn parse_command(args: &[OsString]) -> Result<Command, UsageError> {
         "rm" => parse_rm(rest).map(Command::Rm),
         "import" => parse_import(rest).map(Command::Import),
         "export" => parse_export(rest).map(Command::Export),
+        "restore" => parse_ref(rest).map(Command::Restore),
+        "empty-trash" => no_more(rest).map(|()| Command::EmptyTrash),
         "passwd" => no_more(rest).map(|()| Command::Passwd),
         "shell" => no_more(rest).map(|()| Command::Shell),
         _ => Err(UNKNOWN_COMMAND),
@@ -749,6 +763,16 @@ fn parse_edit(rest: &[OsString]) -> Result<EditArgs, UsageError> {
     Ok(args)
 }
 
+fn parse_ref(rest: &[OsString]) -> Result<RefArgs, UsageError> {
+    let mut reference = None;
+    for word in rest {
+        set_reference(&mut reference, word)?;
+    }
+    Ok(RefArgs {
+        reference: reference.ok_or(MISSING_REF)?,
+    })
+}
+
 fn parse_rm(mut rest: &[OsString]) -> Result<RmArgs, UsageError> {
     let mut reference = None;
     let mut forever = false;
@@ -929,6 +953,8 @@ mod tests {
             (&["import", "file.csv"], "import"),
             (&["export", "file.csv"], "export"),
             (&["passwd"], "passwd"),
+            (&["restore", "abcdef"], "restore"),
+            (&["empty-trash"], "empty-trash"),
             (&["shell"], "shell"),
             (&["help"], "help"),
             (&["--version"], "version"),
@@ -1170,6 +1196,9 @@ mod tests {
             (&["export"], MISSING_FILE),
             (&["export", "a.csv", "--backup", "--backup"], REPEATED_FLAG),
             (&["passwd", "now"], TOO_MANY),
+            (&["restore"], MISSING_REF),
+            (&["restore", "abcdef", "abcdee"], TOO_MANY),
+            (&["empty-trash", "now"], TOO_MANY),
         ] {
             assert_eq!(parse_strs(line).map(|_| ()).unwrap_err(), want, "{line:?}");
         }
