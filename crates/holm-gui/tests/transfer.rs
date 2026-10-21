@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use common::{
-    OTHER_PASSWORD, PASSWORD, TestClock, harness, make_vault, make_vault_with_auto_lock, run_until,
-    test_app, test_app_with_dialog,
+    FakeClipboard, OTHER_PASSWORD, PASSWORD, TestClock, harness, make_vault,
+    make_vault_with_auto_lock, run_until, test_app, test_app_with_clipboard_and_dialog,
+    test_app_with_dialog,
 };
 use eframe::egui::{Event, Key, accesskit::Role};
 use egui_kittest::Harness;
@@ -550,8 +551,8 @@ fn cancelled_dialog_keeps_form() {
 #[test]
 fn locked_while_choosing_drops_path() {
     let dir = tempfile::tempdir().unwrap();
-    make_vault_with_auto_lock(dir.path(), PASSWORD, 60);
-    let source = fixture_copy(dir.path());
+    seeded_vault(dir.path(), Some(60));
+    let source = dir.path().join("source.csv");
     let (app, clock) = test_app_with_dialog(dir.path(), |clock| {
         let clock = clock.clone();
         Box::new(NoDialog::returning(source).with_hook(move || {
@@ -560,6 +561,7 @@ fn locked_while_choosing_drops_path() {
     });
     let (mut harness, _clock) = unlock(app, clock);
     click_button(&mut harness, "Import...");
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 1);
     harness.get_by_role_and_label(Role::Button, CHOOSE).click();
     harness.run();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
@@ -578,4 +580,107 @@ fn typed_path_still_works() {
     type_into(&mut harness, "File path", source.to_str().unwrap());
     click_job(&mut harness, "Read file");
     assert!(button(&harness, "Import these rows"));
+}
+
+/// A vault holding the fixture's logins (imported through the app, then closed), made
+/// with `auto_lock_secs` when given.
+fn seeded_vault(dir: &Path, auto_lock_secs: Option<u32>) {
+    match auto_lock_secs {
+        Some(secs) => make_vault_with_auto_lock(dir, PASSWORD, secs),
+        None => make_vault(dir, PASSWORD),
+    }
+    let source = fixture_copy(dir);
+    let (app, clock) = test_app(dir);
+    let (mut harness, _clock) = unlock(app, clock);
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    click_job(&mut harness, "Read file");
+    click_job(&mut harness, "Import these rows");
+    click_button(&mut harness, "Close");
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 1);
+}
+
+#[test]
+fn choose_hides_rows_and_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    seeded_vault(dir.path(), None);
+    let dialog = NoDialog::returning(PathBuf::from("/tmp/EXAMPLE.csv"));
+    let (app, clock) = test_app_with_dialog(dir.path(), |_| Box::new(dialog));
+    let (mut harness, _clock) = unlock(app, clock);
+    click_button(&mut harness, "Import...");
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 1);
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.step();
+    assert!(harness.query_all_by_label(CHOOSING_FILE).count() >= 1);
+    assert_eq!(harness.query_all_by_label("Example Portal").count(), 0);
+}
+
+#[test]
+fn cancel_keeps_typed_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fixture_copy(dir.path());
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(NoDialog::default()));
+    click_button(&mut harness, "Import...");
+    type_into(&mut harness, "File path", source.to_str().unwrap());
+    assert!(!disabled(&harness, "Read file"));
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    // Cancelled: the typed path is still there, so the form still reads it.
+    assert!(!disabled(&harness, "Read file"));
+    click_job(&mut harness, "Read file");
+    assert!(button(&harness, "Import these rows"));
+}
+
+#[test]
+fn chosen_existing_export_path_refused_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.csv");
+    std::fs::write(&out, b"keep me").unwrap();
+    let dialog = NoDialog::returning(out.clone());
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(dialog));
+    click_button(&mut harness, "Export...");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    let _ = harness.get_by_label(messages::EXPORT_EXISTS);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    assert_eq!(std::fs::read(&out).unwrap(), b"keep me");
+}
+
+#[test]
+fn opening_a_dialog_clears_a_copied_secret() {
+    const SECRET: &str = "EXAMPLE-zq9-pass";
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let fake = FakeClipboard::default();
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let dialog = {
+        let fake = fake.clone();
+        let seen = std::rc::Rc::clone(&seen);
+        NoDialog::default().with_hook(move || {
+            let state = fake.0.borrow();
+            *seen.borrow_mut() = Some((state.clears, state.contents.clone()));
+        })
+    };
+    let (app, clock) =
+        test_app_with_clipboard_and_dialog(dir.path(), Box::new(fake.clone()), |_| {
+            Box::new(dialog)
+        });
+    let (mut harness, _clock) = unlock(app, clock);
+    harness.get_by_label("New login").click();
+    harness.run();
+    type_into(&mut harness, "Title", "Example Mail");
+    type_into(&mut harness, "Password", SECRET);
+    harness.get_by_label("Save").click();
+    harness.step();
+    run_until(&mut harness, vault_screen, WAIT);
+    harness.run();
+    harness.get_by_label("Copy").click();
+    harness.run();
+    assert_eq!(fake.0.borrow().contents.as_deref(), Some(SECRET));
+
+    click_button(&mut harness, "Import...");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    // Inside the dialog call the clipboard was already clear.
+    assert_eq!(*seen.borrow(), Some((1, None)));
 }

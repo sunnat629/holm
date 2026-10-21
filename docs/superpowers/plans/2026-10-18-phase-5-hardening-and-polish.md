@@ -409,7 +409,7 @@ Behaviour:
   - Expected: PASS. Each new exemption carries the note `gui-only, pre-release; audit or replace before Phase 6`.
 - [ ] **Step 6: Record and teach**
   - DECISIONS: add "Native file dialogs" and "rfd added (gui-only)", listing the new crates.
-  - Manual checklist: the dialog opens as a sheet, Cancel works, and a locked vault never shows the list behind the panel.
+  - Manual checklist: the dialog opens as an app-modal panel, Cancel works, and a locked vault never shows the list behind the panel.
   - Write lesson 40: trait seams for OS dialogs, a two-frame state machine, and why blocking in `update` is allowed. The Kotlin comparison is `ActivityResultContracts.OpenDocument`.
 - [ ] **Step 7: Commit and push**
   - Commit `feat(gui): native file dialogs for import and export (rfd)`.

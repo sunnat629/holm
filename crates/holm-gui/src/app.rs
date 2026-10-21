@@ -250,8 +250,11 @@ impl HolmApp {
 
     /// Opens the native file dialog and hands its answer to the vault screen. The dialog
     /// blocks this thread, so the idle timer may run out meanwhile: the session is
-    /// checked right after, and when it locked the chosen path is dropped unread.
+    /// checked right after, and when it locked the chosen path is dropped unread. A
+    /// copied secret waiting on the clipboard timer is cleared first, because the timer
+    /// cannot run while the dialog is open.
     fn choose_file(&mut self, ctx: &egui::Context, kind: DialogKind) {
+        self.run_pending_clear();
         let path = match kind {
             DialogKind::Import => self.file_dialog.pick_import(),
             DialogKind::Export => self.file_dialog.pick_save("holm-export.csv"),

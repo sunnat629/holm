@@ -166,6 +166,15 @@ pub fn test_app_with_dialog(
     build_app(dir, Box::new(NoClipboard), make)
 }
 
+/// [`test_app_with_dialog`] with `clipboard` instead of none.
+pub fn test_app_with_clipboard_and_dialog(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
+    build_app(dir, clipboard, make)
+}
+
 fn build_app(
     dir: &Path,
     clipboard: Box<dyn SecretClipboard>,

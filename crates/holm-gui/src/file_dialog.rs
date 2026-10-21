@@ -31,7 +31,7 @@ pub trait FileDialog {
     fn pick_save(&mut self, suggested_name: &str) -> Option<PathBuf>;
 }
 
-/// The system open and save sheets, through `rfd`. Blocks until the user answers.
+/// The system open and save panels, through `rfd`. Blocks until the user answers.
 #[derive(Debug, Default)]
 pub struct RfdDialog;
 
