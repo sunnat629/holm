@@ -283,6 +283,7 @@ fn create_then_sync_fails(
         added: None,
         returned: None,
         transfer: None,
+        phrase: None,
     })
     .unwrap();
     rx

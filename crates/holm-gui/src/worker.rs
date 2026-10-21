@@ -50,6 +50,13 @@ pub enum Job {
         /// Where to write. It must not exist.
         path: PathBuf,
     },
+    /// Check the password, then hand back a copy of this recovery phrase.
+    RevealPhrase {
+        /// The recovery phrase item.
+        id: ItemId,
+        /// The master password, checked on the worker and wiped there.
+        password: MasterPassword,
+    },
 }
 
 impl Job {
@@ -66,6 +73,7 @@ impl Job {
             Job::Import(_) => JobKind::Import,
             Job::Export { .. } => JobKind::Export,
             Job::Backup { .. } => JobKind::Backup,
+            Job::RevealPhrase { .. } => JobKind::RevealPhrase,
         }
     }
 }
@@ -83,6 +91,7 @@ impl fmt::Debug for Job {
             }
             Job::Export { .. } => write!(f, "Job::Export(<path and password hidden>)"),
             Job::Backup { .. } => write!(f, "Job::Backup(<path hidden>)"),
+            Job::RevealPhrase { .. } => write!(f, "Job::RevealPhrase(<password hidden>)"),
         }
     }
 }
@@ -108,6 +117,8 @@ pub enum JobKind {
     Export,
     /// Writing the encrypted backup file.
     Backup,
+    /// Checking the password to show a recovery phrase.
+    RevealPhrase,
 }
 
 impl JobKind {
@@ -163,6 +174,9 @@ pub struct WorkDone {
     pub returned: Option<ItemInput>,
     /// The outcome of an import or export job. `None` for every other kind.
     pub transfer: Option<TransferResult>,
+    /// The recovery phrase a successful reveal hands back. Wipes itself on drop.
+    /// `None` for every other kind and for a failed reveal. Never in `Debug`.
+    pub phrase: Option<SecretText>,
 }
 
 impl fmt::Debug for WorkDone {
@@ -203,6 +217,7 @@ pub fn spawn(
             let mut added = None;
             let mut returned = None;
             let mut transfer = None;
+            let mut phrase = None;
             let result = match job {
                 Job::Create(password, params) => {
                     let result = session.create(&password, &params);
@@ -255,6 +270,14 @@ pub fn spawn(
                     });
                     Ok(())
                 }
+                Job::RevealPhrase { id, password } => {
+                    // A wrong password counts toward the throttle inside the core.
+                    let result = session
+                        .reveal_phrase(id, &password)
+                        .map(|words| phrase = Some(SecretText::new(words.to_owned())));
+                    drop(password);
+                    result
+                }
             };
             // A send fails only if the app is gone; the session then drops here,
             // which wipes an unlocked vault.
@@ -265,6 +288,7 @@ pub fn spawn(
                 added,
                 returned,
                 transfer,
+                phrase,
             });
         });
     // On a spawn error the closure, and with it `tx`, is already dropped.
@@ -348,6 +372,12 @@ mod tests {
             KdfParams::FLOOR,
         );
         assert_eq!(format!("{job:?}"), "Job::Create(<password hidden>)");
+        let job = Job::RevealPhrase {
+            id: ItemId::random().unwrap(),
+            password: MasterPassword::new("EXAMPLE-pw".to_owned()),
+        };
+        assert_eq!(format!("{job:?}"), "Job::RevealPhrase(<password hidden>)");
+        assert!(!job.kind().is_transfer());
     }
 
     #[test]

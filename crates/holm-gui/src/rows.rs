@@ -8,13 +8,22 @@ use holm_core::item::{ItemId, ItemType};
 use holm_core::search::ItemSummary;
 use holm_core::text::Text;
 
+/// The subtitle of a crypto address with no chain name.
+pub const CRYPTO_SUBTITLE: &str = "Crypto address";
+/// The subtitle of every recovery phrase.
+pub const PHRASE_SUBTITLE: &str = "Recovery phrase";
+/// The subtitle of every secure note.
+pub const NOTE_SUBTITLE: &str = "Secure note";
+
 /// One line of the item list. The title and subtitle are zeroizing text.
 pub struct ItemRow {
     /// Which item the row stands for.
     pub id: ItemId,
+    /// What kind of item it is.
+    pub kind: ItemType,
     /// The item's title.
     pub title: Text,
-    /// The username, or else the first web address, or empty.
+    /// See [`subtitle`]: never a secret.
     pub subtitle: Text,
 }
 
@@ -22,29 +31,45 @@ impl fmt::Debug for ItemRow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ItemRow")
             .field("id", &self.id)
+            .field("kind", &self.kind)
             .field("title_len", &self.title.as_str().len())
             .field("subtitle_len", &self.subtitle.as_str().len())
             .finish()
     }
 }
 
-/// Builds the rows for the logins among `summaries` (from `Session::search`), sorted by
-/// title (ignoring case), then by id. Other item types are not listed here.
+/// Builds the rows for every item in `summaries` (from `Session::search`), sorted by
+/// title (ignoring case), then by id.
 #[must_use]
 pub fn build_rows(summaries: &[ItemSummary<'_>]) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = summaries
         .iter()
-        .filter(|s| s.item_type == ItemType::Login)
         .map(|s| ItemRow {
             id: s.id,
+            kind: s.item_type,
             title: Text::new(s.title.to_owned()),
-            subtitle: Text::new(s.subtitle.unwrap_or("").to_owned()),
+            subtitle: Text::new(subtitle(s).to_owned()),
         })
         .collect();
     rows.sort_by(|a, b| {
         cmp_ignoring_case(a.title.as_str(), b.title.as_str()).then_with(|| a.id.cmp(&b.id))
     });
     rows
+}
+
+/// The line under a row's title, by type: a login's username (else its first web
+/// address, else nothing), a crypto address's chain (else [`CRYPTO_SUBTITLE`]), and a
+/// fixed word for a phrase or a note. Never a secret field.
+fn subtitle<'a>(s: &ItemSummary<'a>) -> &'a str {
+    match s.item_type {
+        ItemType::Login => s.subtitle.unwrap_or(""),
+        ItemType::CryptoAddress => s
+            .subtitle
+            .filter(|c| !c.is_empty())
+            .unwrap_or(CRYPTO_SUBTITLE),
+        ItemType::RecoveryPhrase => PHRASE_SUBTITLE,
+        ItemType::SecureNote => NOTE_SUBTITLE,
+    }
 }
 
 /// Compares two strings char by char on their lowercase forms, without allocating.
@@ -61,7 +86,7 @@ mod tests {
     use holm_core::item::{ItemData, ItemInput};
     use holm_core::search::Query;
     use holm_core::session::Session;
-    use holm_core::text::SecretText;
+    use holm_core::text::{GatedSecret, SecretText};
     use holm_crypto::MasterPassword;
     use holm_crypto::kdf::KdfParams;
     use holm_platform::fs_store::FsStore;
@@ -90,11 +115,7 @@ mod tests {
         for i in inputs {
             session.add_item(i).unwrap();
         }
-        let query = Query {
-            item_type: Some(ItemType::Login),
-            ..Query::default()
-        };
-        build_rows(&session.search(&query).unwrap())
+        build_rows(&session.search(&Query::default()).unwrap())
     }
 
     #[test]
@@ -122,6 +143,61 @@ mod tests {
         assert_eq!(rows[0].subtitle.as_str(), "ada");
         assert_eq!(rows[1].subtitle.as_str(), "https://y.example.com");
         assert_eq!(rows[2].subtitle.as_str(), "");
+    }
+
+    fn other(title: &str, data: ItemData) -> ItemInput {
+        ItemInput {
+            title: Text::new(title.to_owned()),
+            category: None,
+            favourite: false,
+            data,
+        }
+    }
+
+    fn crypto(title: &str, chain: &str) -> ItemInput {
+        other(
+            title,
+            ItemData::CryptoAddress {
+                chain: Text::new(chain.to_owned()),
+                address: SecretText::new("EXAMPLE-addr".to_owned()),
+                memo: SecretText::new(String::new()),
+                notes: SecretText::new(String::new()),
+            },
+        )
+    }
+
+    #[test]
+    fn every_type_is_listed_with_its_subtitle() {
+        let rows = rows_for(vec![
+            input("a", "ada", &[]),
+            crypto("b", "Test chain"),
+            crypto("c", ""),
+            other(
+                "d",
+                ItemData::RecoveryPhrase {
+                    phrase: GatedSecret::new(SecretText::new("EXAMPLE words".to_owned())),
+                    notes: SecretText::new(String::new()),
+                },
+            ),
+            other(
+                "e",
+                ItemData::SecureNote {
+                    body: SecretText::new("EXAMPLE body".to_owned()),
+                },
+            ),
+        ]);
+        let got: Vec<(ItemType, &str)> =
+            rows.iter().map(|r| (r.kind, r.subtitle.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (ItemType::Login, "ada"),
+                (ItemType::CryptoAddress, "Test chain"),
+                (ItemType::CryptoAddress, CRYPTO_SUBTITLE),
+                (ItemType::RecoveryPhrase, PHRASE_SUBTITLE),
+                (ItemType::SecureNote, NOTE_SUBTITLE),
+            ]
+        );
     }
 
     #[test]

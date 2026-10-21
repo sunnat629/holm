@@ -213,6 +213,15 @@ impl HolmApp {
         app
     }
 
+    /// The session's password throttle (unlock, export and phrase checks share it). For
+    /// tests; built only with the `test-hooks` feature.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn throttle_status(&self) -> ThrottleStatus {
+        self.current_throttle()
+    }
+
     /// Replaces the worker spawner. For tests that need a worker that fails or waits;
     /// built only with the `test-hooks` feature.
     #[cfg(feature = "test-hooks")]
@@ -348,11 +357,11 @@ impl HolmApp {
                 self.lock(LockReason::Idle);
             }
         }
-        let throttle_wait = self.throttle_status().retry_after;
+        let throttle_wait = self.current_throttle().retry_after;
         let polled = match &mut self.screen {
             Screen::Working { rx, .. } => Some(rx.try_recv()),
             Screen::Unlock(_) => {
-                if let Some(wait) = self.throttle_status().retry_after {
+                if let Some(wait) = self.current_throttle().retry_after {
                     ctx.request_repaint_after(until_next_second(wait));
                 }
                 None
@@ -394,7 +403,7 @@ impl HolmApp {
                 self.request_lock();
             }
         }
-        let throttle = self.throttle_status();
+        let throttle = self.current_throttle();
         let kdf = self.kdf;
         let now = self.ui_clock.monotonic();
         let idle_left = self.idle_left(now);
@@ -445,6 +454,7 @@ impl HolmApp {
                         JobKind::Import => "Importing. This takes a moment.",
                         JobKind::Export => "Exporting. This takes a moment.",
                         JobKind::Backup => "Writing the backup. This takes a moment.",
+                        JobKind::RevealPhrase => "Checking the password. This takes a moment.",
                     });
                     None
                 }
@@ -561,7 +571,7 @@ impl HolmApp {
     }
 
     /// The session's throttle status, or no failures while there is no session.
-    fn throttle_status(&self) -> ThrottleStatus {
+    fn current_throttle(&self) -> ThrottleStatus {
         self.session
             .as_ref()
             .map_or(NO_FAILURES, Session::throttle_status)
@@ -602,13 +612,18 @@ impl HolmApp {
             added,
             returned,
             transfer,
+            phrase,
         } = done;
         let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
         {
             Screen::Working { keep, .. } => keep,
             _ => None,
         };
-        if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) || kind.is_transfer() {
+        if matches!(
+            kind,
+            JobKind::Add | JobKind::Update | JobKind::Save | JobKind::RevealPhrase
+        ) || kind.is_transfer()
+        {
             let mut view = keep.unwrap_or_else(VaultView::new);
             // `tick` skips the idle check while a job runs. Ask now, before the
             // finished job counts as activity, so an idle deadline or a sleep during
@@ -620,6 +635,10 @@ impl HolmApp {
             }
             view.on_done(kind, &result, added, returned, &session);
             view.on_transfer_done(kind, transfer, &session);
+            if kind == JobKind::RevealPhrase {
+                // A wrong password or a throttled try stays on the gate, never fatal.
+                view.on_phrase_done(&result, phrase, self.ui_clock.monotonic());
+            }
             self.screen = Screen::Vault(view);
             self.session = Some(session);
             if expired {
@@ -663,7 +682,8 @@ impl HolmApp {
                 | JobKind::PreviewImport
                 | JobKind::Import
                 | JobKind::Export
-                | JobKind::Backup,
+                | JobKind::Backup
+                | JobKind::RevealPhrase,
                 Err(_),
             ) => Screen::Fatal(messages::WORKER_LOST),
         };

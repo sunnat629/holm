@@ -1,11 +1,11 @@
-//! The open vault: the item list on the left, the selected login (or the form) on the
-//! right.
+//! The open vault: the item list on the left, the selected item (or the login form) on
+//! the right.
 //!
 //! The rows are built once from the session and owned here, so a frame never walks the
 //! vault. All vault work (add, update, save) leaves as a [`Job`] for the worker thread,
 //! and a lock request leaves as a [`VaultAction`] for the app. Locking drops this view,
-//! so its rows, any open form (whose secret buffer wipes on drop) and the reveal state
-//! all go with it.
+//! so its rows, any open form (whose secret buffer wipes on drop) and the item view
+//! (its reveal state, phrase gate and revealed phrase) all go with it.
 
 use core::fmt;
 use std::time::Duration;
@@ -14,16 +14,16 @@ use eframe::egui;
 use egui::TextBuffer as _;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::item::{ItemData, ItemId, ItemInput, ItemType};
+use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::search::Query;
 use holm_core::session::Session;
-use holm_core::settings::REHIDE_PASSWORD_SECS;
 use holm_core::text::{SecretText, Text};
 use holm_core::throttle::ThrottleStatus;
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use super::FieldIo;
+use super::item_view::{ItemAction, ItemView, show_item};
 use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
 use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
 use crate::file_dialog::DialogKind;
@@ -34,14 +34,6 @@ use holm_platform::transfer::TransferError;
 
 /// Label of the new-login button.
 pub(crate) const NEW_LABEL: &str = "New login";
-/// Label of the edit button.
-pub(crate) const EDIT_LABEL: &str = "Edit";
-/// Label of the reveal button.
-pub(crate) const REVEAL_LABEL: &str = "Reveal";
-/// Label of the hide button.
-pub(crate) const HIDE_LABEL: &str = "Hide";
-/// Label of the copy-password button.
-pub(crate) const COPY_LABEL: &str = "Copy";
 /// Label of the retry-save button.
 pub(crate) const RETRY_LABEL: &str = "Try again";
 /// Label of the lock button.
@@ -58,12 +50,6 @@ pub(crate) const SEARCH_LABEL: &str = "Search";
 pub(crate) const IMPORT_OPEN_LABEL: &str = "Import...";
 /// Label of the export button.
 pub(crate) const EXPORT_OPEN_LABEL: &str = "Export...";
-/// Shown under the list when items of other types exist.
-pub(crate) const OTHER_TYPES_PREFIX: &str = "Other items not shown here:";
-/// Shown with the count above. The command line lists every type.
-pub(crate) const OTHER_TYPES_HINT: &str = "Use `holm get` on the command line to see them.";
-/// How a hidden password looks.
-pub(crate) const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
 /// What the open vault asks the app to do.
 pub(crate) enum VaultAction {
@@ -83,7 +69,7 @@ pub(crate) enum VaultAction {
 enum DetailMode {
     /// Nothing selected.
     Empty,
-    /// The selected login, read-only.
+    /// The selected item, read-only.
     View,
     /// The form.
     Edit(LoginForm),
@@ -99,8 +85,9 @@ pub(crate) struct VaultView {
     selected: Option<ItemId>,
     /// The right-hand side.
     mode: DetailMode,
-    /// When the revealed password hides again (UI clock time), if it is revealed.
-    reveal_until: Option<Duration>,
+    /// The selected item's reveal state. Replaced (and so wiped) on every selection,
+    /// on Edit and on New login.
+    item: ItemView,
     /// The fixed line shown above the detail, if any.
     status: Option<&'static str>,
     /// Whether the last write failed and left changes unsaved in memory.
@@ -108,16 +95,12 @@ pub(crate) struct VaultView {
     /// The fixed line for that failed write. Kept apart from `status` so navigation and
     /// other messages never hide it while the session is dirty.
     save_error: Option<&'static str>,
-    /// The fixed line under the password after the Copy button, if any.
-    copy_note: Option<String>,
     /// Whether the unsaved-changes dialog of a manual lock is open.
     lock_dialog: bool,
     /// The search box. Wiped when the view drops on lock.
     search: LineBuf,
     /// The search text the rows were built with.
     searched: Zeroizing<String>,
-    /// How many matching items are not logins.
-    other_types: usize,
     /// The open import or export screen, if any.
     transfer: Option<Transfer>,
     /// Whether the session had unsaved changes when the running job started. A dirty
@@ -138,7 +121,7 @@ impl fmt::Debug for VaultView {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("VaultView")
             .field("rows", &self.rows.len())
-            .field("revealed", &self.reveal_until.is_some())
+            .field("revealed", &self.item.is_revealed())
             .finish_non_exhaustive()
     }
 }
@@ -151,15 +134,13 @@ impl VaultView {
             rows_stale: true,
             selected: None,
             mode: DetailMode::Empty,
-            reveal_until: None,
+            item: ItemView::new(),
             status: None,
             save_failed: false,
             save_error: None,
-            copy_note: None,
             lock_dialog: false,
             search: LineBuf::new(),
             searched: Zeroizing::new(String::new()),
-            other_types: 0,
             transfer: None,
             dirty_before_job: false,
         }
@@ -228,7 +209,8 @@ impl VaultView {
             DetailMode::Edit(form) => form.buffers_empty(),
             DetailMode::Empty | DetailMode::View => true,
         };
-        form && self.transfer.as_ref().is_none_or(Transfer::buffers_empty)
+        form && self.item.buffers_empty()
+            && self.transfer.as_ref().is_none_or(Transfer::buffers_empty)
     }
 
     /// Characters held by the form's secret buffer (0 when no form is open).
@@ -237,19 +219,27 @@ impl VaultView {
             DetailMode::Edit(form) => form.password.char_count(),
             DetailMode::Empty | DetailMode::View => 0,
         };
-        form + self
-            .transfer
-            .as_ref()
-            .map_or(0, Transfer::secret_char_count)
+        form + self.item.secret_char_count()
+            + self
+                .transfer
+                .as_ref()
+                .map_or(0, Transfer::secret_char_count)
     }
 
-    /// Hides a revealed password when its time is up or the window lost focus.
+    /// Hides a revealed field when its time is up or the window lost focus.
     pub(crate) fn tick(&mut self, now: Duration, focused: bool) {
-        if let Some(until) = self.reveal_until
-            && (now >= until || !focused)
-        {
-            self.reveal_until = None;
-        }
+        self.item.tick(now, focused);
+    }
+
+    /// Takes the worker's answer to a phrase check. The item view stays; `now` is the
+    /// UI clock, for the phrase's timer.
+    pub(crate) fn on_phrase_done(
+        &mut self,
+        result: &Result<(), CoreError>,
+        phrase: Option<SecretText>,
+        now: Duration,
+    ) {
+        self.item.on_phrase_done(result, phrase, now);
     }
 
     /// Takes the worker's answer for an item job.
@@ -261,10 +251,12 @@ impl VaultView {
         returned: Option<ItemInput>,
         session: &Session<FsStore>,
     ) {
+        if kind == JobKind::RevealPhrase {
+            return;
+        }
         self.rows_stale = true;
-        self.reveal_until = None;
+        self.item = ItemView::new();
         self.status = None;
-        self.copy_note = None;
         match (kind, result) {
             (JobKind::Add, Ok(())) | (JobKind::Update, Ok(())) => {
                 self.save_failed = false;
@@ -327,7 +319,8 @@ impl VaultView {
                 | JobKind::PreviewImport
                 | JobKind::Import
                 | JobKind::Export
-                | JobKind::Backup,
+                | JobKind::Backup
+                | JobKind::RevealPhrase,
                 _,
             ) => {}
         }
@@ -355,19 +348,10 @@ impl VaultView {
                 text: Zeroizing::new(self.searched.as_str().to_owned()),
                 ..Query::default()
             };
-            match session.search(&query) {
-                Ok(found) => {
-                    self.rows = build_rows(&found);
-                    self.other_types = found
-                        .iter()
-                        .filter(|s| s.item_type != ItemType::Login)
-                        .count();
-                }
-                Err(_) => {
-                    self.rows = Vec::new();
-                    self.other_types = 0;
-                }
-            }
+            self.rows = match session.search(&query) {
+                Ok(found) => build_rows(&found),
+                Err(_) => Vec::new(),
+            };
             self.rows_stale = false;
         }
         let mut action = None;
@@ -381,18 +365,24 @@ impl VaultView {
                     .add_enabled(idle, egui::Button::new(IMPORT_OPEN_LABEL))
                     .clicked()
                 {
+                    // The detail pane goes away: hide what it showed.
+                    self.item = ItemView::new();
                     self.transfer = Some(Transfer::import());
                 }
                 if ui
                     .add_enabled(idle, egui::Button::new(EXPORT_OPEN_LABEL))
                     .clicked()
                 {
+                    // The detail pane goes away: hide what it showed.
+                    self.item = ItemView::new();
                     self.transfer = Some(Transfer::export());
                 }
                 if ui
                     .add_enabled(idle, egui::Button::new(messages::BACKUP_BUTTON))
                     .clicked()
                 {
+                    // The detail pane goes away: hide what it showed.
+                    self.item = ItemView::new();
                     self.transfer = Some(Transfer::backup());
                 }
                 if ui.button(NEW_LABEL).clicked() {
@@ -426,7 +416,7 @@ impl VaultView {
                     let retry = self.show_save_banner(ui, session);
                     self.show_transfer(ui, throttle, io).or(retry)
                 } else {
-                    self.show_detail(ui, session, now, io)
+                    self.show_detail(ui, session, now, throttle, io)
                 }
             })
             .inner;
@@ -497,9 +487,8 @@ impl VaultView {
     /// Opens a blank login form in the detail pane.
     fn start_new_login(&mut self) {
         self.selected = None;
-        self.reveal_until = None;
+        self.item = ItemView::new();
         self.status = None;
-        self.copy_note = None;
         self.mode = DetailMode::Edit(LoginForm::new_blank());
     }
 
@@ -519,20 +508,15 @@ impl VaultView {
                     ui.small(row.subtitle.as_str());
                 }
             }
-            if self.other_types > 0 {
-                ui.separator();
-                ui.small(format!("{} {}", OTHER_TYPES_PREFIX, self.other_types));
-                ui.small(OTHER_TYPES_HINT);
-            }
         });
         if let Some(id) = clicked
             && self.selected != Some(id)
         {
             self.selected = Some(id);
             self.mode = DetailMode::View;
-            self.reveal_until = None;
+            // Leaving an item hides and wipes whatever it showed, and closes its gate.
+            self.item = ItemView::new();
             self.status = None;
-            self.copy_note = None;
         }
     }
 
@@ -567,6 +551,7 @@ impl VaultView {
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let mut job = None;
@@ -591,7 +576,7 @@ impl VaultView {
                 }
                 FormAction::Save => job = self.save_form(session),
             },
-            DetailMode::View => job = job.or(self.show_item(ui, session, now, io)),
+            DetailMode::View => job = job.or(self.show_item(ui, session, now, throttle, io)),
         }
         job
     }
@@ -632,18 +617,20 @@ impl VaultView {
         }
     }
 
-    /// The selected login, read-only, with the Copy button for its password.
-    /// Sets or clears the line under the Copy button (the app's clipboard clear
+    /// Sets or clears the line under the Copy buttons (the app's clipboard clear
     /// reports through it).
     pub(crate) fn set_copy_note(&mut self, note: Option<String>) {
-        self.copy_note = note;
+        self.item.set_copy_note(note);
     }
 
+    /// The selected item, read-only (see [`show_item`]). Edit opens the login form and
+    /// drops the item view, so whatever showed hides and wipes.
     fn show_item(
         &mut self,
         ui: &mut egui::Ui,
         session: Option<&Session<FsStore>>,
         now: Duration,
+        throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<Job> {
         let item = self
@@ -653,73 +640,21 @@ impl VaultView {
             ui.label(messages::SELECT_OR_ADD);
             return None;
         };
-        let ItemData::Login {
-            username,
-            password,
-            urls,
-            ..
-        } = item.data()
-        else {
-            ui.label(messages::SELECT_OR_ADD);
-            return None;
-        };
-        ui.heading(item.title());
-        ui.add_space(8.0);
-        ui.label(format!("Username: {}", username.as_str()));
-        if let Some(url) = urls.first() {
-            ui.label(format!("Web address: {}", url.as_str()));
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Password:");
-            match self.reveal_until {
-                Some(until) => {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(password.expose()).monospace())
-                            .selectable(false),
-                    );
-                    let left = until.saturating_sub(now);
-                    let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
-                    ui.label(format!("Visible \u{b7} hides in {secs} s"));
-                    if ui.button(HIDE_LABEL).clicked() {
-                        self.reveal_until = None;
+        match show_item(ui, item, &mut self.item, now, throttle, io) {
+            ItemAction::None => None,
+            ItemAction::Job(job) => Some(job),
+            ItemAction::Edit => {
+                self.item = ItemView::new();
+                match LoginForm::from_item(item) {
+                    Some(form) => {
+                        self.status = None;
+                        self.mode = DetailMode::Edit(form);
                     }
+                    None => self.status = Some(messages::SECRET_TOO_LONG),
                 }
-                None => {
-                    ui.label(DOTS);
-                    if ui.button(REVEAL_LABEL).clicked() {
-                        self.reveal_until =
-                            Some(now + Duration::from_secs(u64::from(REHIDE_PASSWORD_SECS)));
-                    }
-                }
-            }
-            // Only through Holm's clipboard (concealed), never egui's `copy_text`.
-            if ui.button(COPY_LABEL).clicked() {
-                self.copy_note = Some(match io.clipboard.set(password.expose()) {
-                    Ok(()) => {
-                        io.copied = Some(Zeroizing::new(password.expose().to_owned()));
-                        messages::copied_note(io.clear_secs)
-                    }
-                    Err(_) => messages::COPY_FAILED.to_owned(),
-                });
-            }
-        });
-        if let Some(note) = &self.copy_note {
-            ui.label(note.as_str());
-        }
-        ui.add_space(8.0);
-        if ui.button(EDIT_LABEL).clicked() {
-            self.reveal_until = None;
-            self.copy_note = None;
-            match LoginForm::from_item(item) {
-                Some(form) => {
-                    self.status = None;
-                    self.mode = DetailMode::Edit(form);
-                }
-                None => self.status = Some(messages::SECRET_TOO_LONG),
+                None
             }
         }
-        None
     }
 }
 

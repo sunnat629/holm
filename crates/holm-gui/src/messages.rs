@@ -88,8 +88,8 @@ pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on
 /// The stored password is longer than the edit form can hold.
 pub const SECRET_TOO_LONG: &str =
     "This password is too long to edit here, so it is shown read-only.";
-/// No login is selected.
-pub const SELECT_OR_ADD: &str = "Select a login, or add one.";
+/// No item is selected.
+pub const SELECT_OR_ADD: &str = "Select an item, or add a login.";
 /// The line after a copy, naming the vault's clipboard time. `secs` is clamped to the
 /// settings range, as the clear itself clamps it.
 #[must_use]
@@ -167,9 +167,17 @@ pub const BACKUP_DONE: &str = "Backup saved. It opens with this vault's master p
 /// label, not a status line, so it stays out of `ALL` (which holds full sentences).
 pub const EYE_LABEL: &str = "Show password while held";
 
+/// Label of the password field that guards a recovery phrase. A field label, not a
+/// status line, so it stays out of `ALL`.
+pub const PHRASE_PASSWORD_LABEL: &str = "Master password to show the phrase";
+/// Shown in place of Edit for items the app can't edit yet.
+pub const EDIT_IN_CLI: &str = "Edit this item with the holm command for now.";
+/// The phrase could not be shown for a reason other than the password.
+pub const PHRASE_FAILED: &str = "Holm couldn't show this phrase.";
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 55] = [
+const ALL: [&str; 57] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -225,6 +233,8 @@ const ALL: [&str; 55] = [
     EXPORT_THROTTLED,
     EXPORT_FAILED,
     BACKUP_DONE,
+    EDIT_IN_CLI,
+    PHRASE_FAILED,
 ];
 
 /// Why the vault locked.
@@ -339,6 +349,21 @@ pub fn export_error(e: &CoreError) -> &'static str {
         CoreError::WrongPassword => EXPORT_WRONG_PASSWORD,
         CoreError::Throttled { .. } => EXPORT_THROTTLED,
         _ => EXPORT_FAILED,
+    }
+}
+
+/// The line under the phrase gate for a failed reveal. A wrong password reads as on
+/// the unlock screen; a throttled try names the wait (the live throttle line replaces
+/// it while the wait runs). Never fatal: the item view stays.
+#[must_use]
+pub fn phrase_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
+            WRONG_PASSWORD
+        }
+        CoreError::Throttled { .. } => TOO_MANY_TRIES,
+        CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
+        _ => PHRASE_FAILED,
     }
 }
 
@@ -556,6 +581,25 @@ mod tests {
     fn backup_button_is_plain_label() {
         assert!(!BACKUP_BUTTON.is_empty());
         assert!(!BACKUP_BUTTON.contains(['{', '}', '%', '<', '>', '/', '\\']));
+    }
+
+    #[test]
+    fn phrase_password_label_is_plain_text() {
+        assert!(!PHRASE_PASSWORD_LABEL.is_empty());
+        assert!(!PHRASE_PASSWORD_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
+    }
+
+    #[test]
+    fn phrase_errors_are_never_fatal() {
+        assert_eq!(phrase_error(&CoreError::WrongPassword), WRONG_PASSWORD);
+        assert_eq!(
+            phrase_error(&CoreError::Throttled {
+                retry_after_secs: 2
+            }),
+            TOO_MANY_TRIES
+        );
+        assert_eq!(phrase_error(&CoreError::NotAPhrase), PHRASE_FAILED);
+        assert_eq!(phrase_error(&CoreError::Locked), PHRASE_FAILED);
     }
 
     #[test]

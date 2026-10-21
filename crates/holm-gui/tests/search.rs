@@ -129,13 +129,21 @@ fn search_cleared_on_lock() {
 }
 
 #[test]
-fn other_types_count_line() {
+fn every_type_is_listed() {
     let dir = tempfile::tempdir().unwrap();
     seed(
         dir.path(),
         vec![login("Example Mail"), crypto("Example Wallet")],
     );
-    let (harness, _clock) = unlock(dir.path());
-    assert_eq!(count(&harness, "Example Wallet"), 0);
-    let _ = harness.get_by_label("Other items not shown here: 1");
+    let (mut harness, _clock) = unlock(dir.path());
+    assert_eq!(count(&harness, "Example Mail"), 1);
+    assert_eq!(count(&harness, "Example Wallet"), 1);
+    assert!(
+        harness
+            .query_by_label_contains("Other items not shown")
+            .is_none()
+    );
+    type_into(&mut harness, "Search", "wallet");
+    assert_eq!(count(&harness, "Example Wallet"), 1);
+    assert_eq!(count(&harness, "Example Mail"), 0);
 }

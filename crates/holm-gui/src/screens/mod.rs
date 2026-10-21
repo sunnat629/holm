@@ -4,6 +4,7 @@
 //! themselves on drop.
 
 pub(crate) mod create;
+pub(crate) mod item_view;
 pub(crate) mod login_form;
 pub(crate) mod transfer;
 pub(crate) mod unlock;
