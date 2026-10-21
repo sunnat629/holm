@@ -47,6 +47,7 @@ security, three exercises, and what to read next in
 | 38 | [One clear for every client](38-one-clear-for-every-client.md): a trait in a shared crate with a test fake, owning a secret in `PendingClear::run(self)`, and two clocks (monotonic and wall) so a sleep cannot delay a deadline. |
 | 39 | [One flow, two front ends](39-one-flow-two-front-ends.md): generic functions over `S: VaultStore`, error enums that hold no payload, and `symlink_metadata` for "does anything exist here". |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
+| 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks
 
