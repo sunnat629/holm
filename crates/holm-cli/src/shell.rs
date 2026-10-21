@@ -15,18 +15,29 @@
 //! passes, the command is cancelled and the shell idle-locks before the line counts
 //! as activity.
 //!
+//! The shell also locks when the computer has slept (the vault's `lock_on_sleep`,
+//! on by default). A [`SleepWatch`] notes both clocks; on macOS the monotonic clock
+//! stops during sleep, so a wall clock that gained more than a few seconds on it means
+//! the computer slept. Every prompt that has something to protect (an open vault or a
+//! clipboard value) is given an interrupt that asks the watch about every 0.1 s, so
+//! the lock comes on waking, not at the next Enter. A line typed before the sleep is
+//! wiped and never runs. The shell has no event loop, so it can't hear a screen lock
+//! or a logout that comes without a sleep; the GUI can (`docs/CRYPTO.md`).
+//!
 //! Typed lines can hold secrets by mistake, so there is no history, and every line
 //! and word lives in a buffer that is wiped when dropped. Passwords are never read
 //! from a line: the commands ask for them at hidden prompts, as one-shot commands do.
 
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use holm_core::clock::Clock;
+use holm_core::clock::{Clock, SleepWatch};
 use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::session::Session;
 use holm_core::settings::{
@@ -41,7 +52,7 @@ use crate::args::{Command, CopyField, TOO_MANY, UsageError, parse_command};
 use crate::commands::copy::{self, Clip};
 use crate::commands::{read, transfer, write};
 use crate::output::CliError;
-use crate::term::Terminal;
+use crate::term::{Interrupt, Terminal};
 use crate::vault::{self, WRONG_PASSWORD};
 use crate::{Env, USAGE};
 use holm_platform::clip_clear::PendingClear;
@@ -66,6 +77,8 @@ const NOT_IN_SHELL: &str = "That command doesn't run inside the shell.";
 const DISCARD_PROMPT: &str = "Type discard to lock without saving: ";
 /// Added to a lock message when unsaved changes were dropped.
 const DISCARDED: &str = " Unsaved changes were discarded.";
+/// The lock message after the computer slept.
+const SLEEP_LOCKED: &str = "Locked because the computer slept.";
 /// A deadline is never closer than this, so a clock that lags by a moment can't
 /// make the prompt spin.
 const MIN_WAIT: Duration = Duration::from_millis(200);
@@ -196,17 +209,54 @@ impl Drop for Words {
 
 /// The terminal as a command inside the shell sees it. While the vault is open,
 /// every prompt gives up after the auto-lock time, counted from when the prompt
-/// starts, so a user who keeps answering is never cut off. No `Debug`: it is only a
-/// view of the terminal.
+/// starts, so a user who keeps answering is never cut off. While lock-on-sleep is
+/// armed, every prompt also stops when the computer has slept. No `Debug`: it is only
+/// a view of the terminal.
 struct IdleTerm<'t> {
     term: &'t mut dyn Terminal,
     /// The auto-lock time while the vault is open; None while it is locked.
     limit: Option<Duration>,
     /// Set when a prompt's idle deadline passed. The command saw a cancel.
     timed_out: bool,
+    /// The shell's clock, shared, for the sleep check.
+    clock: Rc<dyn Clock>,
+    /// The shell's sleep watch as of the last wake; None when lock-on-sleep is not
+    /// armed for this line.
+    watch: Option<SleepWatch>,
+    /// Set when a prompt stopped because the computer slept. The command saw a
+    /// cancel.
+    slept: bool,
 }
 
 impl IdleTerm<'_> {
+    /// Runs `ask` with this line's sleep interrupt (if armed). Returns its answer and
+    /// whether the interrupt fired.
+    fn with_interrupt<T>(
+        &mut self,
+        ask: impl FnOnce(&mut dyn Terminal, Interrupt<'_>) -> T,
+    ) -> (T, bool) {
+        let fired = Cell::new(false);
+        let clock = Rc::clone(&self.clock);
+        let watch = self.watch;
+        let check = || {
+            let slept = watch.is_some_and(|w| w.slept(clock.as_ref()));
+            if slept {
+                fired.set(true);
+            }
+            slept
+        };
+        let interrupt: Interrupt<'_> = if watch.is_some() { Some(&check) } else { None };
+        let answer = ask(&mut *self.term, interrupt);
+        (answer, fired.get())
+    }
+
+    /// The sleep interrupt fired: note it and cancel the command. Whatever came back
+    /// is dropped (and wiped).
+    fn slept_cancel<T>(&mut self) -> Result<T, TtyError> {
+        self.slept = true;
+        Err(TtyError::Cancelled)
+    }
+
     /// The idle deadline for a prompt that starts now.
     fn idle_deadline(&self) -> Option<Instant> {
         self.limit.map(|limit| Instant::now() + limit)
@@ -243,10 +293,15 @@ impl Terminal for IdleTerm<'_> {
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
         let idle = self.idle_deadline();
-        let answer = self
-            .term
-            .secret_until(prompt, max_bytes, earlier(deadline, idle))?;
-        self.ended(answer, deadline, idle)
+        let until = earlier(deadline, idle);
+        let (answer, slept) = self.with_interrupt(|term, interrupt| {
+            term.secret_interruptible(prompt, max_bytes, until, interrupt)
+        });
+        if slept {
+            drop(answer);
+            return self.slept_cancel();
+        }
+        self.ended(answer?, deadline, idle)
     }
 
     fn line(
@@ -256,12 +311,24 @@ impl Terminal for IdleTerm<'_> {
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
         let idle = self.idle_deadline();
-        let answer = self.term.line(prompt, max_bytes, earlier(deadline, idle))?;
-        self.ended(answer, deadline, idle)
+        let until = earlier(deadline, idle);
+        let (answer, slept) = self.with_interrupt(|term, interrupt| {
+            term.line_interruptible(prompt, max_bytes, until, interrupt)
+        });
+        if slept {
+            drop(answer);
+            return self.slept_cancel();
+        }
+        self.ended(answer?, deadline, idle)
     }
 
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
-        self.term.wait_for_key(until)
+        let (pressed, slept) = self
+            .with_interrupt(|term, interrupt| term.wait_for_key_interruptible(until, interrupt));
+        if slept {
+            return self.slept_cancel();
+        }
+        pressed
     }
 }
 
@@ -299,9 +366,12 @@ enum LockReason {
 /// The shell's state. No `Debug`: it holds the session and maybe a copied value.
 struct Shell<'a> {
     session: Session<FsStore>,
-    /// The shell's own clock, for prompt deadlines. The session keeps its own and
-    /// decides on its own whether the idle time has passed.
-    clock: Box<dyn Clock>,
+    /// The shell's own clock, for prompt deadlines and the sleep check. The session
+    /// keeps its own and decides on its own whether the idle time has passed. Shared
+    /// with each line's [`IdleTerm`], which asks it while a prompt waits.
+    clock: Rc<dyn Clock>,
+    /// Both clocks as of the last wake, to tell that the computer slept since.
+    watch: SleepWatch,
     env: &'a Env,
     /// When the last line was read, on the shell's clock.
     last_active: Duration,
@@ -336,10 +406,11 @@ pub(crate) fn shell(
     if !vault::exists(path) {
         return Err(CliError::NoVault);
     }
-    let clock = (env.clock)();
+    let clock: Rc<dyn Clock> = Rc::from((env.clock)());
     let mut sh = Shell {
         session: Session::new(FsStore::new(path), (env.clock)()),
         last_active: clock.monotonic(),
+        watch: SleepWatch::new(clock.as_ref()),
         clock,
         env,
         pending: None,
@@ -366,7 +437,15 @@ impl Shell<'_> {
             } else {
                 LOCKED_PROMPT
             };
-            let read = term.line(prompt, MAX_SHELL_LINE_BYTES, self.deadline());
+            let read = {
+                let watch = self.sleep_armed().then_some(self.watch);
+                let clock = self.clock.as_ref();
+                let check = || watch.is_some_and(|w| w.slept(clock));
+                let interrupt: Interrupt<'_> = if watch.is_some() { Some(&check) } else { None };
+                term.line_interruptible(prompt, MAX_SHELL_LINE_BYTES, self.deadline(), interrupt)
+            };
+            // A sleep, an idle lock or a clipboard clear, before the line counts. A line
+            // stopped by the sleep check came back as `Ok(None)` and was already wiped.
             self.on_wake(err)?;
             let line = match read {
                 // The deadline passed; `on_wake` did what was due.
@@ -448,7 +527,14 @@ impl Shell<'_> {
             },
         };
         let failed = result.is_err();
-        if term.timed_out {
+        if term.slept {
+            // The computer slept at one of the command's prompts. Lock now; the lock
+            // message says why the command stopped, so its cancel is not printed.
+            self.sleep_lock(err)?;
+            if !matches!(result, Err(CliError::Cancelled)) {
+                report(result, err)?;
+            }
+        } else if term.timed_out {
             // The user walked away at one of the command's prompts. Lock now, before
             // `after_line` counts the line as activity. The lock message says why
             // the command stopped, so its cancel is not printed.
@@ -533,6 +619,8 @@ impl Shell<'_> {
         }
         if vault::unlock_once(&mut self.session, term)? {
             self.last_active = self.clock.monotonic();
+            // A sleep before this unlock has nothing left to lock.
+            self.watch.mark(self.clock.as_ref());
         } else {
             writeln!(err, "{WRONG_PASSWORD}")?;
         }
@@ -556,6 +644,12 @@ impl Shell<'_> {
             writeln!(err, "holm: {}", CliError::NotSaved)?;
             match term.line(DISCARD_PROMPT, MAX_LINE_BYTES, None) {
                 Ok(Some(typed)) if typed.trim() == "discard" => {}
+                // The computer slept at this prompt: a sleep lock, which discards
+                // without asking.
+                Err(_) if term.slept => {
+                    self.sleep_lock(err)?;
+                    return Ok(true);
+                }
                 // Nobody answered within the auto-lock time: an idle lock, which
                 // discards without asking.
                 Err(_) if term.timed_out => {
@@ -583,9 +677,15 @@ impl Shell<'_> {
         Ok(true)
     }
 
-    /// After a prompt returns: an idle lock if the time has passed, then a clipboard
-    /// clear if one is due.
+    /// After a prompt returns: a sleep lock if the computer slept since the last wake
+    /// (and `lock_on_sleep` is on), then an idle lock if the time has passed, then a
+    /// clipboard clear if one is due.
     fn on_wake(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
+        let slept = self.watch.slept(self.clock.as_ref());
+        self.watch.mark(self.clock.as_ref());
+        if slept && self.lock_on_sleep() {
+            self.sleep_lock(err)?;
+        }
         if self.session.idle_expired() {
             self.idle_lock(err)?;
         }
@@ -618,8 +718,41 @@ impl Shell<'_> {
         Ok(())
     }
 
+    /// The sleep lock: clears the clipboard, then locks and says so. Like the idle
+    /// lock, it never waits and never asks; unsaved changes are dropped. A locked vault
+    /// only has its clipboard value cleared.
+    fn sleep_lock(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
+        self.clear_clipboard(err)?;
+        if !self.session.is_unlocked() {
+            return Ok(());
+        }
+        let outcome = self.session.lock();
+        let tail = if outcome.discarded_unsaved {
+            DISCARDED
+        } else {
+            ""
+        };
+        writeln!(err, "{SLEEP_LOCKED}{tail}")?;
+        Ok(())
+    }
+
+    /// The vault's `lock_on_sleep`. While locked the setting can't be read, so it
+    /// counts as on: then the sleep check can only clear a waiting clipboard value.
+    fn lock_on_sleep(&self) -> bool {
+        self.session.settings().map_or(true, |s| s.lock_on_sleep)
+    }
+
+    /// Whether prompts should stop when the computer has slept: `lock_on_sleep` is
+    /// on and there is something to protect (an open vault or a clipboard value).
+    /// Otherwise a prompt waits as before, and a sleep is still noticed on the next
+    /// line.
+    fn sleep_armed(&self) -> bool {
+        self.lock_on_sleep() && (self.session.is_unlocked() || self.pending.is_some())
+    }
+
     /// `term` for a command's own prompts: while the vault is open, each one gives
-    /// up after the auto-lock time.
+    /// up after the auto-lock time, and while lock-on-sleep is armed, each one stops
+    /// when the computer has slept.
     fn idle_term<'t>(&self, term: &'t mut dyn Terminal) -> IdleTerm<'t> {
         let limit = self
             .session
@@ -629,6 +762,9 @@ impl Shell<'_> {
             term,
             limit,
             timed_out: false,
+            clock: Rc::clone(&self.clock),
+            watch: self.sleep_armed().then_some(self.watch),
+            slept: false,
         }
     }
 

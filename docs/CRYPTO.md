@@ -458,9 +458,13 @@ Known gaps:
 - The terminal driver, the shell's line discipline before raw mode starts, and the
   kernel's tty buffers can hold typed bytes Holm cannot wipe.
 - `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
-- `holm shell` does not lock on OS sleep, screen lock or logout yet; after a wake the
-  first line is checked against the idle time (wall clock included) before it runs.
-  Phase 5.
+- `holm shell` locks on sleep (with `lock_on_sleep` on) by watching the wall clock gain
+  on the monotonic clock while it waits at a prompt; a partly typed line is wiped, not
+  run. It has no run loop, so it cannot see a screen lock, fast user switch or logout
+  that comes without a sleep; there the idle lock is the guard. A sleep shorter than
+  `SLEEP_GAP_SECS` (5 s) with no notification is missed, in the shell and in the GUI
+  alike (the GUI still gets the OS notification). A wall clock moved forward by more
+  than 5 s locks too, which errs on the safe side.
 - Command arguments (titles, usernames, web addresses, paths) are copied into plain
   `String`s by the parser and are not wiped. They are public fields, never secrets.
 

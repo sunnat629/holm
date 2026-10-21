@@ -81,6 +81,10 @@ mod macos {
             }
         };
         let options = native_options();
+        // On the main thread, before the window opens: the sleep, screen lock and
+        // logout observers. `None` only off the main thread; the wall-clock check in
+        // `tick` still catches a sleep then.
+        let lock_events = holm_platform::window::LockEvents::install();
         let result = eframe::run_native(
             "Holm",
             options,
@@ -94,6 +98,7 @@ mod macos {
                     // Opened on first copy or paste, not here.
                     clipboard: Box::new(SystemClipboard::new()),
                     file_dialog: Box::new(holm_gui::file_dialog::RfdDialog),
+                    lock_events,
                 })))
             }),
         );

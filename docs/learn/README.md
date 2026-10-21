@@ -49,6 +49,7 @@ security, three exercises, and what to read next in
 | 40 | [A native dialog from egui](40-a-native-dialog-from-egui.md): a trait seam around an OS dialog with a test fake, a two-frame state machine, and why blocking in `update` is allowed. |
 | 41 | [Backups and the Trash](41-backups-and-the-trash.md): confirm-by-typing for a destructive command, scoping a lookup to a view, an exhaustive `match` over a command enum, and why an encrypted copy needs no password re-entry. |
 | 42 | [One list, four shapes](42-one-list-four-shapes.md): an exhaustive `match` over the item data with no catch-all arm, a gated secret checked on the worker and handed back in a wiping `SecretText`, and a reveal timer as one `Option<(field, deadline)>` checked each frame. |
+| 43 | [Listening to the OS](43-listening-to-the-os.md): AppKit notification observers with a Rust closure as an Objective-C block, `Drop` to unregister, `Arc<AtomicBool>` with `swap(false)` as a one-bit mailbox, and the wall clock gaining on the monotonic clock as a sign of sleep. Kotlin: `BroadcastReceiver` for `ACTION_SCREEN_OFF`. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 

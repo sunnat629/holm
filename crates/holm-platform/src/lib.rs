@@ -5,7 +5,8 @@
 //! vault folder, and [`private_file`], the owner-only export file and the capped read
 //! of an import file. [`transfer`] is the one import and export flow shared by the CLI
 //! and the GUI. All five use the standard library only. On macOS the optional
-//! `gui-window` feature adds `window`, the window's minimised state from AppKit. The
+//! `gui-window` feature adds `window`: the window's minimised state and the sleep, screen
+//! lock and logout events, from AppKit. The
 //! optional `tty` feature (holm-cli) adds [`tty`]: the no-echo password prompt on the
 //! controlling terminal, through rustix's safe termios API. The optional `clipboard`
 //! feature (holm-cli, holm-gui) adds [`clipboard`]: the macOS pasteboard, with every copy marked

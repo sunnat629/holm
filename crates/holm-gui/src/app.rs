@@ -8,8 +8,8 @@
 //!
 //! Locking ([`HolmApp::lock`]) wipes the session's keys and data in the core and
 //! replaces the vault screen with an empty unlock form, which drops the vault view and
-//! everything it holds. [`HolmApp::tick`] runs the idle and minimise checks even in
-//! frames that draw nothing.
+//! everything it holds. [`HolmApp::tick`] runs the idle, minimise and sleep checks even
+//! in frames that draw nothing.
 
 use core::fmt;
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use eframe::egui;
-use holm_core::clock::Clock;
+use holm_core::clock::{Clock, SleepWatch};
 use holm_core::error::CoreError;
 use holm_core::session::Session;
 use holm_core::settings::{
@@ -30,6 +30,7 @@ use holm_platform::clip_clear::{ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
+use holm_platform::window::LockEvents;
 
 use crate::clipboard::SecretClipboard;
 use crate::file_dialog::{DialogKind, FileDialog};
@@ -66,6 +67,10 @@ pub struct AppConfig {
     pub clipboard: Box<dyn SecretClipboard>,
     /// The native file dialog (a fake in tests).
     pub file_dialog: Box<dyn FileDialog>,
+    /// The sleep, screen lock and logout observers, installed on the main thread
+    /// before the window opens. `None` in tests and when they could not be added; the
+    /// wall-clock check still catches a sleep.
+    pub lock_events: Option<LockEvents>,
 }
 
 /// Where the app learns whether its window is minimised. eframe's own
@@ -75,14 +80,30 @@ pub struct AppConfig {
 pub trait WindowState {
     /// `Some(true)` when the window is minimised, `None` when that is unknown.
     fn minimised(&self) -> Option<bool>;
+
+    /// True when the Mac slept, its screens slept, the screen locked or the session
+    /// went inactive since the last frame. Read once per frame.
+    fn os_lock_event(&self) -> bool {
+        false
+    }
 }
 
-/// The real window, asked through AppKit (`NSWindow.isMiniaturized`).
-pub struct AppKitWindow<'a>(pub &'a eframe::Frame);
+/// The real window, asked through AppKit (`NSWindow.isMiniaturized`), with the OS lock
+/// event already read from [`LockEvents`] for this frame.
+pub struct AppKitWindow<'a> {
+    /// The eframe frame, for the window handle.
+    pub frame: &'a eframe::Frame,
+    /// Whether [`LockEvents::take`] reported an event this frame.
+    pub os_lock_event: bool,
+}
 
 impl WindowState for AppKitWindow<'_> {
     fn minimised(&self) -> Option<bool> {
-        holm_platform::window::is_minimised(self.0)
+        holm_platform::window::is_minimised(self.frame)
+    }
+
+    fn os_lock_event(&self) -> bool {
+        self.os_lock_event
     }
 }
 
@@ -135,6 +156,16 @@ pub struct HolmApp {
     lock_note: Option<LockNote>,
     /// The unlock screen's line for `lock_note`.
     lock_line: Option<String>,
+    /// The OS sleep, screen lock and logout observers; `None` in tests.
+    lock_events: Option<LockEvents>,
+    /// Both UI clocks as of the last frame, to see that the Mac slept since.
+    sleep_watch: SleepWatch,
+    /// The open vault's `lock_on_sleep`, as last read, for frames where the session
+    /// is on the worker. On until a vault says otherwise.
+    lock_on_sleep: bool,
+    /// A sleep was seen while the worker held the session; the vault locks as soon
+    /// as the job hands it back.
+    slept_while_working: bool,
 }
 
 impl fmt::Debug for HolmApp {
@@ -171,7 +202,9 @@ impl HolmApp {
             ui_clock,
             clipboard,
             file_dialog,
+            lock_events,
         } = config;
+        let sleep_watch = SleepWatch::new(&*ui_clock);
         let mut app = HolmApp {
             session: None,
             instance_lock: None,
@@ -187,6 +220,10 @@ impl HolmApp {
             pending_clear: None,
             lock_note: None,
             lock_line: None,
+            lock_events,
+            sleep_watch,
+            lock_on_sleep: true,
+            slept_while_working: false,
         };
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
             app.screen = Screen::Fatal(messages::dir_error(e));
@@ -329,12 +366,24 @@ impl HolmApp {
 
     /// Per-frame work before drawing. eframe runs it even while the window is hidden,
     /// so the idle lock never waits for a drawn frame. With the vault open it locks at
-    /// once when `window` says it is minimised (eframe's own field only when `window`
-    /// does not know), or when the session's idle timer has run out (which also covers
-    /// a Mac waking from sleep, through the wall-clock gap); otherwise it asks for a
-    /// frame every second. It also takes the worker's answer when it is there. It never
-    /// records activity: input seen here may be stale.
+    /// once, in this order: when `window` says it is minimised (eframe's own field only
+    /// when `window` does not know); when the Mac slept, the screen locked or the
+    /// session went inactive (an OS event from `window`, or the wall clock gaining on
+    /// the monotonic clock) and the vault's `lock_on_sleep` is on; or when the
+    /// session's idle timer has run out. Otherwise it asks for a frame every second. It
+    /// also takes the worker's answer when it is there; a sleep seen while the worker
+    /// ran locks as soon as the answer is in. It never records activity: input seen
+    /// here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
+        // Both checks run every frame, so an event or a gap is used once and never
+        // carried into a later frame.
+        let os_event = window.os_lock_event();
+        let slept = self.sleep_watch.slept(&*self.ui_clock);
+        self.sleep_watch.mark(&*self.ui_clock);
+        let sleep_seen = os_event || slept;
+        if let Some(settings) = self.session.as_ref().and_then(|s| s.settings().ok()) {
+            self.lock_on_sleep = settings.lock_on_sleep;
+        }
         if let Some(pending) = &self.pending_clear {
             if pending.is_due(&*self.ui_clock) {
                 self.run_pending_clear();
@@ -353,9 +402,18 @@ impl HolmApp {
                 .or_else(|| ctx.input(|i| i.viewport().minimized));
             if minimised == Some(true) {
                 self.lock(LockReason::Minimised);
+            } else if sleep_seen && self.lock_on_sleep {
+                // `lock` runs the pending clipboard clear too.
+                self.lock(LockReason::Sleep);
             } else if self.session.as_ref().is_some_and(Session::idle_expired) {
                 self.lock(LockReason::Idle);
             }
+        } else if sleep_seen && self.lock_on_sleep {
+            if matches!(self.screen, Screen::Working { .. }) {
+                self.slept_while_working = true;
+            }
+            // Nothing is open to lock here, but a copied value still goes now.
+            self.run_pending_clear();
         }
         let throttle_wait = self.current_throttle().retry_after;
         let polled = match &mut self.screen {
@@ -381,6 +439,18 @@ impl HolmApp {
             None => {}
             Some(Ok(done)) => {
                 self.finish(done);
+                // The Mac slept while the job ran: lock before the vault is drawn, if
+                // the vault (now readable again) still asks for it.
+                if core::mem::take(&mut self.slept_while_working) {
+                    let on = self
+                        .session
+                        .as_ref()
+                        .and_then(|s| s.settings().ok())
+                        .map_or(self.lock_on_sleep, |s| s.lock_on_sleep);
+                    if on {
+                        self.lock(LockReason::Sleep);
+                    }
+                }
                 // The new screen may need checking at once (minimised or idle while the
                 // job ran), and a hidden window draws no frame of its own.
                 ctx.request_repaint();
@@ -726,7 +796,14 @@ impl eframe::App for HolmApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.tick(ctx, &AppKitWindow(frame));
+        let os_lock_event = self.lock_events.as_ref().is_some_and(LockEvents::take);
+        self.tick(
+            ctx,
+            &AppKitWindow {
+                frame,
+                os_lock_event,
+            },
+        );
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

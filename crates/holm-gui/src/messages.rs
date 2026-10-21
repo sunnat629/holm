@@ -174,10 +174,13 @@ pub const PHRASE_PASSWORD_LABEL: &str = "Master password to show the phrase";
 pub const EDIT_IN_CLI: &str = "Edit this item with the holm command for now.";
 /// The phrase could not be shown for a reason other than the password.
 pub const PHRASE_FAILED: &str = "Holm couldn't show this phrase.";
+/// The unlock screen's line after a lock on sleep, screen lock or logout.
+pub const LOCKED_SLEEP: &str =
+    "Holm locked because the Mac slept, the screen locked or you logged out.";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 57] = [
+const ALL: [&str; 58] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -235,6 +238,7 @@ const ALL: [&str; 57] = [
     BACKUP_DONE,
     EDIT_IN_CLI,
     PHRASE_FAILED,
+    LOCKED_SLEEP,
 ];
 
 /// Why the vault locked.
@@ -246,6 +250,9 @@ pub enum LockReason {
     Idle,
     /// The window was minimised.
     Minimised,
+    /// The Mac slept, its screens slept, the screen locked, or the user session went
+    /// inactive (fast user switching or logout).
+    Sleep,
 }
 
 /// What the unlock screen says about the last lock.
@@ -403,6 +410,7 @@ pub fn lock_line(note: &LockNote, auto_lock: Duration) -> String {
         LockReason::Manual => "Locked.".to_owned(),
         LockReason::Idle => format!("Locked after {} without use.", in_words(auto_lock)),
         LockReason::Minimised => "Locked when the window was minimised.".to_owned(),
+        LockReason::Sleep => LOCKED_SLEEP.to_owned(),
     };
     if note.discarded_unsaved {
         line.push_str(" Unsaved changes were discarded.");
@@ -655,6 +663,15 @@ mod tests {
         assert_eq!(
             lock_line(&note(LockReason::Manual, true), five),
             "Locked. Unsaved changes were discarded."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Sleep, false), five),
+            LOCKED_SLEEP
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Sleep, true), five),
+            "Holm locked because the Mac slept, the screen locked or you logged out. \
+             Unsaved changes were discarded."
         );
     }
 

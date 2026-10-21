@@ -64,7 +64,11 @@ arboard = { version = "=3.7.0", default-features = false }
 # feature adds no crate to the graph.
 raw-window-handle = { version = "=0.6.2", default-features = false, features = ["std"] }
 objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSWorkspace"] }
+# The same feature's OS lock events (sleep, screen lock, user switch): notification
+# observers with a block. Both are already in the graph through objc2-app-kit and eframe.
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSNotification", "NSDistributedNotificationCenter", "NSOperation", "NSString", "block2"] }
+block2 = { version = "=0.6.2", default-features = false, features = ["std"] }
 # Native open and save dialogs (holm-gui, macOS only). No default features: no async
 # runtime, no xdg-portal, no GTK. Newest release at least 14 days old when added.
 rfd = { version = "=0.17.2", default-features = false }

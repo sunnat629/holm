@@ -56,6 +56,13 @@ impl TestClock {
         let secs = i64::try_from(by.as_secs()).unwrap();
         self.unix_secs.fetch_add(secs, Ordering::SeqCst);
     }
+
+    /// Moves only the wall clock forward by `by`, as a sleep does: on macOS the
+    /// monotonic clock stops while the Mac sleeps.
+    pub fn sleep(&self, by: Duration) {
+        let secs = i64::try_from(by.as_secs()).unwrap();
+        self.unix_secs.fetch_add(secs, Ordering::SeqCst);
+    }
 }
 
 impl Clock for TestClock {
@@ -189,25 +196,39 @@ fn build_app(
         ui_clock: Box::new(clock.clone()),
         clipboard,
         file_dialog,
+        lock_events: None,
     });
     (app, clock)
 }
 
-/// A window whose minimised state the test sets by hand, in place of AppKit. Clones
-/// share the same state. Starts not minimised.
+/// A window whose minimised state and OS lock events the test sets by hand, in place
+/// of AppKit. Clones share the same state. Starts not minimised, with no event.
 #[derive(Clone, Default)]
-pub struct FakeWindow(Rc<Cell<bool>>);
+pub struct FakeWindow {
+    minimised: Rc<Cell<bool>>,
+    os_lock_event: Rc<Cell<bool>>,
+}
 
 impl FakeWindow {
     /// Minimises the window (`true`) or brings it back (`false`).
     pub fn set_minimised(&self, minimised: bool) {
-        self.0.set(minimised);
+        self.minimised.set(minimised);
+    }
+
+    /// Posts one OS lock event (sleep, screen lock or logout), as `LockEvents` would.
+    /// The next frame reads it, once.
+    pub fn post_os_lock_event(&self) {
+        self.os_lock_event.set(true);
     }
 }
 
 impl WindowState for FakeWindow {
     fn minimised(&self) -> Option<bool> {
-        Some(self.0.get())
+        Some(self.minimised.get())
+    }
+
+    fn os_lock_event(&self) -> bool {
+        self.os_lock_event.replace(false)
     }
 }
 
@@ -286,4 +307,18 @@ pub fn make_vault_with_clipboard(dir: &Path, password: &str, clipboard_clear_sec
     };
     // A shorter time is a stronger setting, so it needs no password.
     session.update_settings(settings, None).unwrap();
+}
+
+/// [`make_vault`], then turns `lock_on_sleep` off and saves.
+pub fn make_vault_without_lock_on_sleep(dir: &Path, password: &str) {
+    make_vault(dir, password);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    let password = MasterPassword::new(password.to_owned());
+    session.unlock(&password).unwrap();
+    let settings = holm_core::settings::Settings {
+        lock_on_sleep: false,
+        ..session.settings().unwrap().clone()
+    };
+    // Turning it off is a weaker setting, so it needs the password.
+    session.update_settings(settings, Some(&password)).unwrap();
 }

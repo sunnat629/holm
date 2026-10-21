@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Manual, idle and minimise lock, driven headless through the whole app.
+//! Manual, idle, minimise and sleep lock, driven headless through the whole app.
 //!
 //! The harness runs `tick` then `show` each frame, as eframe runs `logic` then `ui`.
 //! The session and the UI share one `TestClock`, so a test moves time by hand.
@@ -13,8 +13,9 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use common::{
-    FakeWindow, PASSWORD, TestClock, harness, harness_with_window, make_vault,
-    make_vault_with_auto_lock, run_until, test_app, vault_path,
+    FakeClipboard, FakeWindow, PASSWORD, TestClock, harness, harness_with_window, make_vault,
+    make_vault_with_auto_lock, make_vault_without_lock_on_sleep, run_until, test_app,
+    test_app_with_clipboard, vault_path,
 };
 use eframe::egui::{Event, Key, Modifiers, ViewportId, pos2};
 use egui_kittest::Harness;
@@ -595,4 +596,157 @@ fn job_end_while_minimised_asks_for_another_frame() {
         .state_mut()
         .tick(&eframe::egui::Context::default(), &window);
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+}
+
+/// An app on the vault already in `dir` (made by the caller), with a window the test
+/// can post OS events to, unlocked and holding one login.
+fn open_made_in_window(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, FakeWindow) {
+    let (app, clock) = test_app(dir);
+    let window = FakeWindow::default();
+    let mut harness = harness_with_window(app, window.clone());
+    harness.run();
+    unlock(&mut harness);
+    add_example(&mut harness);
+    assert!(nodes_with(&harness, ROW_TITLE) > 0, "the row is drawn");
+    (harness, clock, window)
+}
+
+/// A sleep, screen lock or logout event locks in the frame that reads it, before the
+/// vault rows are drawn.
+#[test]
+fn os_lock_event_locks_before_draw() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (mut harness, _clock, window) = open_made_in_window(dir.path());
+    window.post_os_lock_event();
+    // One frame: `tick` reads the event and locks, then `show` draws the unlock screen.
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert!(!harness.state().is_unlocked());
+    assert_eq!(
+        harness.state().lock_note(),
+        Some(LockNote {
+            reason: LockReason::Sleep,
+            discarded_unsaved: false
+        })
+    );
+    assert_eq!(
+        nodes_with(&harness, ROW_TITLE),
+        0,
+        "no row drawn that frame"
+    );
+    harness.run();
+    assert_locked(&harness, messages::LOCKED_SLEEP);
+}
+
+/// The wall clock gaining on the monotonic clock (the Mac slept, with no event seen)
+/// locks too, well before the auto-lock time.
+#[test]
+fn wall_jump_locks_gui() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (mut harness, clock, _window) = open_made_in_window(dir.path());
+    assert!(auto_lock(&harness) > Duration::from_secs(60));
+    clock.sleep(Duration::from_secs(60));
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness.state().lock_note().map(|n| n.reason),
+        Some(LockReason::Sleep)
+    );
+    assert_eq!(nodes_with(&harness, ROW_TITLE), 0);
+    harness.run();
+    assert_locked(&harness, messages::LOCKED_SLEEP);
+}
+
+/// With `lock_on_sleep` off, neither the OS event nor a wall-clock jump locks.
+#[test]
+fn lock_on_sleep_false_ignores_event() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault_without_lock_on_sleep(dir.path(), PASSWORD);
+    let (mut harness, clock, window) = open_made_in_window(dir.path());
+    window.post_os_lock_event();
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    clock.sleep(Duration::from_secs(60));
+    harness.step();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    assert!(harness.state().is_unlocked());
+    assert_eq!(harness.state().lock_note(), None);
+    assert!(
+        nodes_with(&harness, ROW_TITLE) > 0,
+        "the row is still drawn"
+    );
+}
+
+/// A sleep lock clears a copied password at once, through the pending clear, well
+/// before its clear time.
+#[test]
+fn sleep_lock_clears_clipboard() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let fake = FakeClipboard::default();
+    let (app, clock) = test_app_with_clipboard(dir.path(), Box::new(fake.clone()));
+    let window = FakeWindow::default();
+    let mut harness = harness_with_window(app, window.clone());
+    harness.run();
+    unlock(&mut harness);
+    add_example(&mut harness);
+    harness.get_by_label("Copy").click();
+    harness.run();
+    assert_eq!(fake.0.borrow().contents.as_deref(), Some(SECRET));
+    // Ten seconds asleep: less than the clear time, so only the sleep clears it.
+    clock.sleep(Duration::from_secs(10));
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(fake.0.borrow().clears, 1);
+    assert_eq!(fake.0.borrow().contents, None);
+    // The OS event path clears too (nothing left to clear now, so no second clear).
+    window.post_os_lock_event();
+    harness.step();
+    assert_eq!(fake.0.borrow().clears, 1);
+}
+
+/// A sleep seen while a save runs on the worker locks as soon as the answer is in,
+/// before the vault is drawn again.
+#[test]
+fn sleep_during_job_locks_when_job_ends() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (app, _clock) = test_app(dir.path());
+    let window = FakeWindow::default();
+    let mut harness = harness_with_window(app.with_spawner(held_worker), window.clone());
+    harness.run();
+    unlock(&mut harness);
+    let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
+    harness.get_by_label("New login").click();
+    harness.run();
+    type_into(&mut harness, "Title", ROW_TITLE);
+    type_into(&mut harness, "Password", SECRET);
+    harness.get_by_label("Save").click();
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    window.post_os_lock_event();
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    drop(hold);
+    let start = std::time::Instant::now();
+    while harness.state().screen_kind() == ScreenKind::Working {
+        assert!(start.elapsed() < WAIT, "job did not end");
+        std::thread::sleep(Duration::from_millis(10));
+        harness.step();
+    }
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness.state().lock_note().map(|n| n.reason),
+        Some(LockReason::Sleep)
+    );
+    assert_eq!(
+        nodes_with(&harness, ROW_TITLE),
+        0,
+        "no row drawn after the job"
+    );
+    harness.run();
+    assert_locked(&harness, messages::LOCKED_SLEEP);
 }
