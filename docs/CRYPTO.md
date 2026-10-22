@@ -460,8 +460,12 @@ Known gaps:
 - `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
 - `holm shell` locks on sleep (with `lock_on_sleep` on) by watching the wall clock gain
   on the monotonic clock while it waits at a prompt; a partly typed line is wiped, not
-  run. It has no run loop, so it cannot see a screen lock, fast user switch or logout
-  that comes without a sleep; there the idle lock is the guard. A sleep shorter than
+  run. It also locks when `/dev/console` gets a new owner (fast user switching, or the
+  login window, which root owns), read with `std::fs::metadata` at most once a second
+  while it waits; the owner is taken at shell start and at each unlock, and an owner
+  that can't be read is no change, so an error never locks. It has no run loop, so it
+  cannot see a screen lock (Ctrl-Cmd-Q) that neither sleeps nor switches users; there
+  the idle lock is the guard. A sleep shorter than
   `SLEEP_GAP_SECS` (5 s) with no notification is missed, in the shell and in the GUI
   alike (the GUI still gets the OS notification). A wall clock moved forward by more
   than 5 s locks too, which errs on the safe side.

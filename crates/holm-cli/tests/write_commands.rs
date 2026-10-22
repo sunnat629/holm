@@ -668,12 +668,41 @@ fn copy_wait_is_clamped_to_the_shared_range() {
             &mut FakeClip(Rc::clone(&clip)),
             &mut term,
             &mut err,
+            &holm_core::clock::SystemClock::new(),
         )
         .expect("copy");
         assert_eq!(term.prompts, vec![(Kind::Wait, waited.to_owned())]);
         let said = String::from_utf8(err).expect("utf8");
         assert!(said.contains(&format!("in {waited} seconds")), "{said}");
     }
+}
+
+/// A sleep during the one-shot copy wait clears the clipboard on wake: the wait polls
+/// the pending clear, whose wall-clock deadline passed while the Mac slept, so it ends
+/// with no key press and the value is cleared once.
+#[test]
+fn copy_wait_ends_on_wake_after_sleep() {
+    let clip = Rc::new(RefCell::new(ClipState::default()));
+    let clock = common::TestClock::new();
+    let mut term = FakeTerminal::new(&[]);
+    term.wait_stalls = true;
+    let asleep = clock.clone();
+    // Ninety-one seconds asleep, past the longest clear time, with no key pressed.
+    term.on_wait = Some(Box::new(move || asleep.sleep(91)));
+    let mut err = Vec::new();
+    copy_and_wait(
+        zeroize::Zeroizing::new("EXAMPLE-sleep".to_owned()),
+        90,
+        &mut FakeClip(Rc::clone(&clip)),
+        &mut term,
+        &mut err,
+        &clock,
+    )
+    .expect("copy");
+    assert_eq!(term.wait_interrupted, 1, "the interrupt ended the wait");
+    assert_eq!(clip.borrow().sets, 1);
+    assert_eq!(clip.borrow().clears, 1);
+    assert_eq!(clip.borrow().contents, None);
 }
 
 #[test]

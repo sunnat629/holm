@@ -19,6 +19,27 @@ use zeroize::Zeroizing;
 /// what was typed and answers `Ok(None)` (or false for a wait). `None` never stops.
 pub type Interrupt<'a> = Option<&'a dyn Fn() -> bool>;
 
+/// The device whose owner is the user at the Mac's screen.
+const CONSOLE: &str = "/dev/console";
+
+/// The user id that owns `/dev/console`, which macOS gives to the user at the screen:
+/// root at the login window, the other user after a fast user switch. A screen lock
+/// (Ctrl-Cmd-Q) keeps the same owner. None when it can't be read (missing, an error,
+/// or not Unix); the caller treats that as no change. Std only: one `stat`.
+#[must_use]
+pub fn console_owner() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(CONSOLE).ok().map(|m| m.uid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = CONSOLE;
+        None
+    }
+}
+
 /// Where Holm asks the user for input.
 pub trait Terminal {
     /// Asks for a secret with no echo, waiting as long as it takes.

@@ -5,6 +5,7 @@
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;
+use std::rc::Rc;
 
 use holm_cli::term::RealTerminal;
 use holm_cli::{Clip, Env};
@@ -28,6 +29,7 @@ fn main() -> ExitCode {
         default_vault: default_vault_path(),
         // Opened only by a `--copy` command, not at start-up.
         clip: Box::new(|| Ok(Box::new(ConcealedClipboard::open()?) as Box<dyn Clip>)),
+        console_owner: Rc::new(holm_cli::term::console_owner),
     };
     let stdout = io::stdout();
     let mut out = stdout.lock();

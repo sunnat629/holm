@@ -18,7 +18,7 @@ Item contents are encrypted. The header is not secret, but every header field is
 |---|---|---|
 | Steals or copies the vault file (laptop theft, backup leak) | Yes, primary | Argon2id plus XChaCha20-Poly1305. Security then rests on master password strength. |
 | Edits the vault file to weaken it or crash Holm | Yes | Every header field is authenticated. KDF costs are bounded before any work. The header parser, padding, body decode and the full open with a fixed key are fuzzed (`fuzz/`). |
-| Person at an unlocked, unattended computer | Partly | Auto-lock, lock on minimise, lock on sleep, screen lock and logout (the GUI listens for all four; `holm shell` locks on sleep and relies on auto-lock otherwise), password re-entry for recovery phrases and settings changes. |
+| Person at an unlocked, unattended computer | Partly | Auto-lock, lock on minimise, lock on sleep, screen lock and logout (the GUI listens for all four; `holm shell` locks on sleep and on a fast user switch or the login window, seen as a new `/dev/console` owner, but not on a screen lock (Ctrl-Cmd-Q) with neither, where it relies on auto-lock), password re-entry for recovery phrases and settings changes. |
 | Clipboard snooping and clipboard history | Partly | Auto-clear in the CLI, the shell and the GUI, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
 | Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Planned: signed releases, reproducible builds, SBOM. |

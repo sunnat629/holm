@@ -542,16 +542,38 @@ mod unix {
         use super::{LineOpts, Stop, TtyBytes, read_edited};
         use crate::tty::TtyError;
 
-        /// Yields `bytes` one at a time, then reads of zero bytes for ever (a terminal
-        /// in polling mode that nobody types into).
-        struct Typed(Vec<u8>);
+        /// After this many reads of zero bytes in a row, a test is stuck in a loop
+        /// that never stops: panic rather than hang.
+        const MAX_EMPTY_READS: u32 = 1000;
+
+        /// Yields its bytes one at a time, then reads of zero bytes (a terminal in
+        /// polling mode that nobody types into), up to [`MAX_EMPTY_READS`] in a row.
+        struct Typed {
+            bytes: Vec<u8>,
+            empty_reads: u32,
+        }
+
+        impl Typed {
+            fn new(bytes: &[u8]) -> Typed {
+                Typed {
+                    bytes: bytes.to_vec(),
+                    empty_reads: 0,
+                }
+            }
+        }
 
         impl Read for Typed {
             fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-                if self.0.is_empty() || out.is_empty() {
+                if self.bytes.is_empty() || out.is_empty() {
+                    self.empty_reads += 1;
+                    assert!(
+                        self.empty_reads < MAX_EMPTY_READS,
+                        "the read loop never stopped"
+                    );
                     return Ok(0);
                 }
-                out[0] = self.0.remove(0);
+                self.empty_reads = 0;
+                out[0] = self.bytes.remove(0);
                 Ok(1)
             }
         }
@@ -580,7 +602,7 @@ mod unix {
             // fires while the reader polls with nothing typed.
             let interrupt = after(4, &asked);
             let mut out = Vec::new();
-            let (line, flush) = read_edited(Typed(b"abc".to_vec()), &mut out, &opts(&interrupt));
+            let (line, flush) = read_edited(Typed::new(b"abc"), &mut out, &opts(&interrupt));
             assert!(matches!(line, Ok(None)));
             assert!(flush, "input typed after the interrupt is discarded");
             // Echo was off: only the final newline was written, never the bytes.
@@ -622,7 +644,7 @@ mod unix {
                 interrupt: None,
             };
             let mut out = Vec::new();
-            let (line, _) = read_edited(Typed(Vec::new()), &mut out, &o);
+            let (line, _) = read_edited(Typed::new(b""), &mut out, &o);
             assert_eq!(line.unwrap_err(), TtyError::EndOfInput);
         }
 
@@ -630,7 +652,7 @@ mod unix {
         fn interrupt_wins_over_a_passed_deadline() {
             let fired = || true;
             let mut bytes = TtyBytes {
-                reader: Typed(b"a".to_vec()),
+                reader: Typed::new(b"a"),
                 polling: true,
                 deadline: Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap()),
                 interrupt: Some(&fired),

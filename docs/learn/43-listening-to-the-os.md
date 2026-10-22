@@ -22,8 +22,9 @@ notices a sleep another way: the clocks disagree when it wakes.
 - `crates/holm-gui/src/app.rs`: `logic` takes the flag once per frame and passes it into
   `tick`, which locks before any vault row is drawn. `tick` also asks the `SleepWatch`.
 - `crates/holm-cli/src/shell.rs` and `crates/holm-platform/src/tty.rs`: the prompt
-  polls every 0.1 s with an interrupt that asks the `SleepWatch`. If it fires, the
-  half-typed line is wiped and the shell locks.
+  polls every 0.1 s with an interrupt that asks the `SleepWatch` (and, once a second,
+  who owns `/dev/console`). If it fires, the half-typed line is wiped and the shell
+  locks.
 
 All of it obeys the vault's `lock_on_sleep` setting, and every sleep lock clears a
 copied password through `PendingClear`.
@@ -85,7 +86,11 @@ main thread.
 
 Why `Arc` and not `Rc`? The block may be called by AppKit on any thread it chooses for
 the queue. `Arc<AtomicBool>` is `Send + Sync`, so that is safe whatever thread it runs on.
-`Rc<Cell<bool>>` would not compile there, which is the point.
+`Rc<Cell<bool>>` would still compile: objc2's `addObserverForName_object_queue_usingBlock`
+takes a `&DynBlock<dyn Fn(..)>` with no `Send` bound. But the method is `unsafe`, and its
+documented safety rule says the block must be sendable, because AppKit may run it on
+another thread. An `Rc` there is a data race the compiler does not catch. That is why the
+`// SAFETY:` comment names the `Arc<AtomicBool>` capture: the rule is ours to keep.
 
 `LockEvents::install()` returns `None` off the main thread
 (`MainThreadMarker::new()?`), because AppKit's workspace belongs to the main thread.
@@ -102,8 +107,9 @@ one. `SleepWatch` stores both at each mark and compares the two distances:
 .is_some_and(|gained| gained > SLEEP_GAP_SECS)
 ```
 
-Every step uses `checked_sub` / `checked_add`, so a strange clock gives `None`, not a
-panic or a wrap. A wall clock set *back* gives a negative gain, which is "no sleep". A
+The wall steps use `checked_sub` and the monotonic step uses `saturating_sub` (it
+never goes backwards, so it can't underflow anyway); there is no addition. A strange
+wall clock gives `None`, not a panic or a wrap. A wall clock set *back* gives a negative gain, which is "no sleep". A
 wall clock set *forward* by more than 5 s reads as a sleep and locks: a false lock is
 safe, a missed one is not.
 
@@ -111,8 +117,16 @@ Kotlin parallel from lesson 38: `System.currentTimeMillis()` against
 `SystemClock.uptimeMillis()`, which also stops in deep sleep. The difference between
 the two is how long the device slept.
 
-This is how the shell sees a sleep without any OS callback. It cannot see a screen lock
-that comes without a sleep, and the docs say so.
+This is how the shell sees a sleep without any OS callback.
+
+The shell also notices fast user switching and the login window without a callback:
+`/dev/console` belongs to whoever owns the screen (root at the login window). The shell
+notes the owner's uid at start and at each unlock (`std::fs::metadata` and
+`MetadataExt::uid()`, std only, no `unsafe`), and the same interrupt reads it again at
+most once a second. A new owner locks the shell as a sleep does. An owner that can't be
+read counts as no change, so an error never locks. It still cannot see a screen lock
+(Ctrl-Cmd-Q) that neither sleeps nor switches users, and the docs say so. Kotlin: polling
+a value on a timer when you can't register a `BroadcastReceiver`.
 
 ### 4. A closure borrowed per call
 

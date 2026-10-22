@@ -708,17 +708,41 @@ fn sleep_lock_clears_clipboard() {
     assert_eq!(fake.0.borrow().clears, 1);
 }
 
-/// A sleep seen while a save runs on the worker locks as soon as the answer is in,
-/// before the vault is drawn again.
+/// A sleep longer than the auto-lock time is still a sleep lock: the sleep check
+/// comes before the idle check.
+#[test]
+fn long_sleep_says_sleep_not_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    let (mut harness, clock, _window) = open_made_in_window(dir.path());
+    let a = auto_lock(&harness);
+    clock.sleep(a + Duration::from_secs(60));
+    harness.step();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness.state().lock_note().map(|n| n.reason),
+        Some(LockReason::Sleep)
+    );
+    harness.run();
+    assert_locked(&harness, messages::LOCKED_SLEEP);
+}
+
+/// A sleep seen while a save runs on the worker clears the clipboard at once and
+/// locks as soon as the answer is in, before the vault is drawn again.
 #[test]
 fn sleep_during_job_locks_when_job_ends() {
     let dir = tempfile::tempdir().unwrap();
     make_vault(dir.path(), PASSWORD);
-    let (app, _clock) = test_app(dir.path());
+    let fake = FakeClipboard::default();
+    let (app, _clock) = test_app_with_clipboard(dir.path(), Box::new(fake.clone()));
     let window = FakeWindow::default();
     let mut harness = harness_with_window(app.with_spawner(held_worker), window.clone());
     harness.run();
     unlock(&mut harness);
+    add_example(&mut harness);
+    harness.get_by_label("Copy").click();
+    harness.run();
+    assert_eq!(fake.0.borrow().contents.as_deref(), Some(SECRET));
     let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
     harness.get_by_label("New login").click();
     harness.run();
@@ -730,6 +754,9 @@ fn sleep_during_job_locks_when_job_ends() {
     window.post_os_lock_event();
     harness.step();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Working);
+    // The clipboard is cleared in that frame, while the job still runs.
+    assert_eq!(fake.0.borrow().clears, 1);
+    assert_eq!(fake.0.borrow().contents, None);
     drop(hold);
     let start = std::time::Instant::now();
     while harness.state().screen_kind() == ScreenKind::Working {

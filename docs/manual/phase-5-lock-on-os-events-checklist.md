@@ -25,7 +25,8 @@ macOS version and the chip.
 - Keep auto-lock at the default 300 s, so a lock within a minute is the sleep lock and
   not the idle lock. The lock line says which: the GUI shows "Holm locked because the
   Mac slept, the screen locked or you logged out."; the shell prints "Locked because the
-  computer slept."
+  computer slept." or, after a user switch, "Locked because the Mac switched to another
+  user or the login window."
 - Before each check, copy a password (GUI "Copy", shell `get <name> --copy`), so you can
   also see that the clipboard is cleared by the lock (paste into TextEdit: nothing).
 
@@ -36,7 +37,11 @@ macOS version and the chip.
   `sleep_lock_clears_clipboard`, `sleep_during_job_locks_when_job_ends`; shell tests
   `shell_locks_on_sleep_at_prompt`, `shell_locks_on_sleep_inside_inner_prompt`,
   `shell_keeps_typed_line_until_sleep_lock`, `shell_lock_on_sleep_false_stays_open`,
-  `sleep_while_locked_then_unlock_stays_open`; `tty` tests for interrupt and polling.
+  `sleep_while_locked_then_unlock_stays_open`, `shell_locks_when_console_user_changes`,
+  `shell_locks_on_console_change_inside_inner_prompt`,
+  `shell_unreadable_console_is_no_change`, `shell_unlock_takes_the_console_owner_again`;
+  `copy_wait_ends_on_wake_after_sleep` (one-shot `get --copy`); `tty` tests for
+  interrupt and polling.
 - [x] `LockEvents::install()` off the main thread returns `None`
   (`install_off_main_thread_is_none`).
 - [ ] Everything below needs a person at the Mac.
@@ -66,9 +71,9 @@ GUI:
 `holm shell`:
 - [ ] With the shell unlocked, press Ctrl-Cmd-Q, wait 5 s, log back in.
 - [ ] Expected: the shell stays unlocked. It has no run loop and cannot see a screen
-  lock that comes without a sleep; the idle lock (auto-lock time) still applies. If the
-  Mac slept while locked (screens off long enough for system sleep), it locks on wake.
-  Write down what you saw.
+  lock that neither sleeps nor switches users (the console keeps its owner); the idle
+  lock (auto-lock time) still applies. If the Mac slept while locked (screens off long
+  enough for system sleep), it locks on wake. Write down what you saw.
 
 ## 3. Fast user switch (Control Centre > user name > another user, or Login Window)
 
@@ -77,8 +82,12 @@ GUI:
 - [ ] Holm shows the unlock screen with the sleep lock line.
 
 `holm shell`:
-- [ ] Same as the screen lock: expected to stay unlocked unless the Mac slept. Write
-  down what you saw.
+- [ ] With the shell unlocked and a password copied, type a few letters at `holm>`
+  without Enter, switch to the login window (or another user), wait 5 s, switch back.
+- [ ] Within about a second of the switch the shell locked: it prints the user switch
+  lock line and the locked prompt, the half-typed letters were not run, and the
+  clipboard is empty. Check with `stat -f %Su /dev/console` in another terminal that
+  the console's owner changed while you were away (root at the login window).
 
 ## 4. Logout
 
@@ -97,7 +106,9 @@ settings screen lands.
 
 ## Known limits (expected, not failures)
 
-- `holm shell` locks on sleep only, not on a screen lock, user switch or logout that
-  comes without a sleep. The idle lock covers it there.
+- `holm shell` locks on sleep and on a new `/dev/console` owner (user switch, login
+  window), not on a screen lock (Ctrl-Cmd-Q) with neither. The idle lock covers it
+  there. If `/dev/console` can't be read, the user switch check is off (no lock on
+  errors).
 - A sleep shorter than 5 s with no notification is missed by the shell.
 - Setting the clock forward by more than 5 s locks both front ends. That is on purpose.

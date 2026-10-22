@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use holm_core::clock::{Clock, SystemClock};
+use holm_core::clock::Clock;
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -126,9 +126,9 @@ pub fn value_of(
     Ok(value)
 }
 
-/// Puts `value` on the clipboard, waits up to `secs` seconds or until Enter, then
-/// clears the clipboard if it still holds `value` or can't be read
-/// ([`clear_copied`]).
+/// Puts `value` on the clipboard, waits up to `secs` seconds (on either of `clock`'s
+/// clocks, so a sleep cannot stretch it) or until Enter, then clears the clipboard if
+/// it still holds `value` or can't be read ([`clear_copied`]).
 ///
 /// The clear runs even when the message or the wait fails; that error is returned
 /// after it.
@@ -143,11 +143,11 @@ pub fn copy_and_wait(
     clip: &mut dyn Clip,
     term: &mut dyn Terminal,
     err: &mut dyn Write,
+    clock: &dyn Clock,
 ) -> Result<(), CliError> {
     clip.set(&value).map_err(|_| CliError::CopyFailed)?;
     // One clamp for every client: the wait and the message use the clamped time.
-    let clock = SystemClock::new();
-    let pending = PendingClear::new(value, secs, &clock);
+    let pending = PendingClear::new(value, secs, clock);
     let wait = pending.due().saturating_sub(clock.monotonic());
     let until = Instant::now() + wait;
     let said = writeln!(
@@ -155,7 +155,11 @@ pub fn copy_and_wait(
         "Copied. Holm clears the clipboard in {} seconds. Press Enter to clear it now.",
         (wait + Duration::from_millis(500)).as_secs()
     );
-    let waited = term.wait_for_key(until);
+    // The wait also ends when the clear is due on either clock: `until` is monotonic,
+    // and a Mac asleep stops that clock, so after a wake only the wall clock shows
+    // that the time has passed.
+    let due = || pending.is_due(clock);
+    let waited = term.wait_for_key_interruptible(until, Some(&due));
     let cleared = clear_copied(clip, pending.value());
     drop(pending);
     let cleared = cleared?;
@@ -188,7 +192,8 @@ pub fn get_copy(
         (value, settings.clipboard_clear_secs)
         // `opened` drops here: the session locks and the folder lock is released.
     };
-    copy_and_wait(value, secs, clip.as_mut(), term, err)
+    let clock = (env.clock)();
+    copy_and_wait(value, secs, clip.as_mut(), term, err, &*clock)
 }
 
 /// `holm gen [KIND] --copy`: a new value from the default spec, copied for
@@ -206,7 +211,15 @@ pub fn gen_copy(
 ) -> Result<(), CliError> {
     let mut clip = open_clip(env)?;
     let value = gen_secret(args.kind)?;
-    copy_and_wait(value, CLIPBOARD_DEFAULT_SECS, clip.as_mut(), term, err)
+    let clock = (env.clock)();
+    copy_and_wait(
+        value,
+        CLIPBOARD_DEFAULT_SECS,
+        clip.as_mut(),
+        term,
+        err,
+        &*clock,
+    )
 }
 
 /// A new value of `kind` from the default spec, in a wiping buffer.

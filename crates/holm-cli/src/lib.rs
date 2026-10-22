@@ -21,6 +21,7 @@ pub mod vault;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::rc::Rc;
 
 use holm_core::clock::Clock;
 use holm_crypto::kdf::KdfParams;
@@ -33,7 +34,8 @@ pub use crate::output::CliError;
 use crate::term::Terminal;
 
 /// What a run needs from outside: the key-derivation costs for a new vault, a clock
-/// for each session, the default vault path, and the clipboard.
+/// for each session, the default vault path, the clipboard, and who owns the Mac's
+/// screen.
 pub struct Env {
     /// The costs `init` uses. `KdfParams::DEFAULT` in the app; tests use the floor.
     pub kdf: KdfParams,
@@ -44,6 +46,10 @@ pub struct Env {
     /// Opens the clipboard for `--copy`. The app opens the macOS pasteboard; tests
     /// pass a fake.
     pub clip: Box<dyn Fn() -> Result<Box<dyn Clip>, ClipboardError>>,
+    /// The user id that owns the Mac's screen now, or None if it can't be read
+    /// ([`term::console_owner`] in the app; tests pass a fake). `holm shell` locks
+    /// when it changes.
+    pub console_owner: Rc<dyn Fn() -> Option<u32>>,
 }
 
 /// The help text.

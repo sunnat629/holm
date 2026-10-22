@@ -96,6 +96,9 @@ Phase 5 (platform hardening and GUI polish)
 - Password from a file descriptor for scripts (Phase 6 at the earliest; needs an owner call).
 - OS sleep, screen-lock and logout events.
 - `holm shell`: lock on OS sleep, screen lock and logout (today it locks on idle, `lock` and exit only).
+- P5 T7 review M8: no GUI or CLI control for the `lock_on_sleep` setting (on by default; only tests turn it off). Add a toggle with the settings screen.
+- P5 T7 review M8: Phase 6 option: a background `CFRunLoop` thread in `holm shell` to hear the full OS events (screen lock with Ctrl-Cmd-Q, logout), as the GUI does. Today the shell sees a sleep (two clocks) and a user switch or the login window (the `/dev/console` owner, added in the T7 fix round) only.
+- P5 T7 review M8: the shell's `/dev/console` owner check treats a read error as no change (never locks on it), and re-takes the owner at each unlock, so over SSH it watches whoever owns the screen. Revisit if a stricter rule is wanted.
 - Screen-capture exclusion (`with_content_protected`).
 - Per-OS durable save.
 - Windows and Linux GUI (winit `x11` and `wayland` features), and compiling the Linux and Windows builds at all (nothing compiles them while Actions is off).
