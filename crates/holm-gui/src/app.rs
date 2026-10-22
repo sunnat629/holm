@@ -273,11 +273,15 @@ impl HolmApp {
         self
     }
 
-    /// Drops every text-edit state (undo history) once after a lock. A field keeps its
+    /// Drops every text-edit state (undo history) and scroll offset once after a lock. A field keeps its
     /// id across lock and unlock, so without this its old history would answer Cmd+Z.
     fn apply_forget(&mut self, ctx: &egui::Context) {
         if self.forget_text_state {
-            ctx.data_mut(|d| d.remove_by_type::<egui::text_edit::TextEditState>());
+            ctx.data_mut(|d| {
+                d.remove_by_type::<egui::text_edit::TextEditState>();
+                // The list reopens at the top, not where the user was.
+                d.remove_by_type::<egui::scroll_area::State>();
+            });
             self.forget_text_state = false;
         }
     }

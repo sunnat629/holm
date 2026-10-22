@@ -795,6 +795,17 @@ fn type_in_search_and_import_path(harness: &mut Harness<'static, HolmApp>) {
     assert_eq!(field_value(harness, "File path"), "EXAMPLE");
 }
 
+/// No text-edit state (undo history) may remain in egui memory after a lock.
+fn assert_no_text_state(harness: &Harness<'static, HolmApp>) {
+    assert_eq!(
+        harness
+            .ctx
+            .data(|d| d.count::<eframe::egui::text_edit::TextEditState>()),
+        0,
+        "text-edit state kept while locked"
+    );
+}
+
 /// After an unlock, Cmd+Z in Search and in the import path field restores nothing.
 fn assert_undo_restores_nothing(harness: &mut Harness<'static, HolmApp>) {
     unlock(harness);
@@ -820,6 +831,7 @@ fn undo_memory_cleared_on_lock() {
     harness.get_by_label("Lock").click();
     harness.run();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_no_text_state(&harness);
     assert_undo_restores_nothing(&mut harness);
 }
 
@@ -831,6 +843,26 @@ fn undo_memory_cleared_on_idle_lock() {
     clock.advance(auto_lock(&harness));
     harness.run();
     assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_no_text_state(&harness);
+    assert_undo_restores_nothing(&mut harness);
+}
+
+#[test]
+fn undo_memory_cleared_on_minimise_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock, window) = open_in_window(dir.path());
+    type_in_search_and_import_path(&mut harness);
+    window.set_minimised(true);
+    harness.step();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness.state().lock_note().map(|n| n.reason),
+        Some(LockReason::Minimised)
+    );
+    assert_no_text_state(&harness);
+    window.set_minimised(false);
+    harness.run();
     assert_undo_restores_nothing(&mut harness);
 }
 
@@ -846,5 +878,6 @@ fn undo_memory_cleared_on_sleep_lock() {
         harness.state().lock_note().map(|n| n.reason),
         Some(LockReason::Sleep)
     );
+    assert_no_text_state(&harness);
     assert_undo_restores_nothing(&mut harness);
 }

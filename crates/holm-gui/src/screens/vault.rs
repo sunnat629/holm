@@ -351,18 +351,26 @@ impl VaultView {
                 text: Zeroizing::new(self.searched.as_str().to_owned()),
                 ..Query::default()
             };
-            self.rows = match session.search(&query) {
-                Ok(found) => build_rows(&found),
-                Err(_) => Vec::new(),
-            };
-            self.totals = if self.searched.is_empty() {
-                tally(&self.rows)
-            } else {
-                match session.search(&Query::default()) {
-                    Ok(all) => tally(&build_rows(&all)),
-                    Err(_) => (0, 0),
+            let mut totals = None;
+            match session.search(&query) {
+                Ok(found) => {
+                    self.rows = build_rows(&found);
+                    if self.searched.is_empty() {
+                        totals = Some(tally(&self.rows));
+                    }
                 }
-            };
+                Err(_) => self.rows = Vec::new(),
+            }
+            // The footer counts the vault, whatever the search did. If this fails too,
+            // the last good counts stay.
+            if totals.is_none()
+                && let Ok(all) = session.search(&Query::default())
+            {
+                totals = Some(tally(&build_rows(&all)));
+            }
+            if let Some(t) = totals {
+                self.totals = t;
+            }
             self.rows_stale = false;
         }
         let mut action = None;
@@ -516,6 +524,9 @@ impl VaultView {
                 ui.label(count_line(self.totals.0, self.totals.1, shown));
             });
         let mut clicked = None;
+        // Solid, not floating: the default style paints the bar fully transparent
+        // until the pointer is over it. Scoped to this panel's ui.
+        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
         egui::ScrollArea::vertical()
             .id_salt("item-list")
             .auto_shrink([false, false])
@@ -704,6 +715,7 @@ pub(crate) fn count_line(logins: usize, others: usize, shown: Option<usize>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use holm_core::clock::SystemClock;
 
     #[test]
     fn count_line_plurals_and_shown() {
@@ -718,7 +730,6 @@ mod tests {
             "2 logins, 2 other items, 4 shown"
         );
     }
-    use holm_core::clock::SystemClock;
 
     fn locked_session() -> Session<FsStore> {
         let dir = tempfile::tempdir().unwrap();

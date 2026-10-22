@@ -42,6 +42,13 @@ goes in a `Panel::bottom` shown first, so the area gets only the height left ove
 The test proves it: the bar must end inside the screen, and after 80 wheel events the last
 row is in view and the first one is not.
 
+One trap: `ScrollBarVisibility::AlwaysVisible` only keeps the bar's hit area alive. egui's
+default "floating" scroll style paints the bar at opacity 0 until the pointer comes near, so
+the owner saw nothing. The list therefore sets `ScrollStyle::solid()` on its own `ui`, which
+paints the bar at full opacity. The test checks painted shapes (an opaque rect at least 4 pt
+wide inside the bar area, no pointer), not just the accessibility node. The scroll offset is
+also dropped on lock, so the list reopens at the top.
+
 ### 3. egui's `IdTypeMap` and undo history
 
 egui keeps per-widget state in `ctx.data`, an `IdTypeMap`: a map from (widget id, Rust type)

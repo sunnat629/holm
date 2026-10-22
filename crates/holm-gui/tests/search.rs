@@ -174,15 +174,27 @@ fn many(n: usize) -> Vec<ItemInput> {
     (0..n).map(|i| login(&titled(i))).collect()
 }
 
-/// The scroll bar's screen rect, from its accessibility node.
+/// The list's scroll bar rect, from its accessibility node: the leftmost bar, which is
+/// the one in the list panel.
 fn scroll_bar_rect(harness: &Harness<'static, HolmApp>) -> eframe::egui::Rect {
     use egui_kittest::kittest::NodeT;
     harness
         .root()
         .children_recursive()
-        .find(|n| n.accesskit_node().role() == eframe::egui::accesskit::Role::ScrollBar)
+        .filter(|n| n.accesskit_node().role() == eframe::egui::accesskit::Role::ScrollBar)
         .map(|n| n.rect())
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
         .expect("a scroll bar node")
+}
+
+/// Every filled rect in `shape`, nested shapes included.
+fn filled_rects(shape: &eframe::egui::epaint::Shape, out: &mut Vec<(eframe::egui::Rect, u8)>) {
+    use eframe::egui::epaint::Shape;
+    match shape {
+        Shape::Rect(r) => out.push((r.rect, r.fill.a())),
+        Shape::Vec(v) => v.iter().for_each(|s| filled_rects(s, out)),
+        _ => {}
+    }
 }
 
 fn title_rect(harness: &Harness<'static, HolmApp>, title: &str) -> eframe::egui::Rect {
@@ -198,6 +210,23 @@ fn scroll_bar_is_always_drawn() {
     harness.run();
     let bar = scroll_bar_rect(&harness);
     assert!(bar.width() > 0.0 && bar.height() > 0.0, "bar {bar:?}");
+    // Pixels, not the node: with no pointer anywhere, some opaque rect at least 4 pt
+    // wide must lie inside the bar's area (the handle or its track).
+    let mut rects = Vec::new();
+    for clipped in &harness.output().shapes {
+        filled_rects(&clipped.shape, &mut rects);
+    }
+    let slack = 0.5;
+    let painted = rects.iter().any(|(r, alpha)| {
+        *alpha > 0
+            && r.width() >= 4.0
+            && r.height() >= 12.0
+            && r.min.x >= bar.min.x - slack
+            && r.max.x <= bar.max.x + slack
+            && r.min.y >= bar.min.y - slack
+            && r.max.y <= bar.max.y + slack
+    });
+    assert!(painted, "no visible bar shape in {bar:?}");
 }
 
 #[test]
@@ -261,4 +290,39 @@ fn note(title: &str) -> ItemInput {
             body: SecretText::new("EXAMPLE body".to_owned()),
         },
     }
+}
+
+#[test]
+fn list_scroll_resets_on_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), many(200));
+    let (mut harness, _clock) = unlock(dir.path());
+    let bar = scroll_bar_rect(&harness);
+    harness.hover_at(bar.center() - eframe::egui::vec2(40.0, 0.0));
+    harness.run();
+    for _ in 0..80 {
+        harness.event(Event::MouseWheel {
+            unit: eframe::egui::MouseWheelUnit::Point,
+            delta: eframe::egui::vec2(0.0, -400.0),
+            phase: eframe::egui::TouchPhase::Move,
+            source: eframe::egui::MouseWheelSource::Wheel,
+            modifiers: eframe::egui::Modifiers::NONE,
+        });
+        harness.run();
+    }
+    let last = titled(199);
+    assert!(
+        title_rect(&harness, &last).min.y < bar.max.y,
+        "scrolled down"
+    );
+    harness.get_by_label("Lock").click();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness
+            .ctx
+            .data(|d| d.count::<eframe::egui::scroll_area::State>()),
+        0,
+        "no scroll state kept while locked"
+    );
 }
