@@ -777,3 +777,74 @@ fn sleep_during_job_locks_when_job_ends() {
     harness.run();
     assert_locked(&harness, messages::LOCKED_SLEEP);
 }
+
+// ---- Undo memory (Task 8) ----
+
+/// The text now in the field labelled `label`.
+fn field_value(harness: &Harness<'static, HolmApp>, label: &str) -> String {
+    harness.get_by_label(label).value().unwrap_or_default()
+}
+
+/// Types a secret-looking marker into Search and into the import path field.
+fn type_in_search_and_import_path(harness: &mut Harness<'static, HolmApp>) {
+    type_into(harness, "Search", "EXAMPLE");
+    assert_eq!(field_value(harness, "Search"), "EXAMPLE");
+    harness.get_by_label("Import...").click();
+    harness.run();
+    type_into(harness, "File path", "EXAMPLE");
+    assert_eq!(field_value(harness, "File path"), "EXAMPLE");
+}
+
+/// After an unlock, Cmd+Z in Search and in the import path field restores nothing.
+fn assert_undo_restores_nothing(harness: &mut Harness<'static, HolmApp>) {
+    unlock(harness);
+    harness.get_by_label("Search").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_eq!(field_value(harness, "Search"), "", "Search undo is empty");
+    harness.get_by_label("Import...").click();
+    harness.run();
+    harness.get_by_label("File path").click();
+    harness.run();
+    harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    harness.run();
+    assert_eq!(field_value(harness, "File path"), "", "path undo is empty");
+}
+
+#[test]
+fn undo_memory_cleared_on_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    type_in_search_and_import_path(&mut harness);
+    harness.get_by_label("Lock").click();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_undo_restores_nothing(&mut harness);
+}
+
+#[test]
+fn undo_memory_cleared_on_idle_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, clock) = open(dir.path());
+    type_in_search_and_import_path(&mut harness);
+    clock.advance(auto_lock(&harness));
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_undo_restores_nothing(&mut harness);
+}
+
+#[test]
+fn undo_memory_cleared_on_sleep_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock, window) = open_in_window(dir.path());
+    type_in_search_and_import_path(&mut harness);
+    window.post_os_lock_event();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(
+        harness.state().lock_note().map(|n| n.reason),
+        Some(LockReason::Sleep)
+    );
+    assert_undo_restores_nothing(&mut harness);
+}

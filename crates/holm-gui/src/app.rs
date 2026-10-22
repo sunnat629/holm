@@ -133,6 +133,9 @@ pub struct HolmApp {
     screen: Screen,
     /// Argon2 costs for a new vault.
     kdf: KdfParams,
+    /// Set by [`lock`](Self::lock) for every reason: the next frame drops all text-edit
+    /// state (undo history) so typed text cannot come back through Cmd+Z after unlock.
+    forget_text_state: bool,
     /// The UI's clock.
     ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets and pastes. The only clipboard the app uses.
@@ -219,6 +222,7 @@ impl HolmApp {
             last_activity: Duration::ZERO,
             pending_clear: None,
             lock_note: None,
+            forget_text_state: false,
             lock_line: None,
             lock_events,
             sleep_watch,
@@ -269,6 +273,15 @@ impl HolmApp {
         self
     }
 
+    /// Drops every text-edit state (undo history) once after a lock. A field keeps its
+    /// id across lock and unlock, so without this its old history would answer Cmd+Z.
+    fn apply_forget(&mut self, ctx: &egui::Context) {
+        if self.forget_text_state {
+            ctx.data_mut(|d| d.remove_by_type::<egui::text_edit::TextEditState>());
+            self.forget_text_state = false;
+        }
+    }
+
     /// Locks the vault: the core wipes its keys and data, and the vault screen is
     /// replaced by an empty unlock form, which drops the vault view (its rows, any open
     /// form and its secret buffer, and the reveal state). The unlock screen then says
@@ -286,6 +299,7 @@ impl HolmApp {
         self.run_pending_clear();
         self.screen = Screen::Unlock(UnlockForm::new());
         self.focus = FieldFocus::None;
+        self.forget_text_state = true;
         let note = LockNote {
             reason,
             discarded_unsaved: outcome.discarded_unsaved,
@@ -375,6 +389,7 @@ impl HolmApp {
     /// ran locks as soon as the answer is in. It never records activity: input seen
     /// here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
+        self.apply_forget(ctx);
         // Both checks run every frame, so an event or a gap is used once and never
         // carried into a later frame.
         let os_event = window.os_lock_event();
@@ -467,6 +482,7 @@ impl HolmApp {
     /// Draws the current screen, and starts the worker when a form submits. With the
     /// vault open it first notes activity and handles Cmd+L.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.apply_forget(ui.ctx());
         if matches!(self.screen, Screen::Vault(_)) {
             self.record_activity(ui.ctx());
             if ui.ctx().input_mut(|i| i.consume_shortcut(&LOCK_SHORTCUT)) {

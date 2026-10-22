@@ -14,7 +14,7 @@ use eframe::egui;
 use egui::TextBuffer as _;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::item::{ItemData, ItemId, ItemInput};
+use holm_core::item::{ItemData, ItemId, ItemInput, ItemType};
 use holm_core::search::Query;
 use holm_core::session::Session;
 use holm_core::text::{SecretText, Text};
@@ -81,6 +81,8 @@ pub(crate) struct VaultView {
     rows: Vec<ItemRow>,
     /// Whether `rows` must be rebuilt from the session before the next draw.
     rows_stale: bool,
+    /// Logins and other items in the whole active vault, whatever the search says.
+    totals: (usize, usize),
     /// The selected item.
     selected: Option<ItemId>,
     /// The right-hand side.
@@ -132,6 +134,7 @@ impl VaultView {
         VaultView {
             rows: Vec::new(),
             rows_stale: true,
+            totals: (0, 0),
             selected: None,
             mode: DetailMode::Empty,
             item: ItemView::new(),
@@ -352,6 +355,14 @@ impl VaultView {
                 Ok(found) => build_rows(&found),
                 Err(_) => Vec::new(),
             };
+            self.totals = if self.searched.is_empty() {
+                tally(&self.rows)
+            } else {
+                match session.search(&Query::default()) {
+                    Ok(all) => tally(&build_rows(&all)),
+                    Err(_) => (0, 0),
+                }
+            };
             self.rows_stale = false;
         }
         let mut action = None;
@@ -483,7 +494,6 @@ impl VaultView {
         action
     }
 
-    /// The left panel: the new-login button and the rows.
     /// Opens a blank login form in the detail pane.
     fn start_new_login(&mut self) {
         self.selected = None;
@@ -497,18 +507,30 @@ impl VaultView {
             self.rows_stale = true;
         }
         ui.separator();
+        // The footer sits below the list, outside the scroll area, so the area is
+        // bounded by the panel and scrolls instead of growing with its rows.
+        let shown = (!self.searched.is_empty()).then_some(self.rows.len());
+        egui::Panel::bottom("vault-list-footer")
+            .show_separator_line(true)
+            .show(ui, |ui| {
+                ui.label(count_line(self.totals.0, self.totals.1, shown));
+            });
         let mut clicked = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for row in &self.rows {
-                let on = self.selected == Some(row.id);
-                if ui.selectable_label(on, row.title.as_str()).clicked() {
-                    clicked = Some(row.id);
+        egui::ScrollArea::vertical()
+            .id_salt("item-list")
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .show(ui, |ui| {
+                for row in &self.rows {
+                    let on = self.selected == Some(row.id);
+                    if ui.selectable_label(on, row.title.as_str()).clicked() {
+                        clicked = Some(row.id);
+                    }
+                    if !row.subtitle.as_str().is_empty() {
+                        ui.small(row.subtitle.as_str());
+                    }
                 }
-                if !row.subtitle.as_str().is_empty() {
-                    ui.small(row.subtitle.as_str());
-                }
-            }
-        });
+            });
         if let Some(id) = clicked
             && self.selected != Some(id)
         {
@@ -658,9 +680,44 @@ impl VaultView {
     }
 }
 
+/// Logins and all other items among `rows`.
+fn tally(rows: &[ItemRow]) -> (usize, usize) {
+    let logins = rows.iter().filter(|r| r.kind == ItemType::Login).count();
+    (logins, rows.len() - logins)
+}
+
+/// The list footer: `12 logins, 3 other items`, plus `, 4 shown` while a search is on.
+/// The counts are the whole vault's; only `shown` follows the search.
+#[must_use]
+pub(crate) fn count_line(logins: usize, others: usize, shown: Option<usize>) -> String {
+    let mut line = format!(
+        "{}, {}",
+        messages::login_count(logins),
+        messages::other_count(others)
+    );
+    if let Some(n) = shown {
+        line.push_str(&messages::shown_count(n));
+    }
+    line
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn count_line_plurals_and_shown() {
+        assert_eq!(count_line(12, 3, None), "12 logins, 3 other items");
+        assert_eq!(count_line(1, 1, None), "1 login, 1 other item");
+        assert_eq!(
+            count_line(0, 0, Some(0)),
+            "0 logins, 0 other items, 0 shown"
+        );
+        assert_eq!(
+            count_line(2, 2, Some(4)),
+            "2 logins, 2 other items, 4 shown"
+        );
+    }
     use holm_core::clock::SystemClock;
 
     fn locked_session() -> Session<FsStore> {

@@ -716,3 +716,29 @@ mod tests {
         );
     }
 }
+
+/// `1 login` or `12 logins`.
+#[must_use]
+pub fn login_count(n: usize) -> String {
+    if n == 1 {
+        "1 login".to_owned()
+    } else {
+        format!("{n} logins")
+    }
+}
+
+/// `1 other item` or `3 other items`.
+#[must_use]
+pub fn other_count(n: usize) -> String {
+    if n == 1 {
+        "1 other item".to_owned()
+    } else {
+        format!("{n} other items")
+    }
+}
+
+/// `, 4 shown`: the tail of the list footer while a search is on.
+#[must_use]
+pub fn shown_count(n: usize) -> String {
+    format!(", {n} shown")
+}
