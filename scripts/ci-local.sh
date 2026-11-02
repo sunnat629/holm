@@ -146,9 +146,9 @@ oracle_gate() {
     cargo clippy --manifest-path oracle/Cargo.toml --all-targets --locked -- -D warnings &&
     cargo test --manifest-path oracle/Cargo.toml --locked &&
     cargo audit --file oracle/Cargo.lock \
-      --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369
+      --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369 --ignore RUSTSEC-2026-0429
 }
-# Those three advisories are for zip 8.6.0 (fixed in 9.0), ignored for the oracle only.
+# Those four advisories are for zip 8.6.0 (fixed in 9.0), ignored for the oracle only.
 # zip is a build-dependency of libsodium-sys-stable 1.24.3, the latest release, which
 # requires zip 8.x. Its build script uses zip only for *-windows-msvc targets, where this
 # gate is skipped, and only on an archive it has minisign-verified first. Remove the
