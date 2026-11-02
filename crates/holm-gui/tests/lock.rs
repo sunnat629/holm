@@ -333,7 +333,11 @@ fn painted(harness: &Harness<'static, HolmApp>, needle: &str) -> bool {
             _ => false,
         }
     }
-    harness.output().shapes.iter().any(|c| has(&c.shape, needle))
+    harness
+        .output()
+        .shapes
+        .iter()
+        .any(|c| has(&c.shape, needle))
 }
 
 #[test]
