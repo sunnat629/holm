@@ -52,6 +52,7 @@ security, three exercises, and what to read next in
 | 43 | [Listening to the OS](43-listening-to-the-os.md): AppKit notification observers with a Rust closure as an Objective-C block, `Drop` to unregister, `Arc<AtomicBool>` with `swap(false)` as a one-bit mailbox, and the wall clock gaining on the monotonic clock as a sign of sleep. Kotlin: `BroadcastReceiver` for `ACTION_SCREEN_OFF`. |
 | 44 | [The list and its memory](44-the-list-and-its-memory.md): a height-bounded `ScrollArea` with an always-drawn bar, plural count strings, egui's `IdTypeMap` holding undo history as a copy of typed text, and a lock flag instead of a context parameter. Kotlin: `rememberSaveable` outliving a screen. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
+| 48 | [Category chips and badges](48-category-chips-and-badges.md): reusing a core enum as UI state, `Copy` enums compared with `!=` to spot a stale list, and `Option<Text>` from `iter().find`. Kotlin: a `sealed interface` filter in a `ViewModel`. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

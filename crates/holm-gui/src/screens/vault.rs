@@ -12,10 +12,11 @@ use std::time::Duration;
 
 use eframe::egui;
 use egui::TextBuffer as _;
+use holm_core::category::CategoryId;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::item::{ItemData, ItemId, ItemInput, ItemType};
-use holm_core::search::Query;
+use holm_core::search::{CategoryFilter, Query};
 use holm_core::session::Session;
 use holm_core::text::{SecretText, Text};
 use holm_core::throttle::ThrottleStatus;
@@ -46,6 +47,10 @@ pub(crate) const LOCK_ANYWAY_LABEL: &str = "Lock anyway";
 pub(crate) const LOCK_CANCEL_LABEL: &str = "Cancel";
 /// Label of the search box.
 pub(crate) const SEARCH_LABEL: &str = "Search";
+/// Label of the chip that shows every category.
+pub(crate) const CHIP_ALL: &str = "All";
+/// Label of the chip that shows items with no category.
+pub(crate) const CHIP_NONE: &str = "No category";
 /// Label of the import button.
 pub(crate) const IMPORT_OPEN_LABEL: &str = "Import...";
 /// Label of the export button.
@@ -103,6 +108,12 @@ pub(crate) struct VaultView {
     search: LineBuf,
     /// The search text the rows were built with.
     searched: Zeroizing<String>,
+    /// The selected category chip. Reset to All when the view drops on lock.
+    chip: CategoryFilter,
+    /// The chip the rows were built with.
+    searched_chip: CategoryFilter,
+    /// The category chips, after All and No category. Collected when rows are rebuilt.
+    chips: Vec<(CategoryId, Text)>,
     /// The open import or export screen, if any.
     transfer: Option<Transfer>,
     /// Whether the session had unsaved changes when the running job started. A dirty
@@ -144,6 +155,9 @@ impl VaultView {
             lock_dialog: false,
             search: LineBuf::new(),
             searched: Zeroizing::new(String::new()),
+            chip: CategoryFilter::All,
+            searched_chip: CategoryFilter::All,
+            chips: Vec::new(),
             transfer: None,
             dirty_before_job: false,
         }
@@ -340,22 +354,29 @@ impl VaultView {
         throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<VaultAction> {
-        if self.search.as_str() != self.searched.as_str() {
+        if self.search.as_str() != self.searched.as_str() || self.chip != self.searched_chip {
             self.rows_stale = true;
         }
         if self.rows_stale
             && let Some(session) = session
         {
             self.searched = Zeroizing::new(self.search.as_str().to_owned());
+            self.searched_chip = self.chip;
+            let categories = session.categories().unwrap_or_default();
+            self.chips = categories
+                .iter()
+                .map(|c| (c.id(), Text::new(c.name().to_owned())))
+                .collect();
             let query = Query {
                 text: Zeroizing::new(self.searched.as_str().to_owned()),
+                category: self.chip,
                 ..Query::default()
             };
             let mut totals = None;
             match session.search(&query) {
                 Ok(found) => {
-                    self.rows = build_rows(&found);
-                    if self.searched.is_empty() {
+                    self.rows = build_rows(&found, categories);
+                    if self.searched.is_empty() && self.chip == CategoryFilter::All {
                         totals = Some(tally(&self.rows));
                     }
                 }
@@ -366,7 +387,7 @@ impl VaultView {
             if totals.is_none()
                 && let Ok(all) = session.search(&Query::default())
             {
-                totals = Some(tally(&build_rows(&all)));
+                totals = Some(tally(&build_rows(&all, &[])));
             }
             if let Some(t) = totals {
                 self.totals = t;
@@ -514,10 +535,29 @@ impl VaultView {
         if line_field(ui, io, SEARCH_LABEL, &mut self.search) {
             self.rows_stale = true;
         }
+        let current = self.chip;
+        let mut pick = None;
+        ui.horizontal_wrapped(|ui| {
+            let mut chip = |filter: CategoryFilter, label: &str| {
+                if ui.selectable_label(current == filter, label).clicked() {
+                    pick = Some(filter);
+                }
+            };
+            chip(CategoryFilter::All, CHIP_ALL);
+            chip(CategoryFilter::Uncategorised, CHIP_NONE);
+            for (id, name) in &self.chips {
+                chip(CategoryFilter::Only(*id), name.as_str());
+            }
+        });
+        if let Some(filter) = pick {
+            self.chip = filter;
+            self.rows_stale = true;
+        }
         ui.separator();
         // The footer sits below the list, outside the scroll area, so the area is
         // bounded by the panel and scrolls instead of growing with its rows.
-        let shown = (!self.searched.is_empty()).then_some(self.rows.len());
+        let filtering = !self.searched.is_empty() || self.chip != CategoryFilter::All;
+        let shown = filtering.then_some(self.rows.len());
         egui::Panel::bottom("vault-list-footer")
             .show_separator_line(true)
             .show(ui, |ui| {
@@ -534,9 +574,19 @@ impl VaultView {
             .show(ui, |ui| {
                 for row in &self.rows {
                     let on = self.selected == Some(row.id);
-                    if ui.selectable_label(on, row.title.as_str()).clicked() {
-                        clicked = Some(row.id);
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(on, row.title.as_str()).clicked() {
+                            clicked = Some(row.id);
+                        }
+                        if let Some(name) = &row.category {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.small(name.as_str());
+                                },
+                            );
+                        }
+                    });
                     if !row.subtitle.as_str().is_empty() {
                         ui.small(row.subtitle.as_str());
                     }

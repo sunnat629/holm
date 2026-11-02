@@ -4,6 +4,7 @@
 use core::cmp::Ordering;
 use core::fmt;
 
+use holm_core::category::Category;
 use holm_core::item::{ItemId, ItemType};
 use holm_core::search::ItemSummary;
 use holm_core::text::Text;
@@ -25,6 +26,8 @@ pub struct ItemRow {
     pub title: Text,
     /// See [`subtitle`]: never a secret.
     pub subtitle: Text,
+    /// The name of the item's category, if it has one. Never a secret.
+    pub category: Option<Text>,
 }
 
 impl fmt::Debug for ItemRow {
@@ -34,14 +37,18 @@ impl fmt::Debug for ItemRow {
             .field("kind", &self.kind)
             .field("title_len", &self.title.as_str().len())
             .field("subtitle_len", &self.subtitle.as_str().len())
+            .field(
+                "category_len",
+                &self.category.as_ref().map(|c| c.as_str().len()),
+            )
             .finish()
     }
 }
 
 /// Builds the rows for every item in `summaries` (from `Session::search`), sorted by
-/// title (ignoring case), then by id.
+/// title (ignoring case), then by id. `categories` gives the names for the badges.
 #[must_use]
-pub fn build_rows(summaries: &[ItemSummary<'_>]) -> Vec<ItemRow> {
+pub fn build_rows(summaries: &[ItemSummary<'_>], categories: &[Category]) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = summaries
         .iter()
         .map(|s| ItemRow {
@@ -49,6 +56,10 @@ pub fn build_rows(summaries: &[ItemSummary<'_>]) -> Vec<ItemRow> {
             kind: s.item_type,
             title: Text::new(s.title.to_owned()),
             subtitle: Text::new(subtitle(s).to_owned()),
+            category: s
+                .category
+                .and_then(|id| categories.iter().find(|c| c.id() == id))
+                .map(|c| Text::new(c.name().to_owned())),
         })
         .collect();
     rows.sort_by(|a, b| {
@@ -115,7 +126,34 @@ mod tests {
         for i in inputs {
             session.add_item(i).unwrap();
         }
-        build_rows(&session.search(&Query::default()).unwrap())
+        build_rows(
+            &session.search(&Query::default()).unwrap(),
+            session.categories().unwrap(),
+        )
+    }
+
+    #[test]
+    fn row_carries_the_category_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Holm").join("holm.vault");
+        holm_platform::paths::ensure_vault_dir(&path).unwrap();
+        let mut session = Session::new(FsStore::new(path), Box::new(SystemClock::new()));
+        let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
+        session.create(&password, &KdfParams::FLOOR).unwrap();
+        let work = session.add_category("Projects").unwrap();
+        let mut a = input("a", "", &[]);
+        a.category = Some(work);
+        session.add_item(a).unwrap();
+        session.add_item(input("b", "", &[])).unwrap();
+        let rows = build_rows(
+            &session.search(&Query::default()).unwrap(),
+            session.categories().unwrap(),
+        );
+        assert_eq!(
+            rows[0].category.as_ref().map(Text::as_str),
+            Some("Projects")
+        );
+        assert!(rows[1].category.is_none());
     }
 
     #[test]

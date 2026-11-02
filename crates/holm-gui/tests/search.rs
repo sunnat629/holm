@@ -7,9 +7,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{PASSWORD, TestClock, harness, make_vault, run_until, test_app, vault_path};
-use eframe::egui::{Event, Key};
+use eframe::egui::accesskit::Toggled;
+use eframe::egui::{Event, Key, Pos2, Rect};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use holm_core::category::CategoryId;
 use holm_core::clock::SystemClock;
 use holm_core::item::{ItemData, ItemInput};
 use holm_core::session::Session;
@@ -60,6 +62,38 @@ fn seed(dir: &Path, items: Vec<ItemInput>) {
     }
 }
 
+/// A vault with `categories` (found or added), then one login per `(title, category name)` in `items`.
+fn seed_categorised(dir: &Path, categories: &[&str], items: &[(&str, Option<&str>)]) {
+    make_vault(dir, PASSWORD);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    session
+        .unlock(&MasterPassword::new(PASSWORD.to_owned()))
+        .unwrap();
+    let ids: Vec<(&str, CategoryId)> = categories
+        .iter()
+        .map(|name| {
+            // Built-in categories (Personal, Work, Community) already exist.
+            let existing = session
+                .categories()
+                .unwrap()
+                .iter()
+                .find(|c| c.name() == *name)
+                .map(|c| c.id());
+            (
+                *name,
+                existing.unwrap_or_else(|| session.add_category(name).unwrap()),
+            )
+        })
+        .collect();
+    for (title, category) in items {
+        let mut item = login(title);
+        item.category = category
+            .and_then(|c| ids.iter().find(|(name, _)| *name == c))
+            .map(|(_, id)| *id);
+        session.add_item(item).unwrap();
+    }
+}
+
 fn type_into(harness: &mut Harness<'static, HolmApp>, label: &str, text: &str) {
     harness.get_by_label(label).click();
     harness.run();
@@ -85,6 +119,116 @@ fn unlock(dir: &Path) -> (Harness<'static, HolmApp>, TestClock) {
 
 fn count(harness: &Harness<'static, HolmApp>, label: &str) -> usize {
     harness.query_all_by_label(label).count()
+}
+
+/// The rect of the chip called `label`. A badge can carry the same text, but the chips
+/// sit above the list, so the topmost match is the chip.
+fn chip_rect(harness: &Harness<'static, HolmApp>, label: &str) -> Rect {
+    harness
+        .query_all_by_label(label)
+        .map(|n| n.rect())
+        .min_by(|a, b| a.min.y.total_cmp(&b.min.y))
+        .expect("a chip")
+}
+
+fn click_chip(harness: &mut Harness<'static, HolmApp>, label: &str) {
+    harness
+        .query_all_by_label(label)
+        .min_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y))
+        .expect("a chip")
+        .click();
+    harness.run();
+}
+
+fn chip_on(harness: &Harness<'static, HolmApp>, label: &str) -> bool {
+    use egui_kittest::kittest::NodeT;
+    harness.get_by_label(label).accesskit_node().toggled() == Some(Toggled::True)
+}
+
+/// Whether `a` comes before `b` in reading order.
+fn before(a: Pos2, b: Pos2) -> bool {
+    a.y.total_cmp(&b.y)
+        .then_with(|| a.x.total_cmp(&b.x))
+        .is_lt()
+}
+
+#[test]
+fn chips_list_all_then_categories() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_categorised(dir.path(), &["Work", "Home"], &[]);
+    let (harness, _clock) = unlock(dir.path());
+    for label in ["All", "No category", "Work", "Home"] {
+        assert_eq!(count(&harness, label), 1, "{label}");
+    }
+    let all = chip_rect(&harness, "All").min;
+    let none = chip_rect(&harness, "No category").min;
+    assert!(before(all, none));
+    for label in ["Work", "Home"] {
+        assert!(before(none, chip_rect(&harness, label).min), "{label}");
+    }
+    assert!(chip_on(&harness, "All"));
+    assert!(!chip_on(&harness, "No category"));
+}
+
+#[test]
+fn chip_and_search_combine() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_categorised(
+        dir.path(),
+        &["Work", "Home"],
+        &[
+            ("github work", Some("Work")),
+            ("gitlab work", Some("Work")),
+            ("mail work", Some("Work")),
+            ("github home", Some("Home")),
+        ],
+    );
+    let (mut harness, _clock) = unlock(dir.path());
+    click_chip(&mut harness, "Work");
+    type_into(&mut harness, "Search", "git");
+    assert_eq!(count(&harness, "github work"), 1);
+    assert_eq!(count(&harness, "gitlab work"), 1);
+    assert_eq!(count(&harness, "github home"), 0);
+    assert_eq!(count(&harness, "mail work"), 0);
+}
+
+#[test]
+fn badge_shows_category_name() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_categorised(
+        dir.path(),
+        &["Work"],
+        &[("alpha", Some("Work")), ("beta", None)],
+    );
+    let (harness, _clock) = unlock(dir.path());
+    assert_eq!(count(&harness, "alpha"), 1);
+    assert_eq!(count(&harness, "beta"), 1);
+    // The chip and the badge of "alpha"; "beta" has none.
+    assert_eq!(count(&harness, "Work"), 2);
+}
+
+#[test]
+fn chip_resets_on_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_categorised(
+        dir.path(),
+        &["Work"],
+        &[("alpha", Some("Work")), ("beta", None)],
+    );
+    let (mut harness, _clock) = unlock(dir.path());
+    click_chip(&mut harness, "Work");
+    assert_eq!(count(&harness, "alpha"), 1);
+    assert_eq!(count(&harness, "beta"), 0);
+    harness.get_by_label("Lock").click();
+    harness.run();
+    type_into(&mut harness, "Master password", PASSWORD);
+    harness.key_press(Key::Enter);
+    harness.step();
+    run_until(&mut harness, vault_screen, WAIT);
+    harness.run();
+    assert_eq!(count(&harness, "alpha"), 1);
+    assert_eq!(count(&harness, "beta"), 1);
+    assert!(chip_on(&harness, "All"));
 }
 
 #[test]
