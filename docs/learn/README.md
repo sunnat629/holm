@@ -53,6 +53,7 @@ security, three exercises, and what to read next in
 | 44 | [The list and its memory](44-the-list-and-its-memory.md): a height-bounded `ScrollArea` with an always-drawn bar, plural count strings, egui's `IdTypeMap` holding undo history as a copy of typed text, and a lock flag instead of a context parameter. Kotlin: `rememberSaveable` outliving a screen. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 | 48 | [Category chips and badges](48-category-chips-and-badges.md): reusing a core enum as UI state, `Copy` enums compared with `!=` to spot a stale list, and `Option<Text>` from `iter().find`. Kotlin: a `sealed interface` filter in a `ViewModel`. |
+| 49 | [Letter avatars](49-letter-avatars.md): `char::to_uppercase` as an iterator (`ß` is `SS`), `% len` for a stable palette slot, and `Option<usize>` from `iter().position`. Kotlin: `indexOfFirst` returning `-1`. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

@@ -30,6 +30,7 @@ use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
 use crate::file_dialog::DialogKind;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
+use crate::widgets::avatar::{avatar, avatar_colour, avatar_letter};
 use crate::worker::{Job, JobKind, TransferResult};
 use holm_platform::transfer::TransferError;
 
@@ -575,6 +576,8 @@ impl VaultView {
                 for row in &self.rows {
                     let on = self.selected == Some(row.id);
                     ui.horizontal(|ui| {
+                        let colour = avatar_colour(row.category_slot, ui.visuals().dark_mode);
+                        avatar(ui, avatar_letter(row.title.as_str()), colour);
                         if ui.selectable_label(on, row.title.as_str()).clicked() {
                             clicked = Some(row.id);
                         }

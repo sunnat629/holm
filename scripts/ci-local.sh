@@ -137,6 +137,17 @@ gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit
 gate vet cargo vet --locked
+# Holm is offline: no HTTP or URL crate may enter the GUI's normal dependency tree.
+# Pinned to the shipped target, so Linux-only crates do not show up (preflight F28).
+no_network_gate() {
+  local tree
+  tree="$(cargo tree -p holm-gui -e normal --target aarch64-apple-darwin --locked --prefix none)" || return 1
+  if grep -E '^(reqwest|ureq|hyper|url) v' <<<"$tree"; then
+    echo "network crate in holm-gui's tree" >&2
+    return 1
+  fi
+}
+gate no-network no_network_gate
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable

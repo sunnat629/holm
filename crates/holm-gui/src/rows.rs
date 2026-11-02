@@ -28,6 +28,9 @@ pub struct ItemRow {
     pub subtitle: Text,
     /// The name of the item's category, if it has one. Never a secret.
     pub category: Option<Text>,
+    /// The category's index in the session's category list, which picks the avatar
+    /// colour. `None` when the item has no category.
+    pub category_slot: Option<usize>,
 }
 
 impl fmt::Debug for ItemRow {
@@ -41,6 +44,7 @@ impl fmt::Debug for ItemRow {
                 "category_len",
                 &self.category.as_ref().map(|c| c.as_str().len()),
             )
+            .field("category_slot", &self.category_slot)
             .finish()
     }
 }
@@ -51,15 +55,20 @@ impl fmt::Debug for ItemRow {
 pub fn build_rows(summaries: &[ItemSummary<'_>], categories: &[Category]) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = summaries
         .iter()
-        .map(|s| ItemRow {
-            id: s.id,
-            kind: s.item_type,
-            title: Text::new(s.title.to_owned()),
-            subtitle: Text::new(subtitle(s).to_owned()),
-            category: s
+        .map(|s| {
+            let slot = s
                 .category
-                .and_then(|id| categories.iter().find(|c| c.id() == id))
-                .map(|c| Text::new(c.name().to_owned())),
+                .and_then(|id| categories.iter().position(|c| c.id() == id));
+            ItemRow {
+                id: s.id,
+                kind: s.item_type,
+                title: Text::new(s.title.to_owned()),
+                subtitle: Text::new(subtitle(s).to_owned()),
+                category: slot
+                    .and_then(|i| categories.get(i))
+                    .map(|c| Text::new(c.name().to_owned())),
+                category_slot: slot,
+            }
         })
         .collect();
     rows.sort_by(|a, b| {
@@ -154,6 +163,9 @@ mod tests {
             Some("Projects")
         );
         assert!(rows[1].category.is_none());
+        // Projects follows the built-in Personal, Work and Community.
+        assert_eq!(rows[0].category_slot, Some(3));
+        assert_eq!(rows[1].category_slot, None);
     }
 
     #[test]
