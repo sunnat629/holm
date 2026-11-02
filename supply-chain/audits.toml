@@ -103,6 +103,12 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 notes = "Full review of src/ (3414 lines). forbid(unsafe_code) (all unsafe lives in cmov), no build script, no_std. Choice/CtOption constant-time helpers built on cmov with core::hint::black_box as a best-effort barrier; slice ct_eq goes through cmov, which returns not-equal on length mismatch. Optional subtle interop only. No filesystem, network, env or process access."
 
+[[audits.ctutils]]
+who = "Holm maintainers (AI-assisted audit)"
+criteria = "safe-to-deploy"
+delta = "0.4.3 -> 0.4.8"
+notes = "Delta review for RUSTSEC-2026-0385 fix. Still forbid(unsafe_code), no build script, no_std, no I/O. Moves the bitle/bitlt/bitnz mask macros into a new src/primitives.rs (446 lines) whose functions pass inputs through core::hint::black_box before masking; adds 32-bit ARM (no atomic ptr) special cases that widen u8/u16 compares to u32; adds ct_lt/ct_neg trait impls and tests. cmov requirement 0.5.3 -> 0.5.4 (already locked at 0.5.4)."
+
 [[audits.digest]]
 who = "Holm maintainers (AI-assisted audit)"
 criteria = "safe-to-deploy"
