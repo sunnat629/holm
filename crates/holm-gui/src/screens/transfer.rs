@@ -261,7 +261,15 @@ impl Transfer {
             TransferResult::Exported => *self = Transfer::Exported,
             TransferResult::BackedUp => *self = Transfer::BackedUp,
             TransferResult::Failed(fail) => {
-                let text = fail_text(&fail, was_export, items_added);
+                // A backup has no password and writes no plain text, so a core error
+                // there is the backup itself failing, not an export.
+                let text = if matches!(self, Transfer::Backup(_))
+                    && matches!(fail, TransferError::Core(_))
+                {
+                    messages::BACKUP_FAILED
+                } else {
+                    fail_text(&fail, was_export, items_added)
+                };
                 match self {
                     Transfer::Export(form) => form.error = Some(text),
                     Transfer::Backup(form) => form.error = Some(text),

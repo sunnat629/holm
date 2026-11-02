@@ -162,6 +162,8 @@ pub const EXPORT_FAILED: &str = "The export did not finish. No file was written.
 pub const BACKUP_BUTTON: &str = "Back up\u{2026}";
 /// The backup file was written.
 pub const BACKUP_DONE: &str = "Backup saved. It opens with this vault's master password.";
+/// The backup failed after it started, so no file was written.
+pub const BACKUP_FAILED: &str = "The backup did not finish. No file was written.";
 
 /// Accessibility label of the press-and-hold eye on a password field. It is a button
 /// label, not a status line, so it stays out of `ALL` (which holds full sentences).
@@ -174,13 +176,16 @@ pub const PHRASE_PASSWORD_LABEL: &str = "Master password to show the phrase";
 pub const EDIT_IN_CLI: &str = "Edit this item with the holm command for now.";
 /// The phrase could not be shown for a reason other than the password.
 pub const PHRASE_FAILED: &str = "Holm couldn't show this phrase.";
+/// The password typed at the phrase gate is not the master password. The vault is open,
+/// so this says nothing about a changed or damaged file.
+pub const PHRASE_WRONG_PASSWORD: &str = "That isn't the master password. The phrase stays hidden.";
 /// The unlock screen's line after a lock on sleep, screen lock or logout.
 pub const LOCKED_SLEEP: &str =
     "Holm locked because the Mac slept, the screen locked or you logged out.";
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 58] = [
+const ALL: [&str; 60] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -236,8 +241,10 @@ const ALL: [&str; 58] = [
     EXPORT_THROTTLED,
     EXPORT_FAILED,
     BACKUP_DONE,
+    BACKUP_FAILED,
     EDIT_IN_CLI,
     PHRASE_FAILED,
+    PHRASE_WRONG_PASSWORD,
     LOCKED_SLEEP,
 ];
 
@@ -359,14 +366,14 @@ pub fn export_error(e: &CoreError) -> &'static str {
     }
 }
 
-/// The line under the phrase gate for a failed reveal. A wrong password reads as on
-/// the unlock screen; a throttled try names the wait (the live throttle line replaces
-/// it while the wait runs). Never fatal: the item view stays.
+/// The line under the phrase gate for a failed reveal. A wrong password says so without
+/// blaming the file, as the vault is already open; a throttled try names the wait (the
+/// live throttle line replaces it while the wait runs). Never fatal: the item view stays.
 #[must_use]
 pub fn phrase_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
-            WRONG_PASSWORD
+            PHRASE_WRONG_PASSWORD
         }
         CoreError::Throttled { .. } => TOO_MANY_TRIES,
         CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
@@ -625,7 +632,10 @@ mod tests {
 
     #[test]
     fn phrase_errors_are_never_fatal() {
-        assert_eq!(phrase_error(&CoreError::WrongPassword), WRONG_PASSWORD);
+        assert_eq!(
+            phrase_error(&CoreError::WrongPassword),
+            PHRASE_WRONG_PASSWORD
+        );
         assert_eq!(
             phrase_error(&CoreError::Throttled {
                 retry_after_secs: 2

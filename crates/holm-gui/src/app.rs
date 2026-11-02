@@ -134,7 +134,8 @@ pub struct HolmApp {
     /// Argon2 costs for a new vault.
     kdf: KdfParams,
     /// Set by [`lock`](Self::lock) for every reason: the next frame drops all text-edit
-    /// state (undo history) so typed text cannot come back through Cmd+Z after unlock.
+    /// state (undo history) so typed text cannot come back through Cmd+Z after unlock,
+    /// and all scroll-area state, so the list reopens at the top.
     forget_text_state: bool,
     /// The UI's clock.
     ui_clock: Box<dyn Clock>,
@@ -273,8 +274,9 @@ impl HolmApp {
         self
     }
 
-    /// Drops every text-edit state (undo history) and scroll offset once after a lock. A field keeps its
-    /// id across lock and unlock, so without this its old history would answer Cmd+Z.
+    /// Drops every text-edit state (undo history) and scroll offset once after a lock. A
+    /// field keeps its id across lock and unlock, so without this its old history would
+    /// answer Cmd+Z.
     fn apply_forget(&mut self, ctx: &egui::Context) {
         if self.forget_text_state {
             ctx.data_mut(|d| {
@@ -300,7 +302,7 @@ impl HolmApp {
             return;
         };
         let outcome = session.lock();
-        self.run_pending_clear();
+        let clear_note = self.run_pending_clear();
         self.screen = Screen::Unlock(UnlockForm::new());
         self.focus = FieldFocus::None;
         self.forget_text_state = true;
@@ -308,7 +310,14 @@ impl HolmApp {
             reason,
             discarded_unsaved: outcome.discarded_unsaved,
         };
-        self.lock_line = Some(messages::lock_line(&note, auto_lock));
+        let mut line = messages::lock_line(&note, auto_lock);
+        // Only a failed clear matters here: the password is still on the clipboard.
+        // A clear that left someone else's copy alone is harmless.
+        if clear_note.as_deref() == Some(messages::CLIPBOARD_NOT_CLEARED) {
+            line.push(' ');
+            line.push_str(messages::CLIPBOARD_NOT_CLEARED);
+        }
+        self.lock_line = Some(line);
         self.lock_note = Some(note);
     }
 
@@ -334,11 +343,10 @@ impl HolmApp {
 
     /// Runs the waiting clipboard clear now, if any: clears the clipboard when it still
     /// holds the copied password, leaves it alone when something else is there. The
-    /// vault screen, if showing, says so. Safe to call on any screen.
-    fn run_pending_clear(&mut self) {
-        let Some(pending) = self.pending_clear.take() else {
-            return;
-        };
+    /// vault screen, if showing, says so. Returns the line it computed, so a caller that
+    /// is about to drop the vault screen can still show it. Safe to call on any screen.
+    fn run_pending_clear(&mut self) -> Option<String> {
+        let pending = self.pending_clear.take()?;
         let outcome = pending.run(&mut *self.clipboard);
         let note = match outcome {
             ClearOutcome::LeftAlone => Some(messages::CLIPBOARD_CHANGED.to_owned()),
@@ -349,8 +357,9 @@ impl HolmApp {
             _ => None,
         };
         if let Screen::Vault(view) = &mut self.screen {
-            view.set_copy_note(note);
+            view.set_copy_note(note.clone());
         }
+        note
     }
 
     /// The vault's clipboard time from its settings, clamped to the settings range.

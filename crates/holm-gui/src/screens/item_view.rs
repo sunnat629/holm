@@ -6,9 +6,9 @@
 //! focus, when another item is selected, on Edit and on lock (the last three drop the
 //! whole [`ItemView`]).
 //!
-//! A login's password shows in a plain non-selectable label, as before. Every other
-//! revealed field is painted straight from the item's wiping buffer, so it is never in
-//! a text edit, never selectable and never in an accessibility label or value.
+//! Every revealed field, a login's password included, is painted straight from the
+//! item's wiping buffer, so it is never in a text edit, never selectable and never in
+//! an accessibility label or value.
 //!
 //! A recovery phrase is gated: "Reveal…" opens a password field, the check runs on the
 //! worker ([`Job::RevealPhrase`]), and the words come back in a wiping
@@ -274,8 +274,9 @@ pub(crate) fn show_item(
     action
 }
 
-/// A login's password row, as before this view existed: the password shows in a
-/// monospace, non-selectable label.
+/// A login's password row: its name, dots and Reveal (or the countdown and Hide), and
+/// Copy. While shown, the password is painted under the row (see [`paint_secret`]), so
+/// no accessibility node holds it.
 fn password_row(
     ui: &mut egui::Ui,
     view: &mut ItemView,
@@ -283,14 +284,11 @@ fn password_row(
     io: &mut FieldIo<'_>,
     password: &SecretText,
 ) {
+    let until = view.until(RevealField::Password);
     ui.horizontal(|ui| {
         ui.label("Password:");
-        match view.until(RevealField::Password) {
+        match until {
             Some(until) => {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(password.expose()).monospace())
-                        .selectable(false),
-                );
                 countdown(ui, until, now);
                 if ui.button(HIDE_LABEL).clicked() {
                     view.hide();
@@ -307,6 +305,10 @@ fn password_row(
             copy(io, password.expose(), &mut view.copy_note);
         }
     });
+    // Drawn only if it still shows after this frame's clicks.
+    if until.is_some() && view.until(RevealField::Password).is_some() {
+        paint_secret(ui, password.expose());
+    }
 }
 
 /// The words and buttons of one secret row other than a login's password.
@@ -551,7 +553,7 @@ mod tests {
         view.phrase_gate = Some(SecretInput::with_capacity(MASTER_CAP));
         view.on_phrase_done(&Err(CoreError::WrongPassword), None, secs(0));
         assert!(view.phrase_gate.is_some());
-        assert_eq!(view.gate_error, Some(messages::WRONG_PASSWORD));
+        assert_eq!(view.gate_error, Some(messages::PHRASE_WRONG_PASSWORD));
         assert!(!view.is_revealed());
     }
 

@@ -171,3 +171,17 @@ fn gui_failed_clear_says_so() {
             .is_none()
     );
 }
+
+#[test]
+fn gui_failed_clear_on_lock_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock, fake) = copied(dir.path());
+    fake.0.borrow_mut().clear_sticks = true;
+
+    harness.get_by_label("Lock").click();
+    harness.run();
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Unlock);
+    assert_eq!(fake.0.borrow().clears, 1);
+    // The vault view is gone, so the unlock screen carries the line.
+    let _ = harness.get_by_label_contains(messages::CLIPBOARD_NOT_CLEARED);
+}

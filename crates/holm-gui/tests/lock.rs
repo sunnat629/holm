@@ -309,16 +309,31 @@ fn reveal_hidden_by_lock() {
     add_example(&mut harness);
     harness.get_by_label("Reveal").click();
     harness.run();
-    assert_eq!(nodes_with(&harness, SECRET), 1);
+    assert!(painted(&harness, SECRET), "the password shows");
+    assert_eq!(nodes_with(&harness, SECRET), 0, "painted, never a node");
     harness.get_by_label("Lock").click();
     harness.run();
+    assert!(!painted(&harness, SECRET));
     assert_eq!(nodes_with(&harness, SECRET), 0);
     unlock(&mut harness);
     harness.get_by_label(ROW_TITLE).click();
     harness.run();
     let _ = harness.get_by_label(DOTS);
     let _ = harness.get_by_label("Reveal");
+    assert!(!painted(&harness, SECRET));
     assert_eq!(nodes_with(&harness, SECRET), 0);
+}
+
+/// Whether any text painted in the last frame contains `needle`.
+fn painted(harness: &Harness<'static, HolmApp>, needle: &str) -> bool {
+    fn has(shape: &eframe::egui::Shape, needle: &str) -> bool {
+        match shape {
+            eframe::egui::Shape::Text(t) => t.galley.text().contains(needle),
+            eframe::egui::Shape::Vec(shapes) => shapes.iter().any(|s| has(s, needle)),
+            _ => false,
+        }
+    }
+    harness.output().shapes.iter().any(|c| has(&c.shape, needle))
 }
 
 #[test]

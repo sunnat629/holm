@@ -524,7 +524,8 @@ impl VaultView {
         action
     }
 
-    /// Opens a blank login form in the detail pane.
+    /// Opens a blank login form in the detail pane, as the toolbar's "New login" button
+    /// asks. Nothing stays selected, and whatever the item view showed is dropped.
     fn start_new_login(&mut self) {
         self.selected = None;
         self.item = ItemView::new();

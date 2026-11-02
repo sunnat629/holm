@@ -352,7 +352,7 @@ fn phrase_wrong_password_throttled() {
     select(&mut harness, PHRASE);
     try_phrase(&mut harness, OTHER_PASSWORD);
     assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
-    let _ = harness.get_by_label(messages::WRONG_PASSWORD);
+    let _ = harness.get_by_label(messages::PHRASE_WRONG_PASSWORD);
     assert!(!painted(&harness, WORDS));
     assert_eq!(count(&harness, PHRASE), 2, "the item view is kept");
 
@@ -360,6 +360,27 @@ fn phrase_wrong_password_throttled() {
     try_phrase(&mut harness, OTHER_PASSWORD);
     assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
     assert!(harness.state().throttle_status().retry_after.is_some());
+    assert!(!painted(&harness, WORDS));
+
+    // Type a password so the field is not empty: only the throttle keeps the button off.
+    type_into(&mut harness, messages::PHRASE_PASSWORD_LABEL, PASSWORD);
+    assert!(
+        harness
+            .get_by_role_and_label(Role::Button, "Show phrase")
+            .accesskit_node()
+            .is_disabled(),
+        "no try while the wait is due"
+    );
+    harness
+        .get_by_role_and_label(Role::Button, "Show phrase")
+        .click();
+    harness.key_press(Key::Enter);
+    harness.step();
+    assert_eq!(
+        harness.state().screen_kind(),
+        ScreenKind::Vault,
+        "no worker job started"
+    );
     assert!(!painted(&harness, WORDS));
 }
 

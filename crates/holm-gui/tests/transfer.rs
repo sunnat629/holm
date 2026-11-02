@@ -758,3 +758,23 @@ fn backup_holds_no_plaintext() {
     assert!(!bytes.windows(7).any(|w| w == b"EXAMPLE"));
     assert!(!bytes.windows(14).any(|w| w == b"Example Portal"));
 }
+
+#[test]
+fn backup_choose_fills_path_and_refuses_existing() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("copy.holm");
+    std::fs::write(&out, b"keep me").unwrap();
+    let dialog = NoDialog::returning(out.clone());
+    let (mut harness, _clock) = open_with_dialog(dir.path(), |_| Box::new(dialog));
+    click_button(&mut harness, BACKUP_OPEN);
+    assert!(disabled(&harness, "Back up"), "no path yet");
+    harness.get_by_role_and_label(Role::Button, CHOOSE).click();
+    harness.run();
+    assert!(
+        !disabled(&harness, "Back up"),
+        "the chosen path fills the field"
+    );
+    let _ = harness.get_by_label(messages::EXPORT_EXISTS);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    assert_eq!(std::fs::read(&out).unwrap(), b"keep me");
+}
