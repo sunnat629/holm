@@ -94,8 +94,8 @@ Phase 5 (platform hardening and GUI polish)
 - Windows ACLs on the plaintext export file (today 0600 on Unix only).
 - Show the other item types (crypto, recovery phrase, notes) in the GUI list; today a count line only.
 - Password from a file descriptor for scripts (Phase 6 at the earliest; needs an owner call).
-- OS sleep, screen-lock and logout events.
-- `holm shell`: lock on OS sleep, screen lock and logout (today it locks on idle, `lock` and exit only).
+- [x] OS sleep, screen-lock and logout events. Done in Phase 5 Task 7 (shell: sleep and user switch; Ctrl-Cmd-Q screen lock still idle-only).
+- [x] `holm shell`: lock on OS sleep, screen lock and logout. Done in Phase 5 Task 7 (shell: sleep and user switch; Ctrl-Cmd-Q screen lock still idle-only).
 - P5 T7 review M8: no GUI or CLI control for the `lock_on_sleep` setting (on by default; only tests turn it off). Add a toggle with the settings screen.
 - P5 T7 review M8: Phase 6 option: a background `CFRunLoop` thread in `holm shell` to hear the full OS events (screen lock with Ctrl-Cmd-Q, logout), as the GUI does. Today the shell sees a sleep (two clocks) and a user switch or the login window (the `/dev/console` owner, added in the T7 fix round) only.
 - P5 T7 review M8: the shell's `/dev/console` owner check treats a read error as no change (never locks on it), and re-takes the owner at each unlock, so over SSH it watches whoever owns the screen. Revisit if a stricter rule is wanted.
@@ -121,6 +121,8 @@ Phase 5 (platform hardening and GUI polish)
 - "Save and lock" saves on the UI thread, so a hung volume freezes the window and blocks the idle lock: send it through `Job::Save` with a lock-after flag (Task 6 M4).
 - Error-path tests for `LockError::Io` and a failed worker spawn; `PermissionDenied` copy is shown for every EACCES (Task 3 M8, M9).
 - Quitting mid-Argon2 drops the instance lock while the worker owns the session; harmless (`create_new` never overwrites), revisit with the lock work (Task 3 M10).
+- T6 M2: the phrase-gate password survives a window blur (shown as dots, wiped on leave/lock). Optional: clear on blur.
+- T1 M2 (owner question): the eye button is a Tab stop.
 
 Phase 3 final review Minors
 
@@ -183,7 +185,7 @@ From the Phase 4 per-task reviews, re-reviews and the final review. The final fi
 - T7 re-review M3: untested: the Ctrl-D discard-prompt timeout path, and the `IdleTerm::ended` branch where the caller's earlier deadline wins.
 - T8 M1: the GUI export form draws the password field before the confirm tick (the CLI asks confirm, then password). Fix: move the tick above the password field.
 - T8 M3: some user-visible GUI strings are not constants in `messages.rs`/`ALL` (transfer notes, `problem_text`, "And more.", headings); `OTHER_TYPES_HINT` shows literal backticks.
-- T8 M4: the other-types count follows the search text, not the whole vault. Fix: count unfiltered, or say "matching".
+- T8 M4: the other-types count follows the search text, not the whole vault. Fix: count unfiltered, or say "matching". Closed in Phase 5 (Task 6 lists every type; Task 8 counts the whole vault).
 - T8 M5: `search_cleared_on_lock` checks the rows, not that the Search field is empty after unlock.
 - T8 M6: weak GUI tests: the re-import test does not assert the duplicate count or button state; `transfer_texts_hold_no_values` never asserts the Report screen and lacks the memo needles; the oversize test cannot tell which cap fired; no empty-path export case.
 - T8 M7: `Transfer::Busy` has no exit if a transfer job ever comes back with `transfer: None`. Fix: reset to `None`.

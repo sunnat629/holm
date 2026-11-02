@@ -226,7 +226,7 @@ impl fmt::Display for CliError {
             CliError::SecretsDiffer => "The two entries don't match. Nothing was changed.",
             CliError::InTrash => "That item is in the Trash. Nothing was changed.",
             CliError::NotInTrash => {
-                "That item isn't in the Trash. Run holm rm without --forever first."
+                "That item isn't in the Trash. Nothing was changed."
             }
             CliError::TooManyItems => "The vault is full (50000 items). Nothing was changed.",
             CliError::TooLargeToSave => {

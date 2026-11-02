@@ -100,6 +100,19 @@ fn restore_refuses_active_item() {
     assert_eq!(counts(&path), (1, 0));
 }
 
+#[test]
+fn restore_unknown_ref_is_not_found() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let _id = add(&path, "Live");
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run(&path, &["restore", "ffffffff"], &mut term);
+    failed(&ran);
+    assert!(!ran.err.contains("isn't in the Trash"), "{}", ran.err);
+    assert!(ran.err.contains("No item matches"), "{}", ran.err);
+    assert_eq!(counts(&path), (1, 0));
+}
+
 fn two_in_trash(path: &Path) {
     init(path);
     for title in ["One", "Two"] {
@@ -131,6 +144,17 @@ fn empty_trash_needs_typed_word() {
     ok(&ran);
     assert!(ran.out.contains("Deleted 2 items forever."), "{}", ran.out);
     assert_eq!(counts(&path), (0, 0));
+}
+
+#[test]
+fn empty_trash_eof_deletes_nothing() {
+    let (_dir, path) = vault_dir();
+    two_in_trash(&path);
+    // No answer for the confirm prompt: the fake terminal reports end of input.
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run(&path, &["empty-trash"], &mut term);
+    failed(&ran);
+    assert_eq!(counts(&path), (0, 2));
 }
 
 #[test]

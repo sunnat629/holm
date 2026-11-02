@@ -94,6 +94,12 @@ In Kotlin you'd write `var revealedUntil: Long? = null` and check it in a `Launc
 The Rust tuple keeps the field and its deadline together, so you can't set one without the
 other.
 
+**Honest limit.** Painting a revealed secret hands egui a `String` copy of it (the galley
+cache). That copy lives for about one frame after the field hides, and it is freed without
+being wiped. This is the same limit as in lesson 37. Since the final fix wave the login
+password is painted too, like every other revealed secret, so no revealed secret is in the
+AccessKit tree.
+
 ## Exercises
 
 1. Give the crypto memo row a 15-second timer instead of 30. Only `RevealField::shows_for`

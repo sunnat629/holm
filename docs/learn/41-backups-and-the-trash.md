@@ -20,17 +20,19 @@ Only the exact word `empty` goes ahead; anything else prints "Nothing deleted." 
 `Ok`. A refusal is not an error: the user changed their mind, which is a normal outcome.
 Typing a word is slower than a y/n key, and a stray Enter cannot confirm it.
 
-**Scoping a lookup with a view.** `resolve_any` looks an ID prefix up in one `View`
-(`Active` or `Trash`). `restore` asks for `View::Trash`. If that finds nothing, it asks
-`View::Active` once, only to give a better error: `CliError::NotInTrash` instead of a plain
-"not found". The same prefix can never match both views by accident, because each lookup is
-scoped before it matches.
+**Scoping a lookup with a view.** `restore` calls `vault::resolve(.., View::Trash)`, which
+looks an ID prefix up among the trashed items only. A prefix that names an active item gets
+`CliError::NotInTrash` ("That item isn't in the Trash"), and a prefix that matches nothing
+gets the plain not-found text. Two different mistakes give two different errors, and neither
+can touch the wrong item, because the lookup is scoped before it matches. (`resolve_any`
+spans both views, for commands that accept either.)
 
-**An exhaustive `match`.** `Command` is an enum, and `main` dispatches with a `match` that
-has no `_` arm. Adding `Restore(RefArgs)` made the compiler list every place that forgot
-it: the dispatcher, the shell, the help text and the name table. Kotlin's `when` over a
-sealed class gives the same guarantee, but only when `when` is used as an expression.
-Here the `match` has this guarantee by default for every enum.
+**An exhaustive `match`.** `Command` is an enum, and `dispatch` in `lib.rs` runs it with a
+`match` that has no `_` arm. Adding `Restore(RefArgs)` made the compiler flag the
+non-exhaustive `match` in `dispatch` and in `Command::name`. The help text (`USAGE` and
+`SHELL_HELP`) is only strings, so the compiler cannot flag it: it must be updated by hand.
+Kotlin's `when` over a sealed class gives the same guarantee, but only when `when` is used
+as an expression. Here the `match` has this guarantee by default for every enum.
 
 **Why an encrypted copy needs no re-entry.** Export writes plain text, so it asks for the
 master password again: the user proves they are present and accepts a warning. A backup
