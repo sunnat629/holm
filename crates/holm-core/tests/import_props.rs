@@ -4,16 +4,16 @@
 //! returns (error, batch `Debug`, row issues) repeats the planted text.
 //! `generated_rows_parse_to_same_fields`: valid rows of all four types, written as
 //! RFC 4180 CSV with every cell quoted, come back field for field and byte for byte
-//! after `parse` and `import`.
+//! after `parse` and `import`, with timestamps clamped to the test clock.
 //!
 //! The crate's own `push_quoted` is crate-private, so `quote` below writes the same
 //! RFC 4180 form (wrap in `"`, double every `"`). `MemStore` and `FakeClock` are
 //! test-only and crate-private too, so this file has its own in-memory store and uses
-//! the system clock.
+//! a fixed clock.
 
 use std::cell::RefCell;
 
-use holm_core::clock::SystemClock;
+use holm_core::clock::Clock;
 use holm_core::import::{ImportFormat, MAX_IMPORT_ROWS, parse};
 use holm_core::item::{Item, ItemData, Timestamp};
 use holm_core::session::Session;
@@ -25,6 +25,19 @@ use proptest::test_runner::{Config, TestRunner};
 
 const PW: &str = "correct-Horse-battery-staple-EXAMPLE-9";
 const PLANT: &str = "EXAMPLE-leak";
+const NOW: i64 = 1_700_000_000;
+
+struct ImportClock;
+
+impl Clock for ImportClock {
+    fn now_unix(&self) -> Timestamp {
+        Timestamp(NOW)
+    }
+
+    fn monotonic(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
 
 /// A vault file held in memory.
 #[derive(Default)]
@@ -298,7 +311,7 @@ fn row() -> impl Strategy<Value = Row> {
             Just(Some("Community")),
         ],
         any::<bool>(),
-        0i64..2_000_000_000,
+        -1_000_000i64..2_000_000_000,
         0i64..1_000_000,
         kind(),
     )
@@ -401,8 +414,8 @@ fn check_item(s: &mut Session<Mem>, item_title: &str, r: &Row) -> Result<(), Tes
         .expect("imported item");
     let id = item.id();
     prop_assert_eq!(item.favourite(), r.favourite);
-    prop_assert_eq!(item.created(), Timestamp(r.created));
-    prop_assert_eq!(item.updated(), Timestamp(r.updated));
+    prop_assert_eq!(item.created(), Timestamp(r.created.clamp(0, NOW)));
+    prop_assert_eq!(item.updated(), Timestamp(r.updated.clamp(0, NOW)));
     let category = item.category().and_then(|c| {
         s.categories()
             .unwrap()
@@ -468,7 +481,7 @@ fn check_item(s: &mut Session<Mem>, item_title: &str, r: &Row) -> Result<(), Tes
 
 #[test]
 fn generated_rows_parse_to_same_fields() {
-    let mut s = Session::new(Mem::default(), Box::new(SystemClock::new()));
+    let mut s = Session::new(Mem::default(), Box::new(ImportClock));
     s.create(&MasterPassword::new(PW.to_owned()), &KdfParams::FLOOR)
         .unwrap();
     let session = RefCell::new(s);

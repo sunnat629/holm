@@ -459,14 +459,17 @@ fn find_category(data: &VaultData, name: Option<&Text>) -> Option<CategoryId> {
         .map(|c| c.id)
 }
 
-/// The timestamps an imported item gets. A missing `created` is `now` (or `updated`
-/// if that is earlier); a missing `updated` is `now` (or `created` if that is later),
-/// so `updated` is never before `created`.
+/// Imported times stay between the Unix epoch and now. A missing time uses now,
+/// except that `created` cannot be after `updated`.
 fn times(
     now: Timestamp,
     created: Option<Timestamp>,
     updated: Option<Timestamp>,
 ) -> (Timestamp, Timestamp) {
+    let now = Timestamp(now.0.max(0));
+    let clamp = |t: Timestamp| Timestamp(t.0.clamp(0, now.0));
+    let created = created.map(clamp);
+    let updated = updated.map(clamp);
     match (created, updated) {
         (Some(c), Some(u)) => (c, u),
         (Some(c), None) => (c, c.max(now)),

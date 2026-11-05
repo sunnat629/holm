@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 
 use crate::Env;
 use crate::args::{AddArgs, CategoryArg, EditArgs, NewPassword, RefArgs, RmArgs};
-use crate::output::{CliError, clean, write_error};
+use crate::output::{CliError, clean, read_error, write_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -36,6 +36,11 @@ fn short(id: holm_core::item::ItemId) -> String {
 /// Moves typed text into a secret field without another copy.
 fn secret_of(mut typed: Zeroizing<String>) -> SecretText {
     SecretText::new(mem::take(&mut *typed))
+}
+
+/// Moves a parsed field into wiping vault text without a copy.
+fn text_of(mut typed: Zeroizing<String>) -> Text {
+    Text::new(mem::take(&mut *typed))
 }
 
 /// A copy of a stored secret, straight into a wiping field.
@@ -143,14 +148,14 @@ pub(crate) fn add_to(
                 )?
             };
             ItemData::Login {
-                username: Text::new(args.username.unwrap_or_default()),
+                username: text_of(args.username.unwrap_or_default()),
                 password,
-                urls: args.urls.into_iter().map(Text::new).collect(),
+                urls: args.urls.into_iter().map(text_of).collect(),
                 notes: notes(term, args.with_notes)?,
             }
         }
         ItemType::CryptoAddress => ItemData::CryptoAddress {
-            chain: Text::new(args.chain.unwrap_or_default()),
+            chain: text_of(args.chain.unwrap_or_default()),
             address: hidden(term, "Address: ", MAX_LINE_BYTES)?,
             memo: hidden(term, "Memo (Enter for none): ", MAX_LINE_BYTES)?,
             notes: notes(term, args.with_notes)?,
@@ -169,7 +174,7 @@ pub(crate) fn add_to(
         },
     };
     let input = ItemInput {
-        title: Text::new(args.title),
+        title: text_of(args.title),
         category,
         favourite: args.favourite,
         data,
@@ -263,9 +268,9 @@ pub(crate) fn edit_in(
             } else {
                 urls.iter().map(keep_text).collect()
             };
-            all.extend(args.urls.into_iter().map(Text::new));
+            all.extend(args.urls.into_iter().map(text_of));
             ItemData::Login {
-                username: args.username.map_or_else(|| keep_text(username), Text::new),
+                username: args.username.map_or_else(|| keep_text(username), text_of),
                 password: keep_or(new_password, password),
                 urls: all,
                 notes: keep_or(new_notes, notes),
@@ -294,7 +299,7 @@ pub(crate) fn edit_in(
     let input = ItemInput {
         title: args
             .title
-            .map_or_else(|| keep_text_str(item.title()), Text::new),
+            .map_or_else(|| keep_text_str(item.title()), text_of),
         category,
         favourite: args.favourite.unwrap_or(item.favourite()),
         data,
@@ -445,9 +450,9 @@ pub(crate) fn empty_trash_in(
 
 /// `holm passwd`: changes the master password.
 ///
-/// Order: open, the current password, the new one (a weak one is refused before the
-/// repeat), the repeat, then [`Session::change_password`], which checks the current
-/// password through the throttle and writes a whole new vault.
+/// Order: open, verify the current password, ask for the new one and its repeat,
+/// then call [`Session::change_password`]. A weak new password is refused before
+/// the repeat. Both password checks use the session throttle.
 ///
 /// # Errors
 /// [`CliError::WeakPassword`], [`CliError::SecretsDiffer`],
@@ -475,6 +480,9 @@ pub(crate) fn passwd_in(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let current = vault::master(term.secret("Current master password: ", MAX_PASSWORD_BYTES)?);
+    session
+        .verify_password(&current)
+        .map_err(|e| read_error(&e))?;
     let new = vault::master(term.secret("New master password: ", MAX_PASSWORD_BYTES)?);
     let report = strength::check(&new);
     if !report.verdict.acceptable {

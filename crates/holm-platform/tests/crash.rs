@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Crash tests: a child process stops itself at each save step, and the vault it
 //! leaves behind must open with either the old or the new contents.
 //!

@@ -93,6 +93,31 @@ gate() { # name, command...
   fi
 }
 
+# Platform alone permits its reviewed AppKit module to opt into unsafe code.
+# Every other Rust lint must match the workspace table.
+lint_drift_gate() {
+  python3 - <<'PYTHON'
+import sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit("FAIL  lint drift gate needs Python 3.11 or newer")
+
+with open("Cargo.toml", "rb") as source:
+    workspace = tomllib.load(source)["workspace"]["lints"]["rust"]
+with open("crates/holm-platform/Cargo.toml", "rb") as source:
+    platform = tomllib.load(source)["lints"]["rust"]
+if workspace.pop("unsafe_code", None) != "forbid":
+    sys.exit("FAIL  workspace unsafe_code must be forbid")
+if platform.pop("unsafe_code", None) != "deny":
+    sys.exit("FAIL  holm-platform unsafe_code must be deny")
+if platform != workspace:
+    sys.exit("FAIL  holm-platform Rust lints drifted from the workspace")
+print("lint drift OK")
+PYTHON
+}
+gate lint-drift lint_drift_gate
+
 # The EFF wordlist and the zxcvbn common-password lists are include_str!'d into the binary.
 # Their pinned SHA-256 values (also in NOTICE) must match, and a missing shasum or file fails
 # the gate, so this fails closed.

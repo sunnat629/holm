@@ -26,7 +26,7 @@ use crate::Env;
 use crate::args::{ExportArgs, ImportArgs};
 use crate::commands::copy::AGAIN_PROMPT;
 use crate::commands::write::confirm;
-use crate::output::{CliError, write_error};
+use crate::output::{CliError, read_error as core_read_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -278,7 +278,7 @@ pub(crate) fn export_to(
     confirm(term, "Type export to continue: ", "export")?;
     let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
     let items = export_plain(session, &password, file).map_err(|e| match e {
-        TransferError::Core(e) => write_error(&e),
+        TransferError::Core(e) => core_read_error(&e),
         TransferError::Exists => CliError::FileExists,
         _ => CliError::ExportWriteFailed,
     })?;

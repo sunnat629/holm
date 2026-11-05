@@ -412,9 +412,21 @@ does its work and locks the vault on exit. There is no background agent.
   same path.
 - `get` prints every secret field as `(hidden)`, never its value or length. Display text
   goes through a filter that replaces control characters (Unicode `Cc`) and the bidi
-  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It does
-  not replace U+2028/U+2029 or zero-width characters; core already refuses control and
-  bidi characters in display fields, and widening the filter is in `BACKLOG.md`.
+  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It also
+  drops U+2028/U+2029, U+200B-U+200D, U+2060 and U+FEFF. Core already refuses control
+  and bidi characters in display fields; this output filter also covers separators
+  and invisible characters.
+- In polling mode (`VMIN = 0`, `VTIME = 1`), a zero-byte read normally means a
+  roughly 100 ms timeout. Three consecutive zero-byte reads taking less than 50 ms
+  each mean a closed terminal (`Stop::Closed`, then `EndOfInput`). A slower zero,
+  a byte, or an interrupted read resets the count. This bounds a hangup spin without
+  ending an idle prompt on a real poll timeout. Outside polling mode, one zero-byte
+  read means closed. Reader and clock seams cover these cases without sleeps.
+- `gen` writes the value and newline from one pre-sized `Zeroizing<Vec<u8>>` with
+  `write_all`, then flushes. The terminal and OS may still retain their own copies.
+- `passwd` verifies the current password through `Session::verify_password` before
+  asking for a new one. It shares the session throttle and leaves keys, data, dirty
+  state and idle time unchanged. Read and password-check errors make no save claim.
 - Messages are fixed text: never a path, a value or a library message.
 
 `holm shell` keeps one unlocked session in one process, for many commands:
@@ -469,8 +481,10 @@ Known gaps:
   `SLEEP_GAP_SECS` (5 s) with no notification is missed, in the shell and in the GUI
   alike (the GUI still gets the OS notification). A wall clock moved forward by more
   than 5 s locks too, which errs on the safe side.
-- Command arguments (titles, usernames, web addresses, paths) are copied into plain
-  `String`s by the parser and are not wiped. They are public fields, never secrets.
+- Parsed `AddArgs` and `EditArgs` text lives in `Zeroizing<String>`, including each
+  URL and named category. Fields move into vault text without another copy. Paths
+  and other command references still use ordinary `PathBuf` and `String` values;
+  operating-system argument storage is outside this wiping guarantee.
 
 ## Import and export (Phase 4)
 
@@ -478,16 +492,18 @@ Known gaps:
   buffers that are sized once and never reallocate. The file is read through a capped
   reader (16 MiB, regular files only, no FIFO, no growing file). A bad file fails
   whole, with fixed text and a line number, never a cell value. Rows with problems are
-  skipped and reported by row number only.
+  skipped and reported by row number only. Imported creation and update times are
+  clamped to `[0, now_unix]`; a pre-epoch local clock uses zero as the upper bound.
 - Export writes plaintext CSV: every password, in the clear. The file is created new
-  (never over an existing file or through a symlink) with mode 0600 on Unix. If the
-  write or its sync fails, the partial file is first truncated to zero bytes and synced
-  through the open handle, then removed. The remove is best effort (it can fail on the
-  same flaky or removable volume, or if the path was swapped meanwhile); the truncate
-  means a failed remove leaves an empty file, not partial plaintext. The truncate is
-  best effort too: if the volume refuses it as well, some of the plaintext can stay on
-  disk. The master password is asked again first and `EXPORT_WARNING` is shown before
-  any byte is written.
+  (never over an existing file or through a symlink) with mode 0600 on Unix. The
+  data is synced before the parent folder is synced on Unix. A volume that cannot
+  sync a directory follows the vault store's unsupported-directory rule; other
+  parent-sync errors fail the export. There is no portable directory sync elsewhere.
+  On any write or sync failure, Holm tries to truncate, sync and remove the file.
+  All cleanup steps are best effort and may leave plaintext. APFS may retain freed
+  blocks or snapshots even if cleanup succeeds; this is not secure erasure. The
+  master password is asked again first and `EXPORT_WARNING` is shown before any
+  byte is written.
 - Export does not escape cells that start with `=`, `+`, `-` or `@`. Escaping would
   change the stored value, so a re-import would not match byte for byte. The warning
   names spreadsheets instead, because that is where formula injection happens.

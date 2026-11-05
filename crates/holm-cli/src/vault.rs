@@ -65,9 +65,20 @@ fn vault_dir(path: &Path) -> Result<&Path, CliError> {
 /// Checks the vault folder and takes its instance lock. Nothing is asked yet.
 ///
 /// # Errors
-/// [`CliError::DirPermissions`], [`CliError::DirError`], [`CliError::AlreadyOpen`]
-/// or [`CliError::LockFailed`].
+/// [`CliError::NoVault`] if the folder is missing, [`CliError::DirPermissions`],
+/// [`CliError::DirError`], [`CliError::AlreadyOpen`] or [`CliError::LockFailed`].
 pub fn lock_folder(path: &Path) -> Result<InstanceLock, CliError> {
+    if !exists(vault_dir(path)?) {
+        return Err(CliError::NoVault);
+    }
+    lock_folder_for_init(path)
+}
+
+/// Creates the vault folder if needed, then takes its lock for `init`.
+///
+/// # Errors
+/// A folder or instance lock error, as fixed text.
+pub(crate) fn lock_folder_for_init(path: &Path) -> Result<InstanceLock, CliError> {
     ensure_vault_dir(path).map_err(dir_error)?;
     Ok(lock::acquire(vault_dir(path)?)?)
 }

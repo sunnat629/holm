@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `FsStore` on a real exFAT volume (a USB stick's usual format), from a small disk
 //! image made with `hdiutil`. exFAT has no hard links, so `create_new` takes its
 //! fallback path here. macOS only; the image is detached and deleted even when the

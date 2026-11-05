@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm shell`: one unlocked session in one process, with idle auto-lock, one
 //! throttle and a clipboard clear that runs from the prompt's deadline.
 //!
@@ -897,6 +898,29 @@ fn bad_lines_do_not_end_the_shell() {
     assert_eq!(term.count(Kind::Secret), 1);
 }
 
+/// Checks whether this process must obey directory write permissions.
+#[cfg(unix)]
+fn read_only_permissions_apply(folder: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = folder.join("root-probe");
+    let created = std::fs::File::create(&probe);
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    match created {
+        Ok(file) => {
+            drop(file);
+            std::fs::remove_file(probe).unwrap();
+            eprintln!("SKIP: running as root");
+            false
+        }
+        Err(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            true
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn lock_with_an_unsaved_change_asks_first() {
@@ -904,6 +928,9 @@ fn lock_with_an_unsaved_change_asks_first() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1117,6 +1144,9 @@ fn ctrl_c_at_the_discard_prompt_keeps_the_change() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1166,6 +1196,9 @@ fn end_of_input_at_the_discard_prompt_discards() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1206,6 +1239,9 @@ fn idle_at_the_discard_prompt_locks() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);

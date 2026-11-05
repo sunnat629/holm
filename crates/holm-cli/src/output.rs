@@ -436,6 +436,21 @@ fn import_message(e: &ImportError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     }
 }
 
+/// An error from a read or password check, without claims about saving a change.
+#[must_use]
+pub fn read_error(e: &CoreError) -> CliError {
+    match e {
+        CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
+            CliError::WrongPassword
+        }
+        CoreError::Throttled { retry_after_secs } => CliError::Throttled {
+            retry_after_secs: *retry_after_secs,
+        },
+        CoreError::NotFound | CoreError::NotAPhrase => CliError::NotFound,
+        _ => CliError::Failed,
+    }
+}
+
 /// An error from a change to the vault (add, edit, rm, import and so on), as fixed
 /// text. A save error other than "too large" means the change was made in memory and
 /// may not be on disk: [`CliError::NotSaved`], never "nothing was changed".
@@ -475,14 +490,19 @@ impl CliError {
 /// `text` with every control character and every bidirectional formatting character
 /// replaced by U+FFFD, so a stored title can't move the cursor, clear the screen or
 /// reorder what the terminal shows. The core already refuses these in fields; this is
-/// a second line of defence for output.
+/// a second line of defence for output. Invisible characters and Unicode line
+/// separators are dropped.
 #[must_use]
 pub fn clean(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(unsafe_for_terminal) {
+    if !text
+        .chars()
+        .any(|c| unsafe_for_terminal(c) || invisible_or_separator(c))
+    {
         return Cow::Borrowed(text);
     }
     Cow::Owned(
         text.chars()
+            .filter(|&c| !invisible_or_separator(c))
             .map(|c| {
                 if unsafe_for_terminal(c) {
                     '\u{fffd}'
@@ -491,6 +511,13 @@ pub fn clean(text: &str) -> Cow<'_, str> {
                 }
             })
             .collect(),
+    )
+}
+
+fn invisible_or_separator(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2028}' | '\u{2029}' | '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}'
     )
 }
 
@@ -551,6 +578,42 @@ mod tests {
             clean("a\tb\x1b[2Jc\u{202e}d"),
             "a\u{fffd}b\u{fffd}[2Jc\u{fffd}d"
         );
+    }
+
+    #[test]
+    fn clean_drops_invisible_and_separators() {
+        assert_eq!(
+            clean("a\u{2028}\u{2029}\u{200b}\u{200c}\u{200d}\u{2060}\u{feff}b"),
+            "ab"
+        );
+        assert!(matches!(clean("café"), Cow::Borrowed("café")));
+    }
+
+    #[test]
+    fn read_only_errors_say_nothing_about_saving() {
+        for error in [
+            CoreError::Store(StoreError::NotFound),
+            CoreError::Body(holm_core::body::BodyError::Malformed),
+            CoreError::Vault(VaultError::TooLargeToSave),
+            CoreError::Vault(VaultError::OutOfMemory),
+            CoreError::Locked,
+            CoreError::WrongPassword,
+            CoreError::NotAPhrase,
+            CoreError::Throttled {
+                retry_after_secs: 2,
+            },
+        ] {
+            let message = read_error(&error).to_string().to_lowercase();
+            assert!(!message.contains("sav"), "{message}");
+        }
+        assert!(matches!(
+            read_error(&CoreError::WrongPassword),
+            CliError::WrongPassword
+        ));
+        assert!(matches!(
+            read_error(&CoreError::NotAPhrase),
+            CliError::NotFound
+        ));
     }
 
     #[test]

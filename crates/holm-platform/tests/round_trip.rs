@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The whole Phase 2a path end to end, through the public API only: create, add,
 //! lock, unlock, edit, change the password, back up, open the backup. On disk it then
 //! exports to an owner-only CSV file, reads it back and imports it into a new vault.

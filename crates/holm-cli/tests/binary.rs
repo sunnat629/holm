@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The real `holm` binary refuses a password on the command line.
 
 use std::process::Command;

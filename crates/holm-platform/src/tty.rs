@@ -389,17 +389,19 @@ mod unix {
     }
 
     /// The terminal's input as an iterator of bytes, one `read` per byte.
-    struct TtyBytes<'o, R> {
+    struct TtyBytes<'o, R, C> {
         reader: R,
-        /// The terminal is in polling mode: a read of zero bytes is a 0.1 s timeout,
-        /// not the end of the input.
+        /// Measures read time as well as the deadline; tests use a fake clock.
+        now: C,
+        /// Polls normally return zero bytes after 0.1 s.
         polling: bool,
+        fast_zero_reads: u8,
         deadline: Option<Instant>,
         interrupt: Option<&'o dyn Fn() -> bool>,
         stop: Option<Stop>,
     }
 
-    impl<R: Read> Iterator for TtyBytes<'_, R> {
+    impl<R: Read, C: FnMut() -> Instant> Iterator for TtyBytes<'_, R, C> {
         type Item = u8;
 
         fn next(&mut self) -> Option<u8> {
@@ -411,8 +413,9 @@ mod unix {
                     self.stop = Some(Stop::Interrupted);
                     return None;
                 }
+                let started = (self.now)();
                 if let Some(deadline) = self.deadline
-                    && Instant::now() >= deadline
+                    && started >= deadline
                 {
                     self.stop = Some(Stop::Deadline);
                     return None;
@@ -420,17 +423,33 @@ mod unix {
                 let mut one = [0_u8; 1];
                 match self.reader.read(&mut one) {
                     Ok(1) => {
+                        self.fast_zero_reads = 0;
                         let byte = one[0];
                         one.zeroize();
                         return Some(byte);
                     }
-                    // A poll that timed out: check the interrupt and the deadline again.
-                    Ok(_) if self.polling => {}
+                    Ok(0) if self.polling => {
+                        // Three reads under half a VTIME slice mean a hangup.
+                        // A normal timeout resets the count and keeps polling.
+                        if (self.now)().saturating_duration_since(started)
+                            < std::time::Duration::from_millis(50)
+                        {
+                            self.fast_zero_reads += 1;
+                            if self.fast_zero_reads == 3 {
+                                self.stop = Some(Stop::Closed);
+                                return None;
+                            }
+                        } else {
+                            self.fast_zero_reads = 0;
+                        }
+                    }
                     Ok(_) => {
                         self.stop = Some(Stop::Closed);
                         return None;
                     }
-                    Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                    Err(e) if e.kind() == ErrorKind::Interrupted => {
+                        self.fast_zero_reads = 0;
+                    }
                     Err(e) => {
                         self.stop = Some(Stop::Io(e.kind()));
                         return None;
@@ -469,10 +488,22 @@ mod unix {
         out: &mut dyn Write,
         opts: &LineOpts<'_>,
     ) -> (Result<Option<Zeroizing<String>>, TtyError>, bool) {
+        read_edited_with_clock(reader, out, opts, Instant::now)
+    }
+
+    /// The read loop with a clock seam for timed zero-byte reads.
+    fn read_edited_with_clock<R: Read, C: FnMut() -> Instant>(
+        reader: R,
+        out: &mut dyn Write,
+        opts: &LineOpts<'_>,
+        now: C,
+    ) -> (Result<Option<Zeroizing<String>>, TtyError>, bool) {
         let mut buf = Zeroizing::new(Vec::with_capacity(opts.max_bytes));
         let mut bytes = TtyBytes {
             reader,
+            now,
             polling: polling(opts),
+            fast_zero_reads: 0,
             deadline: opts.deadline,
             interrupt: opts.interrupt,
             stop: None,
@@ -521,7 +552,9 @@ mod unix {
         let _guard = raw_mode(&tty, true)?;
         let mut bytes = TtyBytes {
             reader: &tty,
+            now: Instant::now,
             polling: true,
+            fast_zero_reads: 0,
             deadline: Some(until),
             interrupt,
             stop: None,
@@ -539,7 +572,7 @@ mod unix {
         use std::io::Read;
         use std::time::{Duration, Instant};
 
-        use super::{LineOpts, Stop, TtyBytes, read_edited};
+        use super::{LineOpts, Stop, TtyBytes, read_edited, read_edited_with_clock};
         use crate::tty::TtyError;
 
         /// After this many reads of zero bytes in a row, a test is stuck in a loop
@@ -613,10 +646,12 @@ mod unix {
         fn polling_zero_read_is_not_end_of_input() {
             // Many empty polls, then Enter: the line still arrives.
             let interrupt = || false;
-            struct Slow(u32);
-            impl Read for Slow {
+            let now = Cell::new(Instant::now());
+            struct Slow<'a>(u32, &'a Cell<Instant>);
+            impl Read for Slow<'_> {
                 fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
                     self.0 += 1;
+                    self.1.set(self.1.get() + Duration::from_millis(100));
                     match self.0 {
                         1..=20 => Ok(0),
                         21 => {
@@ -631,8 +666,90 @@ mod unix {
                 }
             }
             let mut out = Vec::new();
-            let (line, _) = read_edited(Slow(0), &mut out, &opts(&interrupt));
+            let (line, _) =
+                read_edited_with_clock(Slow(0, &now), &mut out, &opts(&interrupt), || now.get());
             assert_eq!(line.unwrap().unwrap().as_str(), "x");
+        }
+
+        #[test]
+        fn fast_zero_reads_close_polling_input() {
+            let now = Instant::now();
+            let mut bytes = TtyBytes {
+                reader: Typed::new(b""),
+                now: || now,
+                polling: true,
+                fast_zero_reads: 0,
+                deadline: Some(now + Duration::from_secs(60)),
+                interrupt: None,
+                stop: None,
+            };
+            assert_eq!(bytes.next(), None);
+            assert_eq!(bytes.stop, Some(Stop::Closed));
+            assert_eq!(bytes.reader.empty_reads, 3);
+            assert_eq!(bytes.next(), None);
+            assert_eq!(bytes.reader.empty_reads, 3);
+        }
+
+        #[test]
+        fn zero_byte_read_is_end_of_input() {
+            let now = Instant::now();
+            let options = LineOpts {
+                echo: false,
+                max_bytes: 64,
+                deadline: Some(now + Duration::from_secs(60)),
+                interrupt: None,
+            };
+            let mut out = Vec::new();
+            let (line, _) =
+                read_edited_with_clock(Typed::new(b"partial"), &mut out, &options, || now);
+            assert_eq!(line.unwrap_err(), TtyError::EndOfInput);
+            assert_eq!(out, b"\n");
+        }
+
+        #[test]
+        fn fast_zero_reads_must_be_consecutive() {
+            struct Polls<'a> {
+                now: &'a Cell<Instant>,
+                reads: usize,
+            }
+
+            impl Read for Polls<'_> {
+                fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                    self.reads += 1;
+                    match self.reads {
+                        3 => {
+                            // Exactly 50 ms is not a fast zero read.
+                            self.now.set(self.now.get() + Duration::from_millis(50));
+                            Ok(0)
+                        }
+                        6 => {
+                            out[0] = b'x';
+                            Ok(1)
+                        }
+                        9 => Err(std::io::ErrorKind::Interrupted.into()),
+                        1 | 2 | 4 | 5 | 7 | 8 | 10..=12 => Ok(0),
+                        _ => panic!("the read loop never stopped"),
+                    }
+                }
+            }
+
+            let now = Cell::new(Instant::now());
+            let mut bytes = TtyBytes {
+                reader: Polls {
+                    now: &now,
+                    reads: 0,
+                },
+                now: || now.get(),
+                polling: true,
+                fast_zero_reads: 0,
+                deadline: Some(now.get() + Duration::from_secs(60)),
+                interrupt: None,
+                stop: None,
+            };
+            assert_eq!(bytes.next(), Some(b'x'));
+            assert_eq!(bytes.next(), None);
+            assert_eq!(bytes.stop, Some(Stop::Closed));
+            assert_eq!(bytes.reader.reads, 12);
         }
 
         #[test]
@@ -646,6 +763,18 @@ mod unix {
             let mut out = Vec::new();
             let (line, _) = read_edited(Typed::new(b""), &mut out, &o);
             assert_eq!(line.unwrap_err(), TtyError::EndOfInput);
+            let mut bytes = TtyBytes {
+                reader: Typed::new(b""),
+                now: Instant::now,
+                polling: false,
+                fast_zero_reads: 0,
+                deadline: None,
+                interrupt: None,
+                stop: None,
+            };
+            assert_eq!(bytes.next(), None);
+            assert_eq!(bytes.stop, Some(Stop::Closed));
+            assert_eq!(bytes.reader.empty_reads, 1);
         }
 
         #[test]
@@ -653,7 +782,9 @@ mod unix {
             let fired = || true;
             let mut bytes = TtyBytes {
                 reader: Typed::new(b"a"),
+                now: Instant::now,
                 polling: true,
+                fast_zero_reads: 0,
                 deadline: Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap()),
                 interrupt: Some(&fired),
                 stop: None,

@@ -268,10 +268,23 @@ fn import_enabled_when_duplicates_outnumber_new_rows() {
 struct ReadOnly(PathBuf);
 
 impl ReadOnly {
-    fn new(dir: &Path) -> ReadOnly {
+    fn new(dir: &Path) -> Option<ReadOnly> {
         let folder = dir.join("Holm");
         std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
-        ReadOnly(folder)
+        let guard = ReadOnly(folder);
+        let probe = guard.0.join("root-probe");
+        match std::fs::File::create(&probe) {
+            Ok(file) => {
+                drop(file);
+                std::fs::remove_file(probe).unwrap();
+                eprintln!("SKIP: running as root");
+                None
+            }
+            Err(error) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+                Some(guard)
+            }
+        }
     }
 
     fn restore(&self) {
@@ -293,7 +306,9 @@ fn import_save_failure_keeps_banner_and_rows() {
     click_button(&mut harness, "Import...");
     type_into(&mut harness, "File path", source.to_str().unwrap());
     click_job(&mut harness, "Read file");
-    let guard = ReadOnly::new(dir.path());
+    let Some(guard) = ReadOnly::new(dir.path()) else {
+        return;
+    };
     click_job(&mut harness, "Import these rows");
     // The report is not there; the pane shows the honest text and the banner.
     let _ = harness.get_by_label(messages::IMPORT_UNSAVED);
@@ -472,7 +487,9 @@ fn dirty_before_import_not_reported_as_import() {
     click_button(&mut harness, "Import...");
     type_into(&mut harness, "File path", source.to_str().unwrap());
     click_job(&mut harness, "Read file");
-    let guard = ReadOnly::new(dir.path());
+    let Some(guard) = ReadOnly::new(dir.path()) else {
+        return;
+    };
     click_job(&mut harness, "Import these rows");
     click_button(&mut harness, "Cancel");
     assert!(button(&harness, "Try again"));

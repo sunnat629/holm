@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm init`, `list`, `get` and `gen` against a vault in a temporary folder, with a
 //! fake terminal.
 
@@ -71,6 +72,51 @@ fn init_then_list_empty() {
         term.prompts,
         vec![(Kind::Secret, "Master password: ".to_owned())]
     );
+}
+
+#[test]
+fn list_on_missing_folder_creates_nothing() {
+    let (dir, _) = vault_dir();
+    let folder = dir.path().join("missing").join("nested");
+    let path = folder.join("holm.vault");
+    let mut term = FakeTerminal::new(&[]);
+    let ran = run(&path, &["list"], &mut term);
+    assert_eq!(ran.code, ExitCode::FAILURE);
+    assert!(ran.err.contains(&CliError::NoVault.to_string()));
+    assert!(term.prompts.is_empty());
+    assert!(!dir.path().join("missing").exists());
+}
+
+#[test]
+fn gen_output_written_once() {
+    #[derive(Default)]
+    struct Output {
+        writes: usize,
+        flushes: usize,
+        bytes: zeroize::Zeroizing<Vec<u8>>,
+    }
+
+    impl std::io::Write for Output {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    use holm_cli::args::{GenArgs, GenKind};
+    for kind in [GenKind::Password, GenKind::Passphrase, GenKind::Username] {
+        let mut out = Output::default();
+        holm_cli::commands::read::gen_value(&GenArgs { kind, copy: false }, &mut out).unwrap();
+        assert_eq!((out.writes, out.flushes), (1, 1));
+        assert!(out.bytes.len() > 1);
+        assert_eq!(out.bytes.last(), Some(&b'\n'));
+    }
 }
 
 #[test]

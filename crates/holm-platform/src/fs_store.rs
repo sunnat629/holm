@@ -150,31 +150,23 @@ pub(crate) const O_NONBLOCK: Option<i32> = if cfg!(any(
 /// With it, opening a path whose last part is a symlink fails instead of following
 /// it. [`crate::lock`] adds it to the lock file's open.
 #[cfg(unix)]
-pub(crate) const O_NOFOLLOW: Option<i32> = if cfg!(any(
-    target_vendor = "apple",
-    target_os = "freebsd",
-    target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "dragonfly"
-)) {
-    Some(0x0100)
-} else if cfg!(all(
-    any(target_os = "linux", target_os = "android"),
-    any(target_arch = "x86_64", target_arch = "x86")
-)) {
-    Some(0o400000)
-} else if cfg!(all(
-    any(target_os = "linux", target_os = "android"),
-    any(
-        target_arch = "aarch64",
-        target_arch = "arm",
-        target_arch = "riscv64"
-    )
-)) {
-    Some(0o100000)
-} else {
-    None
-};
+pub(crate) const O_NOFOLLOW: Option<i32> =
+    o_nofollow_for(std::env::consts::OS, std::env::consts::ARCH);
+
+/// Known no-follow flags, independent of the host so every branch can be tested.
+#[cfg(unix)]
+const fn o_nofollow_for(os: &str, arch: &str) -> Option<i32> {
+    match (os.as_bytes(), arch.as_bytes()) {
+        (
+            b"macos" | b"ios" | b"tvos" | b"watchos" | b"visionos" | b"freebsd" | b"openbsd"
+            | b"netbsd" | b"dragonfly",
+            _,
+        ) => Some(0x0100),
+        (b"linux" | b"android", b"x86_64" | b"x86" | b"riscv64") => Some(0o400000),
+        (b"linux" | b"android", b"aarch64" | b"arm") => Some(0o100000),
+        _ => None,
+    }
+}
 
 /// Opens `path` for reading without blocking on a FIFO (Unix, see [`O_NONBLOCK`]),
 /// so a FIFO or device swapped in after the `lstat` check cannot hang the open
@@ -196,7 +188,7 @@ pub(crate) fn open_for_read(path: &Path) -> io::Result<File> {
 /// durable writes, F30). Never use this for a file sync: a file that cannot be
 /// synced is not durable, and that must fail the save.
 #[cfg(unix)]
-fn dir_sync_unsupported(e: &io::Error) -> bool {
+pub(crate) fn dir_sync_unsupported(e: &io::Error) -> bool {
     if e.kind() == ErrorKind::Unsupported {
         return true;
     }
@@ -542,6 +534,39 @@ impl VaultStore for FsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn o_nofollow_values_per_arch() {
+        for os in ["linux", "android"] {
+            for arch in ["x86_64", "x86", "riscv64"] {
+                assert_eq!(o_nofollow_for(os, arch), Some(0o400000));
+            }
+            for arch in ["aarch64", "arm"] {
+                assert_eq!(o_nofollow_for(os, arch), Some(0o100000));
+            }
+            assert_eq!(o_nofollow_for(os, "unknown"), None);
+        }
+        for os in [
+            "macos",
+            "ios",
+            "tvos",
+            "watchos",
+            "visionos",
+            "freebsd",
+            "openbsd",
+            "netbsd",
+            "dragonfly",
+        ] {
+            assert_eq!(o_nofollow_for(os, "x86_64"), Some(0x0100));
+            assert_eq!(o_nofollow_for(os, "aarch64"), Some(0x0100));
+        }
+        assert_eq!(o_nofollow_for("unknown", "x86_64"), None);
+        assert_eq!(
+            O_NOFOLLOW,
+            o_nofollow_for(std::env::consts::OS, std::env::consts::ARCH)
+        );
+    }
 
     #[cfg(unix)]
     #[test]

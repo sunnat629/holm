@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm import` and `holm export` against a vault in a temporary folder, with a fake
 //! terminal.
 

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm restore`, `holm empty-trash` and `holm list --trash`.
 
 mod common;

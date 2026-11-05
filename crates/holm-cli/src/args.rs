@@ -176,7 +176,7 @@ pub struct ListArgs {
 #[derive(Clone, PartialEq, Eq)]
 pub enum CategoryArg {
     /// `--category NAME`, matched by the category's name key.
-    Named(String),
+    Named(Zeroizing<String>),
     /// `--uncategorised`.
     Uncategorised,
 }
@@ -238,15 +238,15 @@ pub struct AddArgs {
     /// The item type.
     pub item_type: ItemType,
     /// `--title`.
-    pub title: String,
+    pub title: Zeroizing<String>,
     /// `--username` (login).
-    pub username: Option<String>,
+    pub username: Option<Zeroizing<String>>,
     /// `--url`, in order (login).
-    pub urls: Vec<String>,
+    pub urls: Vec<Zeroizing<String>>,
     /// `--chain` (crypto).
-    pub chain: Option<String>,
+    pub chain: Option<Zeroizing<String>>,
     /// `--category NAME`.
-    pub category: Option<String>,
+    pub category: Option<Zeroizing<String>>,
     /// `--favourite`.
     pub favourite: bool,
     /// `--generate`: a password from the vault's generator settings (login).
@@ -267,13 +267,13 @@ pub enum NewPassword {
 /// `edit`'s arguments. Anything not given stays as it is.
 pub struct EditArgs {
     /// The item's reference.
-    pub reference: String,
+    pub reference: Zeroizing<String>,
     /// `--title`.
-    pub title: Option<String>,
+    pub title: Option<Zeroizing<String>>,
     /// `--username` (login).
-    pub username: Option<String>,
+    pub username: Option<Zeroizing<String>>,
     /// `--url`, appended (login).
-    pub urls: Vec<String>,
+    pub urls: Vec<Zeroizing<String>>,
     /// `--clear-urls`: drop the stored web addresses first (login).
     pub clear_urls: bool,
     /// `--category NAME` or `--uncategorised`.
@@ -374,8 +374,7 @@ pub fn parse_command(args: &[OsString]) -> Result<Command, UsageError> {
 
 /// True for a flag that would carry a password: `-p` (alone or with a value stuck to
 /// it), and any long flag whose name starts with `pass` or `master`, or is `pw` or
-/// `pwd`, with or without `=value`. `--new-password` (Task 6, takes no value) is not
-/// one: it asks for a prompt.
+/// `pwd`, with or without `=value`. Prompt-only flags accept no attached value.
 fn is_password_flag(arg: &OsStr) -> bool {
     let bytes = arg.as_encoded_bytes();
     if let Some(long) = bytes.strip_prefix(b"--") {
@@ -384,7 +383,12 @@ fn is_password_flag(arg: &OsStr) -> bool {
         return name.starts_with(b"pass")
             || name.starts_with(b"master")
             || name == b"pw"
-            || name == b"pwd";
+            || name == b"pwd"
+            || (long.contains(&b'=')
+                && matches!(
+                    name.as_slice(),
+                    b"new-password" | b"new-notes" | b"with-notes"
+                ));
     }
     bytes.starts_with(b"-p") || bytes.starts_with(b"-P")
 }
@@ -462,7 +466,10 @@ fn parse_list(mut rest: &[OsString]) -> Result<ListArgs, UsageError> {
                 tail
             }
             [flag, value, tail @ ..] if flag == "--category" => {
-                set_category(&mut category, CategoryArg::Named(text(value)?.to_owned()))?;
+                set_category(
+                    &mut category,
+                    CategoryArg::Named(Zeroizing::new(text(value)?.to_owned())),
+                )?;
                 tail
             }
             [flag, value, tail @ ..] if flag == "--sort" => {
@@ -575,10 +582,10 @@ fn copy_field_of(value: &str) -> Result<CopyField, UsageError> {
 /// The flags `add` and `edit` share, as typed.
 #[derive(Default)]
 struct ItemFlags {
-    title: Option<String>,
-    username: Option<String>,
-    urls: Vec<String>,
-    chain: Option<String>,
+    title: Option<Zeroizing<String>>,
+    username: Option<Zeroizing<String>>,
+    urls: Vec<Zeroizing<String>>,
+    chain: Option<Zeroizing<String>>,
     category: Option<CategoryArg>,
     favourite: Option<bool>,
     generate: bool,
@@ -607,23 +614,26 @@ fn parse_item_flags(
         rest = match rest {
             [] => break,
             [flag, value, tail @ ..] if flag == "--title" => {
-                set_once(&mut f.title, text(value)?.to_owned())?;
+                set_once(&mut f.title, Zeroizing::new(text(value)?.to_owned()))?;
                 tail
             }
             [flag, value, tail @ ..] if flag == "--username" => {
-                set_once(&mut f.username, text(value)?.to_owned())?;
+                set_once(&mut f.username, Zeroizing::new(text(value)?.to_owned()))?;
                 tail
             }
             [flag, value, tail @ ..] if flag == "--url" => {
-                f.urls.push(text(value)?.to_owned());
+                f.urls.push(Zeroizing::new(text(value)?.to_owned()));
                 tail
             }
             [flag, value, tail @ ..] if flag == "--chain" && !edit => {
-                set_once(&mut f.chain, text(value)?.to_owned())?;
+                set_once(&mut f.chain, Zeroizing::new(text(value)?.to_owned()))?;
                 tail
             }
             [flag, value, tail @ ..] if flag == "--category" => {
-                set_category(&mut f.category, CategoryArg::Named(text(value)?.to_owned()))?;
+                set_category(
+                    &mut f.category,
+                    CategoryArg::Named(Zeroizing::new(text(value)?.to_owned())),
+                )?;
                 tail
             }
             [flag, tail @ ..]
@@ -739,7 +749,7 @@ fn parse_edit(rest: &[OsString]) -> Result<EditArgs, UsageError> {
         (true, true) => return Err(CONFLICT),
     };
     let args = EditArgs {
-        reference: reference.ok_or(MISSING_REF)?,
+        reference: Zeroizing::new(reference.ok_or(MISSING_REF)?),
         title: f.title,
         username: f.username,
         urls: f.urls,
@@ -941,6 +951,59 @@ mod tests {
     }
 
     #[test]
+    fn password_flag_with_value_named() {
+        for flag in [
+            "--new-password=EXAMPLE",
+            "--new-notes=EXAMPLE",
+            "--with-notes=EXAMPLE",
+        ] {
+            let error = parse_strs(&["edit", "abcdef", flag]).unwrap_err();
+            assert_eq!(error, PASSWORD_FLAG);
+            assert!(!error.to_string().contains("EXAMPLE"));
+        }
+    }
+
+    #[test]
+    fn args_text_fields_are_zeroizing() {
+        let Command::Add(add) = parse_strs(&[
+            "add",
+            "crypto",
+            "--title",
+            "T",
+            "--chain",
+            "C",
+            "--category",
+            "Work",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("not add");
+        };
+        let _: &Zeroizing<String> = &add.title;
+        let _: &Option<Zeroizing<String>> = &add.username;
+        let _: &Vec<Zeroizing<String>> = &add.urls;
+        let _: &Option<Zeroizing<String>> = &add.chain;
+        let _: &Option<Zeroizing<String>> = &add.category;
+
+        let Command::Edit(edit) =
+            parse_strs(&["edit", "abcdef", "--title", "T", "--category", "Work"])
+                .unwrap()
+                .command
+        else {
+            panic!("not edit");
+        };
+        let _: &Zeroizing<String> = &edit.reference;
+        let _: &Option<Zeroizing<String>> = &edit.title;
+        let _: &Option<Zeroizing<String>> = &edit.username;
+        let _: &Vec<Zeroizing<String>> = &edit.urls;
+        let Some(CategoryArg::Named(name)) = &edit.category else {
+            panic!("not named");
+        };
+        let _: &Zeroizing<String> = name;
+    }
+
+    #[test]
     fn every_spec_command_parses() {
         for (line, name) in [
             (&["init"][..], "init"),
@@ -989,7 +1052,7 @@ mod tests {
         };
         assert_eq!(list.search.as_deref().map(String::as_str), Some("mail"));
         assert_eq!(list.item_type, Some(ItemType::CryptoAddress));
-        assert!(list.category == Some(CategoryArg::Named("Work".to_owned())));
+        assert!(list.category == Some(CategoryArg::Named(Zeroizing::new("Work".to_owned()))));
         assert!(list.favourites && list.trash);
         assert_eq!(list.sort, Sort::UpdatedDesc);
 
@@ -1104,9 +1167,12 @@ mod tests {
             panic!("not add");
         };
         assert_eq!(a.item_type, ItemType::Login);
-        assert_eq!(a.urls, ["u1", "u2"]);
+        assert_eq!(
+            a.urls.iter().map(|url| url.as_str()).collect::<Vec<_>>(),
+            ["u1", "u2"]
+        );
         assert!(a.favourite && a.generate && !a.with_notes);
-        assert_eq!(a.category.as_deref(), Some("Work"));
+        assert_eq!(a.category.as_deref().map(String::as_str), Some("Work"));
 
         let Command::Edit(e) = parse_strs(&[
             "edit",

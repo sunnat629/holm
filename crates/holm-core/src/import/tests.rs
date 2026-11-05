@@ -39,6 +39,36 @@ fn csv(src: &str) -> ImportBatch {
     parse(src.as_bytes(), ImportFormat::Csv).unwrap()
 }
 
+#[test]
+fn import_clamps_timestamps() {
+    let mut s = fresh();
+    let source = format!(
+        "title,type,notes,created,updated\nPast,note,example,{0},{0}\nFuture,note,example,{1},{1}\nBoth,note,example,{0},{1}\n",
+        i64::MIN,
+        i64::MAX
+    );
+    s.import(csv(&source)).unwrap();
+    for (title, created, updated) in [("Past", 0, 0), ("Future", NOW, NOW), ("Both", 0, NOW)] {
+        let item = by_title(&s, title);
+        assert_eq!(item.created(), Timestamp(created));
+        assert_eq!(item.updated(), Timestamp(updated));
+    }
+    for value in [i64::MIN, i64::MAX] {
+        for pair in [
+            times(Timestamp(NOW), Some(Timestamp(value)), None),
+            times(Timestamp(NOW), None, Some(Timestamp(value))),
+        ] {
+            assert!((0..=NOW).contains(&pair.0.0));
+            assert!((0..=NOW).contains(&pair.1.0));
+            assert!(pair.0 <= pair.1);
+        }
+    }
+    assert_eq!(
+        times(Timestamp(-1), None, None),
+        (Timestamp(0), Timestamp(0))
+    );
+}
+
 fn json(src: &str) -> ImportBatch {
     parse(src.as_bytes(), ImportFormat::Json).unwrap()
 }
@@ -883,10 +913,7 @@ fn metadata_columns_read() {
     ));
     let m = by_title(&s, "M");
     assert!(m.favourite());
-    assert_eq!(
-        (m.created(), m.updated()),
-        (Timestamp(1_700_000_000), Timestamp(1_700_000_100))
-    );
+    assert_eq!((m.created(), m.updated()), (Timestamp(NOW), Timestamp(NOW)));
     let u = by_title(&s, "U");
     assert!(!u.favourite());
     assert_eq!((u.created(), u.updated()), (Timestamp(NOW), Timestamp(NOW)));
@@ -896,10 +923,7 @@ fn metadata_columns_read() {
         (Timestamp(1_600_000_000), Timestamp(NOW))
     );
     let f = by_title(&s, "F");
-    assert_eq!(
-        (f.created(), f.updated()),
-        (Timestamp(1_800_000_000), Timestamp(1_800_000_000))
-    );
+    assert_eq!((f.created(), f.updated()), (Timestamp(NOW), Timestamp(NOW)));
     let d = by_title(&s, "D");
     assert_eq!(
         (d.created(), d.updated()),

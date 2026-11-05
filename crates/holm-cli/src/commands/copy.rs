@@ -26,7 +26,7 @@ use zeroize::Zeroizing;
 
 use crate::Env;
 use crate::args::{CopyField, GenArgs, GenKind};
-use crate::output::{CliError, write_error};
+use crate::output::{CliError, read_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -90,7 +90,7 @@ pub fn value_of(
             let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
             let phrase = session
                 .reveal_phrase(id, &password)
-                .map_err(|e| write_error(&e))?;
+                .map_err(|e| read_error(&e))?;
             // Straight from the vault's buffer into a wiping one.
             Zeroizing::new(phrase.to_owned())
         }

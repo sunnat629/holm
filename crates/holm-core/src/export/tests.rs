@@ -369,8 +369,14 @@ fn export_import_roundtrip_all_types() {
         ))
         .unwrap();
     set_times(&mut s, odd, 1, 1);
-    let before = snaps(&mut s);
+    let mut before = snaps(&mut s);
     assert_eq!(before.len(), 5);
+    // The exported pre-epoch time is clamped on import.
+    before
+        .iter_mut()
+        .find(|item| item.title == "C phrase")
+        .unwrap()
+        .created = Timestamp(0);
 
     let mut other = reimport(&mut s);
     let after = snaps(&mut other);

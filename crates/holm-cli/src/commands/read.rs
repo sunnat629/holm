@@ -52,7 +52,7 @@ pub fn init(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
-    let _lock = vault::lock_folder(path)?;
+    let _lock = vault::lock_folder_for_init(path)?;
     if vault::exists(path) {
         return Err(CliError::VaultExists);
     }
@@ -212,18 +212,28 @@ pub fn gen_value(args: &GenArgs, out: &mut dyn Write) -> Result<(), CliError> {
         GenKind::Password => {
             let value =
                 generate_password(&PasswordSpec::DEFAULT).map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.expose())?;
+            write_generated(out, value.expose())?;
         }
         GenKind::Passphrase => {
             let value = generate_passphrase(&PassphraseSpec::DEFAULT)
                 .map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.expose())?;
+            write_generated(out, value.expose())?;
         }
         GenKind::Username => {
             let value =
                 generate_username(&UsernameSpec::DEFAULT).map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.as_str())?;
+            write_generated(out, value.as_str())?;
         }
     }
+    Ok(())
+}
+
+/// Writes the value and newline from one wiping allocation, then flushes stdout.
+fn write_generated(out: &mut dyn Write, value: &str) -> Result<(), CliError> {
+    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() + 1));
+    bytes.extend_from_slice(value.as_bytes());
+    bytes.push(b'\n');
+    out.write_all(&bytes)?;
+    out.flush()?;
     Ok(())
 }

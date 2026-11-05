@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm add`, `edit`, `rm`, `passwd` and `--copy` against a vault in a temporary
 //! folder, with a fake terminal and a fake clipboard.
 
@@ -489,8 +490,7 @@ fn passwd_changes_and_old_fails() {
     new.unlock(&MasterPassword::new(NEW_PW.to_owned())).unwrap();
     assert_eq!(new.active_items().unwrap().count(), 1);
 
-    // A wrong current password changes nothing. The core checks it (through the
-    // throttle) together with the change, after the new password is typed.
+    // A wrong current password changes nothing and stops before the new prompt.
     let mut term = FakeTerminal::new(&[NEW_PW, "wrong-EXAMPLE", PW, PW]);
     let ran = run(&path, &["passwd"], &mut term);
     failed(&ran);
@@ -520,6 +520,20 @@ fn passwd_weak_refused() {
     let mut term = FakeTerminal::new(&[PW, PW, NEW_PW, "different-EXAMPLE"]);
     failed(&run(&path, &["passwd"], &mut term));
     let _ = session(&path);
+}
+
+#[test]
+fn passwd_checks_current_first() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let before = std::fs::read(&path).unwrap();
+    let mut term = FakeTerminal::new(&[PW, "wrong-EXAMPLE"]);
+    let ran = run(&path, &["passwd"], &mut term);
+    failed(&ran);
+    assert!(ran.err.contains(&CliError::WrongPassword.to_string()));
+    assert_eq!(term.prompts.len(), 2);
+    assert_eq!(term.prompts[1].1, "Current master password: ");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[test]

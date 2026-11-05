@@ -352,6 +352,17 @@ impl<S: VaultStore> Session<S> {
         &self.store
     }
 
+    /// Checks the password without changing the open vault or its idle timer.
+    ///
+    /// Uses the same throttle as unlocking and other password checks.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::Throttled`], [`CoreError::WrongPassword`],
+    /// or [`CoreError::Vault`].
+    pub fn verify_password(&mut self, password: &MasterPassword) -> Result<(), CoreError> {
+        self.check_password(password)
+    }
+
     /// Checks `password` against the open vault, through the throttle.
     ///
     /// Every error counts as a failure (F16); success resets the count.
@@ -661,6 +672,33 @@ mod tests {
         assert_eq!(failures(&s), 0);
         s.lock();
         assert_eq!(s.check_password(&pw(PW)), Err(CoreError::Locked));
+        assert_eq!(failures(&s), 0);
+    }
+
+    #[test]
+    fn verify_password_keeps_the_open_session() {
+        let (mut s, clock) = created();
+        let before = s.store.read().unwrap();
+        let data = s.unlocked().unwrap().data.encode().unwrap();
+        clock.advance(secs(300));
+        assert!(s.idle_expired());
+        for _ in 0..3 {
+            assert_eq!(s.verify_password(&pw(WRONG)), Err(CoreError::WrongPassword));
+        }
+        assert!(matches!(
+            s.verify_password(&pw(PW)),
+            Err(CoreError::Throttled { .. })
+        ));
+        clock.advance(secs(2));
+        assert_eq!(s.verify_password(&pw(PW)), Ok(()));
+        assert_eq!(failures(&s), 0);
+        assert!(s.is_unlocked());
+        assert!(!s.is_dirty());
+        assert!(s.idle_expired());
+        assert_eq!(s.store.read().unwrap(), before);
+        assert!(s.unlocked().unwrap().data.encode().unwrap().expose() == data.expose());
+        s.lock();
+        assert_eq!(s.verify_password(&pw(PW)), Err(CoreError::Locked));
         assert_eq!(failures(&s), 0);
     }
 

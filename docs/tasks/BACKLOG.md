@@ -126,8 +126,8 @@ Phase 5 (platform hardening and GUI polish)
 
 Phase 3 final review Minors
 
-- m1: `O_NOFOLLOW` is wrong on riscv64 Linux (`fs_store.rs:162-171`). Fix: move riscv64 to the `0o400000` branch or return `None`.
-- m2: no guard against drift between holm-platform `[lints.rust]` and `[workspace.lints.rust]`. Fix: add a ci-local grep or a test, and `#![forbid(unsafe_code)]` to holm-platform's integration tests.
+- [x] m1: `O_NOFOLLOW` now uses a host-independent table. Linux riscv64 and x86 use `0o400000`; arm and aarch64 use `0o100000`; macOS uses `0x0100`. Task 10 adds whole-table and host-constant assertions.
+- [x] m2: Task 10 adds the ci-local lint-drift gate and forbids unsafe code in platform and CLI integration tests. Every Rust lint except `unsafe_code` must match; platform must keep `unsafe_code = "deny"`, workspace `"forbid"`. Success prints `lint drift OK`. The TOML reader needs Python 3.11 or newer.
 - m3: the manual checklist sets `$V` only on the throwaway path. Fix: add `V="$HOME/Library/Application Support/Holm/holm.vault"` for the default route (checklist lines 73, 120, 126, 133).
 - m4: `create_then_sync_fails` (holm-gui `tests/create_unlock.rs`) leaves the fake session unlocked. Fix: `session.lock()` in the fake, then unlock with `PASSWORD` and expect Vault.
 - m5: no test that Escape or a backdrop click cancels the lock dialog (`vault.rs:300-303`).
@@ -149,7 +149,7 @@ From the Phase 4 per-task reviews, re-reviews and the final review. The final fi
 - T2 M6: `cells_allocated_once_at_final_size` asserts `capacity() == len()`, an allocator detail. Fix: `>=` plus the ptr and capacity-unchanged check.
 - T3 (b): a header with no `title` reports `UnknownColumns { count: 0 }` ("0 column names Holm does not know"). Fix: own text or variant.
 - T3 (c): the `data.items.truncate(start)` undo after a failed `insert_new` has no test (needs an RNG seam).
-- T3 M5: imported timestamps are unbounded (`i64::MIN`/`MAX` accepted), so a file can pin items in "recently updated". Fix: clamp to `[0, now]` or refuse future dates.
+- [x] T3 M5: Task 10 clamps imported creation and update times to `[0, now_unix]`, using zero when the local clock is before the epoch.
 - T3 M6 / final M10: the import fuzz targets run at libFuzzer's default `max_len` and never reach the column, row or cell caps. Fix: `-max_len=1048576` or seeds near the caps.
 - T3 M7: `fuzz/README.md` says `.github/workflows/fuzz.yml` "does the same", but its matrix lists 3 of the 7 targets. Fix the matrix or the sentence.
 - T3 M8: a max-size import is slow: `find_category` re-folds every category name per row, and `insert_new` scans ids linearly (O(n^2) at 50k). Fix: precompute category keys once per call.
@@ -161,22 +161,24 @@ From the Phase 4 per-task reviews, re-reviews and the final review. The final fi
 - T4 M2: `private_file::io_err` duplicates `fs_store::io_err`. Fix: make the fs_store one `pub(crate)` and reuse it.
 - T4 M3: `read_capped`'s re-checks on the open handle (type swapped after `metadata`, length changed) have no direct test. Fix: a seam that swaps the path between the two checks.
 - T4 M4: `read_capped`'s rustdoc does not say callers must show their own text for `TooLarge` (`StoreError`'s Display says 64 MiB and names the vault).
-- T4 M5: on macOS, an inherited ACL on the parent folder can give other users read access to the 0600 export. Fix: add macOS ACL inheritance to the Phase 5 per-OS checklist.
-- T4 M6: the parent folder is not fsynced after the export file is created, so a power loss can lose the file; lesson 32's snippet calls the buffer `out`, the code `text`.
-- T5 M2: `gen` prints the generated password through `writeln!`, so it sits in stdout's unwiped `LineWriter` buffer. Fix: one pre-sized `Zeroizing` buffer plus `write_all`, or document it.
-- T5 M3: with a deadline, a tty read of 0 bytes is treated as a poll timeout, so after a hangup the prompt spins until the deadline (in the shell the idle lock then fires). Fix: treat an early `Ok(0)` as closed.
+- [x] T4 M5: the Phase 4 manual checklist now asks for `ls -le` on the macOS export folder to check inherited ACLs. The real-Mac check is still owed.
+- [x] T4 M6: Task 10 syncs the export parent folder after the file data on Unix, with a sync seam and failure cleanup.
+- T4 M6 style note: lesson 32 calls the buffer `out`, while the code uses `text`; leave for the style pass.
+- [x] T5 M2: `gen` uses one pre-sized wiping byte buffer for the value and newline, then `write_all` and a flush. Task 10 adds a one-write test.
+- [x] T5 M3 / T7 Minor 1 / F17: polling `Ok(0)` is normally a VTIME timeout, not EOF. Three consecutive zero-byte reads under 50 ms each end with `Stop::Closed` / `EndOfInput`; a slower zero, byte or interrupted read resets the count. Non-polling zero reads close at once. Reader and clock seams cover slow polls and fast hangups without sleeps, bounding the hangup busy loop.
 - T5 M4: `init_refuses_weak_and_mismatched`'s "No terminal" case gets `Cancelled` (now `EndOfInput`) from an empty fake, not `NoTerminal`, and checks no message. Fix: a fake with a set error, or rename.
 - T5 M5: unrequested surface: `--uncategorized`/`--favorites` aliases (not in `USAGE`), `resolve_any`, `match_reference`.
 - T5 M6: `init` prints "Choose a master password…" to stdout before the terminal is opened, so with no tty the user sees it and then the error.
-- T5 M7: `output.rs` `clean()` lets U+2028/U+2029 and zero-width or invisible characters (U+200B-U+200D, U+2060, U+FEFF) through (CRYPTO now says so). Fix: add them to the filter.
-- T5 M8 / final M9: `--new-password=VALUE` is refused as an unknown flag, not as `PASSWORD_FLAG`, so the user is not told a password went on the command line. Fix: treat any `=value` on a prompt-only flag as `PASSWORD_FLAG`.
+- [x] T5 M7: `clean()` drops U+2028/U+2029, U+200B-U+200D, U+2060 and U+FEFF. Existing control and bidi replacement stays. Documented in CRYPTO.
+- [x] T5 M8 / final M9: attached values on `--new-password`, `--new-notes` and `--with-notes` give `PASSWORD_FLAG` without quoting the value.
 - T6 M1: the TCSAFLUSH typeahead fix has only the ignored manual test. Fix: a pty-based test (rustix `pty`, dev-only).
 - T6 M2: arboard sets the concealed marker after the value is written, so a polling clipboard manager could record it unconcealed. Phase 6 audit, or write both types at once.
 - T6 M3: `import`'s `Err(_) => ImportNotSaved` also catches errors raised before any row was added. Fix: match only save errors, map the rest to `Failed`.
-- T6 M4: `write_error` is used for read-only operations (`export_csv`, `reveal_phrase`, the `passwd` current-password check), so their text talks about a change that could not be saved. Fix: a `read_error` mapper.
+- [x] T6 M4: export, phrase reveal and the current-password check use a read-only error mapper with no save claim.
 - T6 M5: untested paths: `edit` and `rm` on a trashed item, the `ImportNotSaved` mapping, `ClearFailed`, and the clear after `wait_for_key` errors.
-- T6 (impl): `passwd` asks for the new password before verifying the current one (documented in DECISIONS). Fix: a core `verify_password` first.
-- T7 M2: parsed shell `Command` strings (title, username, URLs, chain, category, paths) are plain `String`/`PathBuf`, not wiped. Optional: `Zeroizing` text fields in `AddArgs`/`EditArgs`.
+- [x] T6 (impl): `passwd` calls the public, throttled `Session::verify_password` before the new-password prompt. The open vault and its idle time stay unchanged.
+- [x] T7 M2 text fields: `AddArgs` and `EditArgs` use wiping strings, including URLs and named categories. Task 10 adds type assertions.
+- T7 M2 remainder: paths and other command references still use ordinary buffers; consider wiping these in a later memory pass.
 - T7 M3: a clipboard-clear deadline at `holm>` drops (and wipes) a half-typed line. Fix: clear without ending the read, or document it.
 - T7 M4: the shell deadlines are monotonic, so on macOS the idle lock and the clipboard clear fire late after sleep (typed lines are still checked against the wall clock). Cheap hardening: also compare `PendingClear` with `now_unix`.
 - T7 M6: `cargo test -p holm-cli --locked shell` filters by name and runs 4 of the shell tests. Fix: use `--test shell` in plans and CI notes.
@@ -192,11 +194,41 @@ From the Phase 4 per-task reviews, re-reviews and the final review. The final fi
 - T8 M8: lesson 36 shows `pub(crate) enum Job` (code: `pub`) and asks for a test that already exists; CRYPTO says a bad import file fails "with a line number", but the GUI shows none.
 - T8 re-review M1: a session already dirty from an earlier failed save plus a pre-insert import failure (for example `TooManyItems`) is shown as "added, unsaved" with a stale banner.
 - T8 re-review M2: a stray `/// The central panel.` doc line sits above `show_save_banner` in `vault.rs`.
-- T8 re-review M3: the ReadOnly GUI test (0o500 folder) fails when run as root.
+- [x] T8 re-review M3 / N3: std-only creation probes after chmod skip with `SKIP: running as root`. Named tests: GUI `import_save_failure_keeps_banner_and_rows` and `dirty_before_import_not_reported_as_import`; platform `read_only_dir_keeps_old_file`; CLI shell `lock_with_an_unsaved_change_asks_first`, `ctrl_c_at_the_discard_prompt_keeps_the_change`, `end_of_input_at_the_discard_prompt_discards` and `idle_at_the_discard_prompt_locks`. Permissions are restored on skips. No rustix feature change.
 - Final M6: the GUI import and export path is used as typed (`PathBuf::from(path.trim())`), so a relative path resolves against the app's working folder and a trailing space is trimmed. Fix: refuse relative paths with fixed text; do not trim.
-- Final M7: `vault::lock_folder` creates the vault folder (0700) before the exists check, so `holm --vault /new/dir/x.vault list` creates `/new/dir` and then reports NoVault. Fix: check the folder first for every command except `init`.
+- [x] Final M7: every command except `init` checks that the vault folder exists before creating a folder or lock. A missing-folder `list` creates nothing.
 
 Phase 6 (release)
 
 - Clear the 206 `cargo vet` exemptions noted `gui-only, pre-release; audit or replace before Phase 6`, and renew or drop the 49 GUI `trusted` entries that end 2026-12-31.
 - Code signing and notarisation (owner approval).
+
+## Phase 5 Task 10
+
+Implementation and regression tests are written; builds, tests and gates are left to
+the lead under the shared-machine rule. No dependency or feature changes.
+Beads has no active workspace in this worktree, so the new phase-5 issue is not created.
+
+- [x] N1: DECISIONS and the private-file docs describe truncation, sync and removal
+  as best effort. APFS can retain freed blocks or snapshots; no secure-erasure claim.
+- [x] N4: already covered by Task 2. The clipboard decision says an unreadable
+  clipboard is cleared too; no implementation change here.
+- [x] Lesson 51: closing the small gaps. Lesson 50 belongs to another branch.
+
+## Phase 5 wave 2
+
+- Keychain and Touch ID, `mlock`, screen-capture exclusion, per-OS durable saves,
+  Windows and Linux builds, and real-machine per-OS checklists: outside this wave's
+  owner-selected scope. Owner call: wave 2 or Phase 6.
+- Secure Event Input, IME preedit in secret fields, copied-password paste into plain
+  fields, and foreign `Event::Paste` filtering: separate platform and input work.
+- Paint a locked frame before minimising, retain a pending Cmd+L lock, move Save and
+  lock off the UI thread, and count only user-input activity: separate GUI lifecycle work.
+- GUI creation and editing for crypto, phrase and note items, plus Trash, Settings,
+  Generator and change-password screens: separate UI scope.
+- Decide whether to warn about or tighten a 0755 vault folder; check folder ownership
+  and ACLs; make `create_new` crash-atomic on FAT: needs platform decisions and evidence.
+- Style-only Phase 4 Minors stay in their original list above; they are outside this
+  security fix wave.
+- N2, owner call: optional: keep the vault open on `EndOfInput` at the discard prompt.
+  Today it discards because the input has ended; this task preserves that behavior.
