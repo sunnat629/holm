@@ -159,14 +159,6 @@ impl FieldValue {
             Self::Date(_) => FieldKind::Date,
         }
     }
-
-    fn len(&self) -> usize {
-        match self {
-            Self::Text(value) => value.as_str().len(),
-            Self::Secret(value) | Self::MultilineSecret(value) => value.expose().len(),
-            Self::Date(_) => 10,
-        }
-    }
 }
 
 impl fmt::Debug for FieldValue {

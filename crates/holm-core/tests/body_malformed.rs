@@ -41,7 +41,11 @@ fn default_v2() -> Vec<u8> {
 fn default_prefix() -> Vec<u8> {
     let mut b = default_v2();
     let len = b.len();
-    assert_eq!(b[len - 2..], [0, 4], "default body ends: no items, next id 4");
+    assert_eq!(
+        b[len - 2..],
+        [0, 4],
+        "default body ends: no items, next id 4"
+    );
     b.truncate(len - 2);
     b
 }

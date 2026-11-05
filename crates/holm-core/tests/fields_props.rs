@@ -208,10 +208,7 @@ fn field() -> impl Strategy<Value = Field> {
 }
 
 fn entry() -> impl Strategy<Value = Entry> {
-    (
-        "[!-~]{0,12}",
-        prop::collection::vec(field(), 0..=SLOTS),
-    )
+    ("[!-~]{0,12}", prop::collection::vec(field(), 0..=SLOTS))
         .prop_map(|(password, fields)| Entry { password, fields })
 }
 
