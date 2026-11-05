@@ -25,6 +25,8 @@ use holm_core::settings::{
     CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS,
 };
 use holm_core::throttle::ThrottleStatus;
+#[cfg(all(feature = "dev-unlock", debug_assertions))]
+use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::clip_clear::{ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
@@ -170,6 +172,10 @@ pub struct HolmApp {
     /// A sleep was seen while the worker held the session; the vault locks as soon
     /// as the job hands it back.
     slept_while_working: bool,
+    /// A developer's password for one unlock try at start. Taken on the first try, so a
+    /// wrong password or a later lock never retries.
+    #[cfg(all(feature = "dev-unlock", debug_assertions))]
+    dev_password: Option<MasterPassword>,
 }
 
 impl fmt::Debug for HolmApp {
@@ -229,6 +235,8 @@ impl HolmApp {
             sleep_watch,
             lock_on_sleep: true,
             slept_while_working: false,
+            #[cfg(all(feature = "dev-unlock", debug_assertions))]
+            dev_password: None,
         };
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
             app.screen = Screen::Fatal(messages::dir_error(e));
@@ -271,6 +279,16 @@ impl HolmApp {
     #[must_use]
     pub fn with_spawner(mut self, spawner: Spawner) -> HolmApp {
         self.spawner = spawner;
+        self
+    }
+
+    /// Sets a password for one unlock try as soon as the unlock screen shows. Debug
+    /// builds with the `dev-unlock` feature only. It is used once: a wrong password or
+    /// a later lock does not try again, and the create screen ignores it.
+    #[cfg(all(feature = "dev-unlock", debug_assertions))]
+    #[must_use]
+    pub fn with_dev_password(mut self, password: MasterPassword) -> HolmApp {
+        self.dev_password = Some(password);
         self
     }
 
@@ -496,6 +514,17 @@ impl HolmApp {
     /// vault open it first notes activity and handles Cmd+L.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         self.apply_forget(ui.ctx());
+        #[cfg(all(feature = "dev-unlock", debug_assertions))]
+        {
+            if matches!(self.screen, Screen::Unlock(_))
+                && self.current_throttle().retry_after.is_none()
+                && let Some(pw) = self.dev_password.take()
+            {
+                self.start(ui.ctx(), Job::Unlock(pw));
+                ui.ctx().request_discard("dev unlock started");
+                return;
+            }
+        }
         if matches!(self.screen, Screen::Vault(_)) {
             self.record_activity(ui.ctx());
             if ui.ctx().input_mut(|i| i.consume_shortcut(&LOCK_SHORTCUT)) {

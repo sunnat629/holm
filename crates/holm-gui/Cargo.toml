@@ -18,6 +18,9 @@ workspace = true
 # Test-only hooks (`HolmApp::with_spawner`). Enabled for this crate's own tests through
 # the self dev-dependency below; a normal or release build never turns it on.
 test-hooks = []
+# Debug builds only: unlock an existing vault from HOLM_DEV_PASSWORD at start.
+# A release build with this feature stops with a compile_error!.
+dev-unlock = []
 
 [dependencies]
 holm-core.workspace = true

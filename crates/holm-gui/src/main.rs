@@ -90,7 +90,7 @@ mod macos {
             options,
             Box::new(|cc| {
                 holm_gui::fonts::install_fonts(&cc.egui_ctx);
-                Ok(Box::new(HolmApp::new(AppConfig {
+                let app = HolmApp::new(AppConfig {
                     vault_path,
                     kdf: KdfParams::DEFAULT,
                     session_clock: Box::new(SystemClock::new()),
@@ -99,7 +99,16 @@ mod macos {
                     clipboard: Box::new(SystemClipboard::new()),
                     file_dialog: Box::new(holm_gui::file_dialog::RfdDialog),
                     lock_events,
-                })))
+                });
+                #[cfg(all(feature = "dev-unlock", debug_assertions))]
+                let app = match holm_gui::dev_unlock::password_from_env() {
+                    Some(pw) => {
+                        eprintln!("dev-unlock: unlocking from the environment (debug build only).");
+                        app.with_dev_password(pw)
+                    }
+                    None => app,
+                };
+                Ok(Box::new(app))
             }),
         );
         match result {

@@ -9,10 +9,16 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+#[cfg(all(feature = "dev-unlock", not(debug_assertions)))]
+compile_error!("the dev-unlock feature is for debug builds only");
+
 #[cfg(target_os = "macos")]
 pub mod app;
 #[cfg(target_os = "macos")]
 pub mod clipboard;
+#[cfg(all(feature = "dev-unlock", debug_assertions))]
+/// Debug-only unlock of an existing vault from an environment variable.
+pub mod dev_unlock;
 #[cfg(target_os = "macos")]
 pub mod file_dialog;
 #[cfg(target_os = "macos")]

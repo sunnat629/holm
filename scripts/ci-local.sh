@@ -129,6 +129,34 @@ fuzzing_guard_gate() {
   }
 }
 gate fuzzing-guard fuzzing_guard_gate
+# holm-gui's `dev-unlock` feature (unlock from HOLM_DEV_PASSWORD) is for debug builds only.
+# A release build that turns the feature on must stop with holm-gui's compile_error!, and
+# this gate proves it does.
+DEV_UNLOCK_GUARD_MSG="the dev-unlock feature is for debug builds only"
+dev_unlock_guard_gate() {
+  local out
+  if out=$(cargo check -p holm-gui --release --features dev-unlock --locked 2>&1); then
+    echo "holm-gui built in release mode with --features dev-unlock" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -qF "$DEV_UNLOCK_GUARD_MSG" || {
+    printf '%s\n' "$out" >&2
+    echo "the build failed, but not on the dev-unlock guard" >&2
+    return 1
+  }
+}
+gate dev-unlock-guard dev_unlock_guard_gate
+gate dev-unlock-test cargo test -p holm-gui --features dev-unlock --test dev_unlock --locked
+# Proves a release binary carries no dev-unlock code: the variable name is only in the
+# feature's module, so it must not appear in the normal release build.
+dev_unlock_absent_gate() {
+  cargo build -p holm-gui --release --locked || return 1
+  if grep -qa HOLM_DEV_PASSWORD target/release/holm-gui; then
+    echo "HOLM_DEV_PASSWORD is in the release binary" >&2
+    return 1
+  fi
+}
+gate dev-unlock-absent dev_unlock_absent_gate
 # No other gate compiles holm-core's `fuzzing` module (test-only API for fuzz/) with clippy.
 # Its own target dir, so the changed RUSTFLAGS do not force the other gates to rebuild.
 gate clippy-fuzzing env RUSTFLAGS="--cfg fuzzing" CARGO_TARGET_DIR=target/cfg-fuzzing \

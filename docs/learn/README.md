@@ -54,6 +54,7 @@ security, three exercises, and what to read next in
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 | 48 | [Category chips and badges](48-category-chips-and-badges.md): reusing a core enum as UI state, `Copy` enums compared with `!=` to spot a stale list, and `Option<Text>` from `iter().find`. Kotlin: a `sealed interface` filter in a `ViewModel`. |
 | 49 | [Letter avatars](49-letter-avatars.md): `char::to_uppercase` as an iterator (`ß` is `SS`), `% len` for a stable palette slot, and `Option<usize>` from `iter().position`. Kotlin: `indexOfFirst` returning `-1`. |
+| 50 | [A debug-only dev unlock](50-dev-unlock-feature.md): `cfg(all(feature, debug_assertions))`, `compile_error!` as a build guard, and `Option::take` for a one-shot value. Kotlin: `BuildConfig.DEBUG` keeps the code, `cfg` removes it. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks
