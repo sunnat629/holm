@@ -1,0 +1,3 @@
+title,password,field1_label,field1_kind,field1_value,field1_expiry
+Example,EXAMPLE-pw,Note,multiline,"say ""hi""
+next line",2026-11-05

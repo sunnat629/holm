@@ -391,6 +391,9 @@ fn problem_text(problem: &RowProblem) -> &'static str {
         RowProblem::UnusedField => "a secret cell on a row that does not use it",
         RowProblem::BadFavourite => "favourite is not true or false",
         RowProblem::BadTimestamp => "a date is not valid",
+        RowProblem::BadFieldKind => "The field kind must be text, secret, multiline or date.",
+        RowProblem::BadDate => "The date must be YYYY-MM-DD.",
+        RowProblem::FieldGap => "A custom field skips an earlier slot.",
     }
 }
 

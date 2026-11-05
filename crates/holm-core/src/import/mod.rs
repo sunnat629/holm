@@ -28,6 +28,7 @@ use zeroize::Zeroizing;
 use crate::body::VaultData;
 use crate::category::{CategoryId, name_key};
 use crate::error::CoreError;
+use crate::fields::{CustomField, FieldValue, format_date};
 use crate::item::{ItemData, ItemInput, ItemType, Timestamp};
 use crate::plain::PlainError;
 use crate::rules::{FieldError, MAX_ITEMS};
@@ -134,6 +135,12 @@ pub enum RowProblem {
     BadFavourite,
     /// A `created` or `updated` cell is not Unix seconds, or `updated` is earlier.
     BadTimestamp,
+    /// The kind cell is missing or not `text`, `secret`, `multiline` or `date`.
+    BadFieldKind,
+    /// A date cell is not a real day written `YYYY-MM-DD`.
+    BadDate,
+    /// A later custom-field slot is filled while an earlier slot is empty.
+    FieldGap,
 }
 
 /// One skipped row.
@@ -289,8 +296,8 @@ pub fn parse(bytes: &[u8], format: ImportFormat) -> Result<ImportBatch, ImportEr
 /// username, the folded URLs joined by `\n`, the folded chain and the type, separated
 /// by `\0`. A field the type does not have is passed empty.
 ///
-/// Only display fields go in, so no secret is ever hashed. Items with equal keys are
-/// then compared field by field (see `same_item`).
+/// Only display fields go in, so no secret is ever hashed. Custom fields are not part
+/// of the key. Items with equal keys are then compared field by field (see `same_item`).
 pub(crate) fn dedup_key(
     item_type: ItemType,
     title: &str,
@@ -368,9 +375,13 @@ impl Hash for Key {
 }
 
 /// True if two items with equal [`dedup_key`]s are the same in every other user field:
-/// the category, and every secret byte for byte (a recovery phrase word by word).
-fn same_item(a: (Option<CategoryId>, &ItemData), b: (Option<CategoryId>, &ItemData)) -> bool {
-    if a.0 != b.0 {
+/// the category, every secret byte for byte (a recovery phrase word by word), and
+/// every custom field (label bytes, kind, value bytes, expiry).
+fn same_item(
+    a: (Option<CategoryId>, &ItemData, &[CustomField]),
+    b: (Option<CategoryId>, &ItemData, &[CustomField]),
+) -> bool {
+    if a.0 != b.0 || !same_fields(a.2, b.2) {
         return false;
     }
     match (a.1, b.1) {
@@ -422,22 +433,53 @@ fn same_item(a: (Option<CategoryId>, &ItemData), b: (Option<CategoryId>, &ItemDa
     }
 }
 
+/// Label bytes, kind, value bytes, and expiry. Secret bytes are compared in place.
+fn same_fields(a: &[CustomField], b: &[CustomField]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(left, right)| same_field(left, right))
+}
+
+fn same_field(a: &CustomField, b: &CustomField) -> bool {
+    a.label().as_bytes() == b.label().as_bytes()
+        && a.expiry() == b.expiry()
+        && same_value(a.value(), b.value())
+}
+
+fn same_value(a: &FieldValue, b: &FieldValue) -> bool {
+    match (a, b) {
+        (FieldValue::Text(left), FieldValue::Text(right)) => {
+            left.as_str().as_bytes() == right.as_str().as_bytes()
+        }
+        (FieldValue::Secret(left), FieldValue::Secret(right))
+        | (FieldValue::MultilineSecret(left), FieldValue::MultilineSecret(right)) => {
+            left.expose().as_bytes() == right.expose().as_bytes()
+        }
+        (FieldValue::Date(left), FieldValue::Date(right)) => {
+            format_date(*left) == format_date(*right)
+        }
+        _ => false,
+    }
+}
+
 /// For each row, `true` if it would be added: it is not the same item (in every user
 /// field) as any item in the vault, active or in the trash, or any earlier row.
 ///
 /// Items are grouped by the hash of their display fields, and only items in one group
 /// are compared, so secrets are compared in place and never hashed or copied.
 fn keep_mask(data: &VaultData, rows: &[ImportRow]) -> Vec<bool> {
-    type Group<'a> = Vec<(Option<CategoryId>, &'a ItemData)>;
+    type Group<'a> = Vec<(Option<CategoryId>, &'a ItemData, &'a [CustomField])>;
     let mut seen: HashMap<Key, Group<'_>> = HashMap::with_capacity(data.items.len());
     for item in &data.items {
         seen.entry(Key(key_of(&item.title, &item.data)))
             .or_default()
-            .push((item.category, &item.data));
+            .push((item.category, &item.data, item.fields()));
     }
     rows.iter()
         .map(|r| {
-            let this = (find_category(data, r.category_name.as_ref()), &r.input.data);
+            let this = (
+                find_category(data, r.category_name.as_ref()),
+                &r.input.data,
+                r.input.fields.as_slice(),
+            );
             let group = seen
                 .entry(Key(key_of(&r.input.title, &r.input.data)))
                 .or_default();
@@ -521,10 +563,10 @@ impl<S: VaultStore> Session<S> {
     /// Adds every ready row of `batch` that is not a duplicate, as one change.
     ///
     /// Duplicates are dropped first: rows identical in type, title, username, URLs,
-    /// chain, category and every secret to an item in the vault (trash included) or to
-    /// an earlier row. If the rest would take the vault over [`MAX_ITEMS`], nothing is
-    /// added. Categories are matched by name and never created. If the vault then has no
-    /// room to save, every added item is taken back.
+    /// chain, category, every secret and every custom field to an item in the vault
+    /// (trash included) or to an earlier row. If the rest would take the vault over
+    /// [`MAX_ITEMS`], nothing is added. Categories are matched by name and never
+    /// created. If the vault then has no room to save, every added item is taken back.
     ///
     /// # Errors
     /// [`CoreError::Locked`], [`CoreError::TooManyItems`] (nothing added), or the

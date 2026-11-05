@@ -1,8 +1,9 @@
 use super::*;
 use crate::category::CategoryId;
 use crate::clock::FakeClock;
+use crate::fields::{FieldKind, FieldValue, format_date, parse_date, try_field};
 use crate::import::{ImportFormat, parse};
-use crate::item::{ItemData, ItemId, ItemInput, ItemType, Timestamp};
+use crate::item::{Item, ItemData, ItemId, ItemInput, ItemType, Timestamp};
 use crate::plain::{Cell, CsvReader, ROW_END, quoted_len};
 use crate::store::MemStore;
 use crate::text::{GatedSecret, SecretText, Text};
@@ -17,7 +18,24 @@ const WRONG: &str = "not-the-Right-password-EXAMPLE-0";
 const NOW: i64 = 1_700_000_000;
 /// The Review Focus password: spaces at both ends, a tab and a decomposed accent.
 const ODD_PW: &str = " pa\u{301}ss\tword ";
-const HEADER: &str = "\"title\",\"username\",\"password\",\"url\",\"notes\",\"category\",\"type\",\"chain\",\"address\",\"memo\",\"recovery\",\"favourite\",\"created\",\"updated\"\r\n";
+/// The quoted header row, including the forty custom-field columns.
+fn header() -> String {
+    let quoted: Vec<String> = EXPORT_COLUMNS.iter().map(|c| format!("\"{c}\"")).collect();
+    format!("{}\r\n", quoted.join(","))
+}
+
+/// Appends an empty quoted cell for each custom-field column. `row` is a 14-cell oracle.
+fn with_empty_custom(row: &str) -> String {
+    let bare = row.strip_suffix(ROW_END).expect("row ends");
+    let extra = (EXPORT_COLUMNS.len() - 14) * 3 + ROW_END.len();
+    let mut out = String::with_capacity(bare.len() + extra);
+    out.push_str(bare);
+    for _ in 14..EXPORT_COLUMNS.len() {
+        out.push_str(",\"\"");
+    }
+    out.push_str(ROW_END);
+    out
+}
 
 fn pw(s: &str) -> MasterPassword {
     MasterPassword::new(s.to_owned())
@@ -277,9 +295,9 @@ fn export_excludes_trash() {
 #[test]
 fn export_header_exact() {
     let mut s = fresh();
-    assert_eq!(export_text(&mut s), HEADER);
+    assert_eq!(export_text(&mut s), header());
     let joined: Vec<String> = EXPORT_COLUMNS.iter().map(|c| format!("\"{c}\"")).collect();
-    assert_eq!(format!("{}\r\n", joined.join(",")), HEADER);
+    assert_eq!(format!("{}\r\n", joined.join(",")), header());
 }
 
 #[test]
@@ -299,21 +317,22 @@ fn export_quotes_everything() {
     .unwrap();
     let text = export_text(&mut s);
     let row = "\"Say \"\"hi\"\"\",\"a,b\",\"p\"\"w,1\",\"https://example.com/?q=1,2\",\"l1\nl2\",\"\",\"login\",\"\",\"\",\"\",\"\",\"false\",\"1700000000\",\"1700000000\"\r\n";
-    assert_eq!(text, format!("{HEADER}{row}"));
+    assert_eq!(text, format!("{}{}", header(), with_empty_custom(row)));
 }
 
 #[test]
 fn export_row_layout_per_type() {
     let mut s = fresh();
     every_type(&mut s);
-    let expected = [
-        HEADER,
+    let mut expected = header();
+    for row in [
         "\"A login\",\"user@example.com\",\"EXAMPLE-pw\",\"https://a.example.com\nhttps://b.example.com\",\"n1\",\"Work\",\"login\",\"\",\"\",\"\",\"\",\"true\",\"100\",\"200\"\r\n",
         "\"B crypto\",\"\",\"\",\"\",\"cn\",\"\",\"crypto\",\"EXAMPLE-chain\",\"EXAMPLE-addr\",\"memo-1\",\"\",\"false\",\"300\",\"300\"\r\n",
         "\"C phrase\",\"\",\"\",\"\",\"pn\",\"Personal\",\"recovery\",\"\",\"\",\"\",\"example words EXAMPLE\",\"false\",\"-5\",\"7\"\r\n",
         "\"D note\",\"\",\"\",\"\",\"Body\r\nline\",\"\",\"note\",\"\",\"\",\"\",\"\",\"false\",\"1700000000\",\"1700000000\"\r\n",
-    ]
-    .concat();
+    ] {
+        expected.push_str(&with_empty_custom(row));
+    }
     assert_eq!(export_text(&mut s), expected);
 }
 
@@ -419,5 +438,212 @@ fn export_buffer_allocated_once() {
 
 #[test]
 fn write_csv_with_no_items_is_the_header() {
-    assert_eq!(write_csv(&[], &[]).expose(), HEADER.as_bytes());
+    assert_eq!(write_csv(&[], &[]).expose(), header().as_bytes());
+}
+
+const FIRST_COLUMNS: [&str; 14] = [
+    "title",
+    "username",
+    "password",
+    "url",
+    "notes",
+    "category",
+    "type",
+    "chain",
+    "address",
+    "memo",
+    "recovery",
+    "favourite",
+    "created",
+    "updated",
+];
+
+const MULTILINE: &str = "one \"two\"\nthree\\four";
+
+fn sample_fields() -> Vec<crate::fields::CustomField> {
+    vec![
+        try_field(t("Note"), FieldValue::Text(t("public note")), None).unwrap(),
+        try_field(
+            t("Pin"),
+            FieldValue::Secret(st("EXAMPLE-field-secret")),
+            None,
+        )
+        .unwrap(),
+        try_field(t("Key"), FieldValue::MultilineSecret(st(MULTILINE)), None).unwrap(),
+        try_field(
+            t("When"),
+            FieldValue::Date(parse_date("2026-11-05").expect("date")),
+            Some(parse_date("2026-12-01").expect("date")),
+        )
+        .unwrap(),
+    ]
+}
+
+fn by_title<'a>(s: &'a S, title: &str) -> &'a Item {
+    s.active_items()
+        .unwrap()
+        .find(|item| item.title() == title)
+        .unwrap()
+}
+
+fn assert_sample_fields(item: &Item) {
+    let fields = item.fields();
+    assert_eq!(fields.len(), 4);
+    assert_eq!(fields[0].label(), "Note");
+    assert_eq!(fields[0].kind(), FieldKind::Text);
+    assert_eq!(fields[0].expiry(), None);
+    match fields[0].value() {
+        FieldValue::Text(value) => assert_eq!(value.as_str(), "public note"),
+        _ => panic!("text"),
+    }
+    assert_eq!(fields[1].label(), "Pin");
+    assert_eq!(fields[1].kind(), FieldKind::Secret);
+    match fields[1].value() {
+        FieldValue::Secret(value) => assert_eq!(value.expose().as_bytes(), b"EXAMPLE-field-secret"),
+        _ => panic!("secret"),
+    }
+    assert_eq!(fields[2].label(), "Key");
+    assert_eq!(fields[2].kind(), FieldKind::MultilineSecret);
+    match fields[2].value() {
+        FieldValue::MultilineSecret(value) => assert_eq!(value.expose(), MULTILINE),
+        _ => panic!("multiline"),
+    }
+    assert_eq!(fields[3].label(), "When");
+    assert_eq!(fields[3].kind(), FieldKind::Date);
+    match fields[3].value() {
+        FieldValue::Date(date) => assert_eq!(format_date(*date), *b"2026-11-05"),
+        _ => panic!("date"),
+    }
+    assert_eq!(fields[3].expiry().map(format_date), Some(*b"2026-12-01"));
+}
+
+fn vault_with_sample() -> S {
+    let mut s = fresh();
+    let id = s.add_item(login("Fields", "EXAMPLE-pw")).unwrap();
+    s.set_custom_fields(id, sample_fields()).unwrap();
+    let gone = s.add_item(login("gone", "EXAMPLE-gone")).unwrap();
+    s.trash(gone).unwrap();
+    s
+}
+
+#[test]
+fn export_header_has_54_columns() {
+    let mut s = fresh();
+    let rows = records(&export_text(&mut s));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0], EXPORT_COLUMNS);
+    assert_eq!(EXPORT_COLUMNS.len(), 54);
+    assert_eq!(&EXPORT_COLUMNS[..14], &FIRST_COLUMNS);
+    assert_eq!(EXPORT_COLUMNS[14], "field1_label");
+    assert_eq!(*EXPORT_COLUMNS.last().unwrap(), "field10_expiry");
+}
+
+#[test]
+fn export_import_roundtrip_custom_fields() {
+    let mut s = vault_with_sample();
+    let text = export_text(&mut s);
+    let rows = records(&text);
+    assert_eq!(rows.len(), 2);
+    let data = &rows[1];
+    assert_eq!(data[0], "Fields");
+    assert_eq!(data[14..18], ["Note", "text", "public note", ""]);
+    assert_eq!(data[18..22], ["Pin", "secret", "EXAMPLE-field-secret", ""]);
+    assert_eq!(data[22..26], ["Key", "multiline", MULTILINE, ""]);
+    assert_eq!(data[26..30], ["When", "date", "2026-11-05", "2026-12-01"]);
+    assert!(data[30].is_empty());
+    assert!(!text.contains("EXAMPLE-gone"));
+
+    let other = reimport(&mut s);
+    assert_sample_fields(by_title(&other, "Fields"));
+}
+
+#[test]
+fn json_export_import_roundtrip() {
+    assert_eq!(write_json(&[], &[]).expose(), b"[]");
+    let mut s = vault_with_sample();
+    let buf = s.export_json(&pw(PW)).unwrap();
+    let text = core::str::from_utf8(buf.expose()).unwrap();
+    assert!(text.starts_with("[{"));
+    assert!(text.ends_with("}]"));
+    assert!(!text.contains('\n'));
+    assert!(text.contains("\\\""));
+    assert!(text.contains("\\n"));
+    assert!(text.contains("\\\\"));
+    assert!(text.contains("\"field5_label\":\"\""));
+    assert!(!text.contains("EXAMPLE-gone"));
+    let mut at = 0;
+    for key in [
+        "title",
+        "username",
+        "updated",
+        "field1_label",
+        "field1_kind",
+        "field1_value",
+        "field1_expiry",
+        "field10_expiry",
+    ] {
+        let found = text.find(&format!("\"{key}\":")).unwrap();
+        assert!(found > at, "{key}");
+        at = found;
+    }
+
+    let batch = parse(text.as_bytes(), ImportFormat::Json).unwrap();
+    assert!(batch.issues().is_empty());
+    let (mut other, _) = fresh_at(NOW + 1_000);
+    other.import(batch).unwrap();
+    assert_sample_fields(by_title(&other, "Fields"));
+}
+
+#[test]
+fn formula_still_unescaped() {
+    const FORMULAS: [&str; 4] = ["=SUM(A1)", "+1", "-1", "@x"];
+    let mut s = fresh();
+    let id = s.add_item(login("formula field", "plain")).unwrap();
+    let fields = FORMULAS
+        .iter()
+        .enumerate()
+        .map(|(i, formula)| {
+            try_field(t(&format!("P{i}")), FieldValue::Secret(st(formula)), None).unwrap()
+        })
+        .collect();
+    s.set_custom_fields(id, fields).unwrap();
+    let text = export_text(&mut s);
+    for formula in FORMULAS {
+        assert!(text.contains(&format!(",\"{formula}\",")), "{formula}");
+        assert!(!text.contains(&format!("'{formula}")), "{formula}");
+    }
+    let other = reimport(&mut s);
+    let item = by_title(&other, "formula field");
+    assert_eq!(item.fields().len(), 4);
+    for (field, formula) in item.fields().iter().zip(FORMULAS) {
+        match field.value() {
+            FieldValue::Secret(value) => assert_eq!(value.expose(), formula),
+            _ => panic!("secret"),
+        }
+    }
+}
+
+#[test]
+fn export_json_needs_password() {
+    let (mut s, clock) = fresh_at(NOW);
+    s.add_item(login("a", "EXAMPLE-pw")).unwrap();
+    for n in 1..=FREE_FAILURES {
+        assert_eq!(
+            s.export_json(&pw(WRONG)).unwrap_err(),
+            CoreError::WrongPassword
+        );
+        assert_eq!(s.throttle_status().consecutive_failures, n);
+    }
+    assert!(matches!(
+        s.export_json(&pw(PW)),
+        Err(CoreError::Throttled { .. })
+    ));
+    clock.advance(Duration::from_secs(2));
+    let buf = s.export_json(&pw(PW)).unwrap();
+    let text = core::str::from_utf8(buf.expose()).unwrap();
+    assert!(text.contains("EXAMPLE-pw"));
+    assert_eq!(s.throttle_status().consecutive_failures, 0);
+
+    s.lock();
+    assert_eq!(s.export_json(&pw(PW)).unwrap_err(), CoreError::Locked);
 }

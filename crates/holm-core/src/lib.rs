@@ -11,7 +11,7 @@
 //! [`store`] is the trait the vault file is read and written through, [`session`]
 //! creates, unlocks, saves and locks a vault, and [`error`] holds its one error type.
 //! [`import`] reads CSV and JSON import files into a vault, all or nothing, and
-//! [`export`] writes every item outside the Trash as plaintext CSV after a password check.
+//! [`export`] writes every item outside the Trash as plaintext CSV or JSON after a password check.
 //!
 //! The item types have no `Serialize` or `Deserialize`, so outside code cannot turn them
 //! into bytes or build them from bytes. These two examples must not compile:

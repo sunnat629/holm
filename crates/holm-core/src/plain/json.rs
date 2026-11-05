@@ -83,6 +83,68 @@ pub(crate) fn parse_json_rows(
     Ok(rows)
 }
 
+/// Bytes [`push_json_string`] writes for `s`, including the surrounding quotes.
+///
+/// The count and the writer share [`escaped_len`], so a measured buffer is never
+/// grown. Escapes only add bytes. They do not allocate a second copy of `s`.
+pub(crate) fn json_string_len(s: &str) -> usize {
+    let mut n = 2usize;
+    for c in s.chars() {
+        n = n.saturating_add(escaped_len(c));
+    }
+    n
+}
+
+/// How many bytes one character takes inside a JSON string.
+fn escaped_len(c: char) -> usize {
+    match c {
+        '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
+        c if (c as u32) < 0x20 => 6,
+        c => c.len_utf8(),
+    }
+}
+
+/// Appends `s` as a JSON string. `out` must already have room for [`json_string_len`]
+/// bytes, so this never reallocates (and leaves no unwiped copy).
+pub(crate) fn push_json_string(out: &mut String, s: &str) {
+    let need = json_string_len(s);
+    let start_len = out.len();
+    assert!(
+        out.capacity() - start_len >= need,
+        "no room for the json string"
+    );
+    let cap = out.capacity();
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => push_u00(out, c),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    assert_eq!(out.capacity(), cap, "json string grew");
+    assert_eq!(out.len(), start_len + need, "json string length disagrees");
+}
+
+/// Writes `\u00XX` for a control character below U+0020 that has no short escape.
+fn push_u00(out: &mut String, c: char) {
+    const HEX: [u8; 16] = *b"0123456789abcdef";
+    let n = u32::from(c);
+    out.push('\\');
+    out.push('u');
+    out.push('0');
+    out.push('0');
+    out.push(char::from(HEX[((n >> 4) & 0xf) as usize]));
+    out.push(char::from(HEX[(n & 0xf) as usize]));
+}
+
 /// A cursor over the source. All positions are byte offsets; the parser only
 /// stops on ASCII bytes, so every slice it takes is on a `char` boundary.
 struct Parser<'a> {
@@ -342,6 +404,29 @@ mod tests {
             dbg.contains("line: 1") && dbg.contains("fields: 1"),
             "{dbg}"
         );
+    }
+
+    #[test]
+    fn writer_length_matches_fill() {
+        let samples = [
+            "",
+            "a",
+            "say \"hi\"",
+            "a\\b",
+            "line\nnext",
+            "\r\n\t\u{8}\u{c}\u{1}",
+            "日本😀",
+        ];
+        for sample in samples {
+            let need = super::json_string_len(sample);
+            let mut out = String::with_capacity(need);
+            super::push_json_string(&mut out, sample);
+            assert_eq!(out.len(), need, "{sample:?}");
+            let wrapped = format!("[{{\"k\":{out}}}]");
+            let rows = parse_json_rows(&wrapped, 4, 4).unwrap();
+            let value = rows[0].fields[0].1.as_ref().unwrap();
+            assert_eq!(value.as_str(), sample);
+        }
     }
 
     #[test]
