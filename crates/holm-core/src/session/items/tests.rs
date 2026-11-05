@@ -5,9 +5,10 @@ use super::super::tests::{
 use crate::body::VaultData;
 use crate::envelope::{self, VaultError};
 use crate::error::CoreError;
+use crate::fields::{CustomField, FieldValue, try_field};
 use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
 use crate::padding::MAX_BODY_LEN;
-use crate::rules::{Field, FieldError, MAX_ITEMS};
+use crate::rules::{Field, FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_MULTILINE_SECRET_BYTES};
 use crate::settings::{Settings, SettingsError};
 use crate::store::{MemStore, StoreError};
 use crate::text::{GatedSecret, SecretText, Text};
@@ -105,6 +106,25 @@ fn data_mut(s: &mut S) -> &mut VaultData {
 
 fn count(s: &S) -> usize {
     s.unlocked().unwrap().data.items.len()
+}
+
+fn plain_field(label: &str) -> CustomField {
+    try_field(t(label), FieldValue::Text(Text::new(String::new())), None).unwrap()
+}
+
+fn max_multiline_fields() -> Vec<CustomField> {
+    (0..MAX_CUSTOM_FIELDS)
+        .map(|i| {
+            try_field(
+                t(&format!("f{i}")),
+                FieldValue::MultilineSecret(SecretText::new(
+                    "a".repeat(MAX_MULTILINE_SECRET_BYTES),
+                )),
+                None,
+            )
+            .unwrap()
+        })
+        .collect()
 }
 
 fn login_password(s: &S, id: ItemId) -> String {
@@ -523,6 +543,7 @@ fn mutations_when_locked_return_locked() {
     let id = ItemId::random().unwrap();
     assert_eq!(s.add_item(login("a", "x")), Err(CoreError::Locked));
     assert_eq!(s.update_item(id, login("a", "x")), Err(CoreError::Locked));
+    assert_eq!(s.set_custom_fields(id, Vec::new()), Err(CoreError::Locked));
     assert_eq!(s.set_favourite(id, true), Err(CoreError::Locked));
     assert_eq!(s.trash(id), Err(CoreError::Locked));
     assert_eq!(s.restore(id), Err(CoreError::Locked));
@@ -535,4 +556,42 @@ fn mutations_when_locked_return_locked() {
         Err(CoreError::Locked)
     );
     assert_eq!(s.reveal_phrase(id, &pw(PW)).unwrap_err(), CoreError::Locked);
+}
+
+#[test]
+fn set_fields_bumps_updated_and_undoes() {
+    let (mut s, clock) = created();
+    let id = s.add_item(note("n", "b")).unwrap();
+    let created_updated = s.item(id).unwrap().updated();
+    clock.set_unix(created_updated.0 + 40);
+    s.set_custom_fields(id, vec![plain_field("label")]).unwrap();
+    let item = s.item(id).unwrap();
+    assert_eq!(item.updated(), Timestamp(created_updated.0 + 40));
+    assert_eq!(item.fields().len(), 1);
+    assert_eq!(item.fields()[0].label(), "label");
+
+    let (mut s, _) = created();
+    let (_, ids) = fill_to_the_brim(&mut s);
+    let id = ids[0];
+    let old_updated = s.item(id).unwrap().updated();
+    assert!(s.item(id).unwrap().fields().is_empty());
+    assert_eq!(
+        s.set_custom_fields(id, max_multiline_fields()),
+        Err(CoreError::Vault(VaultError::TooLargeToSave))
+    );
+    assert!(s.item(id).unwrap().fields().is_empty());
+    assert_eq!(s.item(id).unwrap().updated(), old_updated);
+    assert!(!s.is_dirty());
+}
+
+#[test]
+fn set_fields_refuses_trash() {
+    let (mut s, _) = created();
+    let id = s.add_item(note("n", "b")).unwrap();
+    s.trash(id).unwrap();
+    assert_eq!(
+        s.set_custom_fields(id, vec![plain_field("label")]),
+        Err(CoreError::InTrash)
+    );
+    assert!(s.item(id).unwrap().fields().is_empty());
 }

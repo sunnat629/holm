@@ -19,6 +19,11 @@ pub const MAX_CUSTOM_FIELDS: usize = 10;
 pub const MAX_LABEL_CHARS: usize = 64;
 /// Longest multiline custom secret in bytes.
 pub const MAX_MULTILINE_SECRET_BYTES: usize = 16 * 1024;
+/// A reminder this many UTC days ahead, or sooner, counts as expiring.
+///
+/// Already-past reminders count as well. Callers pass the UTC date in.
+/// This constant does not read a clock.
+pub const EXPIRING_WITHIN_DAYS: u32 = 30;
 
 /// A field that failed a rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

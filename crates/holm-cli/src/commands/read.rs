@@ -122,6 +122,7 @@ pub fn list(
             View::Active
         },
         sort: args.sort,
+        expiring_only: false,
     };
     let hits = session.search(&query).map_err(|_| CliError::Failed)?;
     for hit in hits {

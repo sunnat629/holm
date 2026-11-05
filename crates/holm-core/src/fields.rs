@@ -1,4 +1,6 @@
 //! Custom fields and checked Gregorian dates, independent of clocks and I/O.
+//!
+//! Expiry math takes a [`CalendarDate`] for today. It does not read a clock.
 
 use crate::rules::{
     Field, FieldError, MAX_CUSTOM_FIELDS, MAX_LABEL_CHARS, MAX_MULTILINE_SECRET_BYTES,
@@ -281,16 +283,269 @@ pub(crate) fn validate_fields(fields: &[CustomField]) -> Result<(), FieldError> 
     Ok(())
 }
 
+/// Inserts `field` at `index`. `index == fields.len()` appends.
+///
+/// The list is checked again after the insert. On error it is unchanged.
+///
+/// # Errors
+/// [`FieldError::NoSuchIndex`] when `index` is past the length.
+/// [`FieldError::TooManyFields`] when the list already holds [`MAX_CUSTOM_FIELDS`]
+/// fields. Any other [`FieldError`] when the inserted field breaks a field rule.
+pub fn insert_field(
+    fields: &mut Vec<CustomField>,
+    index: usize,
+    field: CustomField,
+) -> Result<(), FieldError> {
+    if index > fields.len() {
+        return Err(FieldError::NoSuchIndex);
+    }
+    if fields.len() >= MAX_CUSTOM_FIELDS {
+        return Err(FieldError::TooManyFields);
+    }
+    fields.insert(index, field);
+    if let Err(error) = validate_fields(fields) {
+        // The inserted field is dropped here, so a secret in it is wiped.
+        fields.remove(index);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Removes the field at `index` and returns it.
+///
+/// The list is checked again after the removal. On error the field is put back.
+///
+/// # Errors
+/// [`FieldError::NoSuchIndex`] when `index` is not a current position.
+pub fn remove_field(
+    fields: &mut Vec<CustomField>,
+    index: usize,
+) -> Result<CustomField, FieldError> {
+    if index >= fields.len() {
+        return Err(FieldError::NoSuchIndex);
+    }
+    let field = fields.remove(index);
+    if let Err(error) = validate_fields(fields) {
+        fields.insert(index, field);
+        return Err(error);
+    }
+    Ok(field)
+}
+
+/// Moves the field at `from` so that it lands at `to`.
+///
+/// Both indexes are positions in the current list. The same index checks the
+/// list and leaves the order as it is. The list is checked again after the move.
+/// On error the original order is restored.
+///
+/// # Errors
+/// [`FieldError::NoSuchIndex`] when `from` or `to` is not a current position.
+pub fn move_field(fields: &mut Vec<CustomField>, from: usize, to: usize) -> Result<(), FieldError> {
+    if from >= fields.len() || to >= fields.len() {
+        return Err(FieldError::NoSuchIndex);
+    }
+    if from != to {
+        let field = fields.remove(from);
+        fields.insert(to, field);
+    }
+    if let Err(error) = validate_fields(fields) {
+        if from != to {
+            let field = fields.remove(to);
+            fields.insert(from, field);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// How many UTC days until a reminder, or that the reminder is already past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpiryStatus {
+    /// Days from today until the reminder. Zero means the reminder is today.
+    InDays(u32),
+    /// The reminder is before today.
+    Expired,
+}
+
+/// The status of `expiry` on `today`. Equal dates are [`ExpiryStatus::InDays`]`(0)`.
+#[must_use]
+pub fn expiry_status(expiry: CalendarDate, today: CalendarDate) -> ExpiryStatus {
+    let delta = i64::from(epoch_day(expiry)) - i64::from(epoch_day(today));
+    if delta < 0 {
+        return ExpiryStatus::Expired;
+    }
+    // Supported dates are a few million days apart, so this conversion fits.
+    ExpiryStatus::InDays(u32::try_from(delta).unwrap_or(u32::MAX))
+}
+
+/// The earliest reminder in `fields`.
+///
+/// Fields with no reminder are skipped. This reads [`CustomField::expiry`] only.
+/// It does not read [`CustomField::value`].
+#[must_use]
+pub fn soonest_expiry(fields: &[CustomField]) -> Option<CalendarDate> {
+    fields.iter().filter_map(CustomField::expiry).min()
+}
+
+/// Whether the soonest reminder falls on or before `today` plus `within_days`.
+///
+/// A list with no reminder is false. Days are UTC dates from [`epoch_day`].
+/// `within_days` is widened to `i64` so a large window cannot wrap.
+#[must_use]
+pub fn is_expiring(fields: &[CustomField], today: CalendarDate, within_days: u32) -> bool {
+    let Some(soonest) = soonest_expiry(fields) else {
+        return false;
+    };
+    let limit = i64::from(epoch_day(today)) + i64::from(within_days);
+    i64::from(epoch_day(soonest)) <= limit
+}
+
+/// A starter list of labels and kinds. Applying one does not fill values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldPreset {
+    /// Username, password and server.
+    Email,
+    /// Email, API key, origin CA key and account id.
+    Cloudflare,
+    /// Username, personal access token and SSH key.
+    GitHub,
+    /// Host, port, username, password and SSH key.
+    Server,
+    /// Host, port, database, username and password.
+    Database,
+    /// Access key id, secret access key and region.
+    Aws,
+    /// Service, API key and endpoint.
+    ApiKey,
+    /// Network name and password.
+    WiFi,
+    /// Cardholder, number, expiry and CVV.
+    BankCard,
+    /// No rows.
+    Custom,
+}
+
+/// One preset row. It has a label and a kind, and no value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PresetField {
+    /// Display label.
+    pub label: &'static str,
+    /// Kind of this row.
+    pub kind: FieldKind,
+}
+
+const fn preset_row(label: &'static str, kind: FieldKind) -> PresetField {
+    PresetField { label, kind }
+}
+
+const EMAIL: &[PresetField] = &[
+    preset_row("Username", FieldKind::Text),
+    preset_row("Password", FieldKind::Secret),
+    preset_row("Server", FieldKind::Text),
+];
+
+const CLOUDFLARE: &[PresetField] = &[
+    preset_row("Email", FieldKind::Text),
+    preset_row("Global API key", FieldKind::Secret),
+    preset_row("Origin CA key", FieldKind::MultilineSecret),
+    preset_row("Account ID", FieldKind::Text),
+];
+
+const GITHUB: &[PresetField] = &[
+    preset_row("Username", FieldKind::Text),
+    preset_row("Personal access token", FieldKind::Secret),
+    preset_row("SSH private key", FieldKind::MultilineSecret),
+];
+
+const SERVER: &[PresetField] = &[
+    preset_row("Host", FieldKind::Text),
+    preset_row("Port", FieldKind::Text),
+    preset_row("Username", FieldKind::Text),
+    preset_row("Password", FieldKind::Secret),
+    preset_row("SSH private key", FieldKind::MultilineSecret),
+];
+
+const DATABASE: &[PresetField] = &[
+    preset_row("Host", FieldKind::Text),
+    preset_row("Port", FieldKind::Text),
+    preset_row("Database", FieldKind::Text),
+    preset_row("Username", FieldKind::Text),
+    preset_row("Password", FieldKind::Secret),
+];
+
+const AWS: &[PresetField] = &[
+    preset_row("Access key ID", FieldKind::Text),
+    preset_row("Secret access key", FieldKind::Secret),
+    preset_row("Region", FieldKind::Text),
+];
+
+const API_KEY: &[PresetField] = &[
+    preset_row("Service", FieldKind::Text),
+    preset_row("API key", FieldKind::Secret),
+    preset_row("Endpoint", FieldKind::Text),
+];
+
+const WIFI: &[PresetField] = &[
+    preset_row("Network name", FieldKind::Text),
+    preset_row("Password", FieldKind::Secret),
+];
+
+const BANK_CARD: &[PresetField] = &[
+    preset_row("Cardholder", FieldKind::Text),
+    preset_row("Number", FieldKind::Secret),
+    preset_row("Expiry", FieldKind::Date),
+    preset_row("CVV", FieldKind::Secret),
+];
+
+/// Labels and kinds for `preset`. [`FieldPreset::Custom`] is an empty slice.
+///
+/// The rows have no values. A caller that stores them starts from empty values.
+#[must_use]
+pub fn preset_fields(preset: FieldPreset) -> &'static [PresetField] {
+    match preset {
+        FieldPreset::Email => EMAIL,
+        FieldPreset::Cloudflare => CLOUDFLARE,
+        FieldPreset::GitHub => GITHUB,
+        FieldPreset::Server => SERVER,
+        FieldPreset::Database => DATABASE,
+        FieldPreset::Aws => AWS,
+        FieldPreset::ApiKey => API_KEY,
+        FieldPreset::WiFi => WIFI,
+        FieldPreset::BankCard => BANK_CARD,
+        FieldPreset::Custom => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::EXPIRING_WITHIN_DAYS;
     use static_assertions::assert_not_impl_any;
+
+    fn field(label: &str, value: &str, expiry: Option<CalendarDate>) -> CustomField {
+        try_field(
+            Text::new(label.to_owned()),
+            FieldValue::Text(Text::new(value.to_owned())),
+            expiry,
+        )
+        .unwrap()
+    }
+
+    fn names(fields: &[CustomField]) -> Vec<&str> {
+        fields.iter().map(CustomField::label).collect()
+    }
+
+    fn shift(today: CalendarDate, days: i64) -> CalendarDate {
+        from_unix_secs(i64::from(epoch_day(today)) * 86_400 + days * 86_400).unwrap()
+    }
 
     #[test]
     fn public_types_are_not_serde() {
         assert_not_impl_any!(CustomField: serde::Serialize, serde::de::DeserializeOwned);
         assert_not_impl_any!(FieldValue: serde::Serialize, serde::de::DeserializeOwned);
         assert_not_impl_any!(CalendarDate: serde::Serialize, serde::de::DeserializeOwned);
+        // `Item` and `ItemInput` are not `Clone`, so these stay non-`Clone`.
+        // A secret value is moved, not copied.
         assert_not_impl_any!(CustomField: Clone, Copy);
         assert_not_impl_any!(FieldValue: Clone, Copy);
     }
@@ -384,5 +639,142 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn insert_remove_move_roundtrip() {
+        let mut fields = Vec::new();
+        insert_field(&mut fields, 0, field("a", "va", None)).unwrap();
+        insert_field(&mut fields, 1, field("b", "vb", None)).unwrap();
+        insert_field(&mut fields, 2, field("c", "vc", None)).unwrap();
+        assert_eq!(names(&fields), ["a", "b", "c"]);
+        let end = fields.len() - 1;
+        move_field(&mut fields, 0, end).unwrap();
+        assert_eq!(names(&fields), ["b", "c", "a"]);
+        assert_eq!(fields[2].kind(), FieldKind::Text);
+        let FieldValue::Text(text) = fields[2].value() else {
+            panic!("moved field changed kind");
+        };
+        assert_eq!(text.as_str(), "va");
+        let end = fields.len() - 1;
+        let removed = remove_field(&mut fields, end).unwrap();
+        assert_eq!(removed.label(), "a");
+        assert_eq!(names(&fields), ["b", "c"]);
+    }
+
+    #[test]
+    fn eleventh_field_refused() {
+        let mut fields: Vec<CustomField> = (0..MAX_CUSTOM_FIELDS)
+            .map(|i| field(&format!("f{i}"), "", None))
+            .collect();
+        let before: Vec<String> = fields.iter().map(|item| item.label().to_owned()).collect();
+        let end = fields.len();
+        let error = insert_field(&mut fields, end, field("extra", "", None)).unwrap_err();
+        assert_eq!(error, FieldError::TooManyFields);
+        let after: Vec<String> = fields.iter().map(|item| item.label().to_owned()).collect();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn bad_index_refused() {
+        let mut fields = vec![field("alpha", "", None)];
+        let end = fields.len();
+        let error = remove_field(&mut fields, end).unwrap_err();
+        assert_eq!(error, FieldError::NoSuchIndex);
+        assert!(!error.to_string().contains("alpha"));
+        assert_eq!(names(&fields), ["alpha"]);
+    }
+
+    #[test]
+    fn soonest_of_three() {
+        let day3 = parse_date("2026-01-03").unwrap();
+        let day10 = parse_date("2026-01-10").unwrap();
+        let fields = [
+            field("later", "", Some(day10)),
+            field("sooner", "", Some(day3)),
+            field("open", "", None),
+        ];
+        assert_eq!(soonest_expiry(&fields), Some(day3));
+        assert_eq!(soonest_expiry(&fields[2..]), None);
+    }
+
+    #[test]
+    fn expiry_status_days() {
+        let today = parse_date("2026-11-05").unwrap();
+        assert_eq!(
+            expiry_status(parse_date("2026-11-06").unwrap(), today),
+            ExpiryStatus::InDays(1)
+        );
+        assert_eq!(expiry_status(today, today), ExpiryStatus::InDays(0));
+        assert_eq!(
+            expiry_status(parse_date("2026-11-04").unwrap(), today),
+            ExpiryStatus::Expired
+        );
+    }
+
+    #[test]
+    fn expiring_window() {
+        let today = parse_date("2026-11-05").unwrap();
+        let window = i64::from(EXPIRING_WITHIN_DAYS);
+        assert!(is_expiring(
+            &[field("edge", "", Some(shift(today, window)))],
+            today,
+            EXPIRING_WITHIN_DAYS
+        ));
+        assert!(!is_expiring(
+            &[field("past-edge", "", Some(shift(today, window + 1)))],
+            today,
+            EXPIRING_WITHIN_DAYS
+        ));
+        assert!(is_expiring(
+            &[field("yesterday", "", Some(shift(today, -1)))],
+            today,
+            EXPIRING_WITHIN_DAYS
+        ));
+        assert!(!is_expiring(
+            &[field("open", "", None)],
+            today,
+            EXPIRING_WITHIN_DAYS
+        ));
+    }
+
+    #[test]
+    fn preset_server_is_labels_and_kinds() {
+        let rows = preset_fields(FieldPreset::Server);
+        let got: Vec<(&str, FieldKind)> = rows.iter().map(|row| (row.label, row.kind)).collect();
+        assert_eq!(
+            got.as_slice(),
+            [
+                ("Host", FieldKind::Text),
+                ("Port", FieldKind::Text),
+                ("Username", FieldKind::Text),
+                ("Password", FieldKind::Secret),
+                ("SSH private key", FieldKind::MultilineSecret),
+            ]
+            .as_slice()
+        );
+    }
+
+    #[test]
+    fn preset_custom_is_empty() {
+        assert!(preset_fields(FieldPreset::Custom).is_empty());
+    }
+
+    #[test]
+    fn presets_fit_in_ten() {
+        for preset in [
+            FieldPreset::Email,
+            FieldPreset::Cloudflare,
+            FieldPreset::GitHub,
+            FieldPreset::Server,
+            FieldPreset::Database,
+            FieldPreset::Aws,
+            FieldPreset::ApiKey,
+            FieldPreset::WiFi,
+            FieldPreset::BankCard,
+            FieldPreset::Custom,
+        ] {
+            assert!(preset_fields(preset).len() <= MAX_CUSTOM_FIELDS);
+        }
     }
 }

@@ -1,8 +1,10 @@
 //! Search, filter and sort over the public fields of items.
 //!
 //! Only public fields are ever matched: title, a login's username and URLs,
-//! a crypto item's chain, and the category name. Secret fields (passwords,
-//! notes, addresses, memos, phrases, note bodies) are never read here.
+//! a crypto item's chain, the category name, and custom field labels.
+//! Secret fields (passwords, notes, addresses, memos, phrases, note bodies,
+//! and custom secrets) are never read here. Custom text values and date
+//! values are not matched either.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -11,7 +13,9 @@ use zeroize::Zeroizing;
 
 use crate::category::CategoryId;
 use crate::error::CoreError;
+use crate::fields::{CalendarDate, from_unix_secs, is_expiring, soonest_expiry};
 use crate::item::{Item, ItemData, ItemId, ItemType, Timestamp};
+use crate::rules::EXPIRING_WITHIN_DAYS;
 use crate::session::Session;
 use crate::store::VaultStore;
 use crate::text::fold;
@@ -65,6 +69,8 @@ pub struct Query {
     pub view: View,
     /// Result ordering.
     pub sort: Sort,
+    /// Keep only items whose soonest reminder falls inside the expiring window.
+    pub expiring_only: bool,
 }
 
 impl fmt::Debug for Query {
@@ -76,6 +82,7 @@ impl fmt::Debug for Query {
             .field("favourites_only", &self.favourites_only)
             .field("view", &self.view)
             .field("sort", &self.sort)
+            .field("expiring_only", &self.expiring_only)
             .finish()
     }
 }
@@ -101,6 +108,8 @@ pub struct ItemSummary<'a> {
     pub updated: Timestamp,
     /// When it was trashed, if it was.
     pub trashed: Option<Timestamp>,
+    /// Soonest custom-field reminder. Absent when no field has one.
+    pub soonest_expiry: Option<CalendarDate>,
 }
 
 impl fmt::Debug for ItemSummary<'_> {
@@ -115,6 +124,7 @@ impl fmt::Debug for ItemSummary<'_> {
             .field("created", &self.created)
             .field("updated", &self.updated)
             .field("trashed", &self.trashed)
+            .field("soonest_expiry", &self.soonest_expiry)
             .finish()
     }
 }
@@ -152,6 +162,14 @@ fn text_matches(needle: &str, item: &Item, category_name: Option<&str>) -> bool 
     if category_name.is_some_and(|n| contains(needle, n)) {
         return true;
     }
+    // Labels only. This does not call `CustomField::value` or `SecretText::expose`.
+    if item
+        .fields()
+        .iter()
+        .any(|field| contains(needle, field.label()))
+    {
+        return true;
+    }
     match item.data() {
         ItemData::Login { username, urls, .. } => {
             contains(needle, username.as_str()) || urls.iter().any(|u| contains(needle, u.as_str()))
@@ -162,9 +180,19 @@ fn text_matches(needle: &str, item: &Item, category_name: Option<&str>) -> bool 
 }
 
 impl<S: VaultStore> Session<S> {
-    /// Lists items matching `query`, filtered and sorted. Reads public fields only.
+    /// Lists items matching `query`, filtered and sorted.
+    ///
+    /// Reads titles, usernames, URLs, chains, category names and custom field
+    /// labels. It does not read passwords, notes, phrases, custom secrets,
+    /// custom text values or date values.
+    ///
+    /// `expiring_only` keeps items whose soonest reminder is within
+    /// [`EXPIRING_WITHIN_DAYS`] of the session clock's UTC date, including
+    /// reminders that are already past. A clock outside years 1 through 9999
+    /// matches nothing while that flag is set. Today is computed once, here.
     pub fn search(&self, query: &Query) -> Result<Vec<ItemSummary<'_>>, CoreError> {
         let data = &self.unlocked()?.data;
+        let today = from_unix_secs(self.now_unix().0);
         let needle = fold(query.text.trim());
         let mut hits: Vec<&Item> = data
             .items
@@ -189,6 +217,13 @@ impl<S: VaultStore> Session<S> {
                     .and_then(|c| data.categories.iter().find(|k| k.id() == c))
                     .map(|k| k.name());
                 text_matches(&needle, i, name)
+            })
+            .filter(|i| {
+                if query.expiring_only {
+                    today.is_some_and(|day| is_expiring(i.fields(), day, EXPIRING_WITHIN_DAYS))
+                } else {
+                    true
+                }
             })
             .collect();
         match query.sort {
@@ -216,6 +251,7 @@ impl<S: VaultStore> Session<S> {
                 created: i.created(),
                 updated: i.updated(),
                 trashed: i.trashed(),
+                soonest_expiry: soonest_expiry(i.fields()),
             })
             .collect())
     }
@@ -226,6 +262,7 @@ mod tests {
     use super::*;
     use crate::category::CategoryId;
     use crate::clock::FakeClock;
+    use crate::fields::{FieldValue, epoch_day, try_field};
     use crate::item::{ItemData, ItemId, ItemInput};
     use crate::store::MemStore;
     use crate::text::{GatedSecret, SecretText, Text};
@@ -520,6 +557,7 @@ mod tests {
         let shown = format!("{query:?}");
         assert!(!shown.contains("needle"), "{shown}");
         assert!(shown.contains("text_len: 14"), "{shown}");
+        assert!(shown.contains("expiring_only: false"), "{shown}");
     }
 
     #[test]
@@ -530,5 +568,70 @@ mod tests {
             s.search(&Query::default()),
             Err(CoreError::Locked)
         ));
+    }
+
+    fn custom(label: &str, value: FieldValue) -> ItemInput {
+        let mut item = note("Kept");
+        item.fields = vec![try_field(t(label), value, None).unwrap()];
+        item
+    }
+
+    #[test]
+    fn search_matches_label_not_secret() {
+        let (mut s, _) = fresh();
+        s.add_item(custom(
+            "recovery-email",
+            FieldValue::Secret(st("EXAMPLE-field-secret")),
+        ))
+        .unwrap();
+        assert_eq!(titles(&s, &q("recovery-email")), ["Kept"]);
+        assert!(titles(&s, &q("EXAMPLE-field-secret")).is_empty());
+    }
+
+    #[test]
+    fn search_skips_text_value() {
+        let (mut s, _) = fresh();
+        s.add_item(custom(
+            "shown-label",
+            FieldValue::Text(t("public-note-EXAMPLE")),
+        ))
+        .unwrap();
+        assert!(titles(&s, &q("public-note-EXAMPLE")).is_empty());
+        assert_eq!(titles(&s, &q("shown-label")), ["Kept"]);
+    }
+
+    #[test]
+    fn search_still_skips_password() {
+        let (mut s, _) = fresh();
+        s.add_item(login("L", "u", &[])).unwrap();
+        s.add_item(crypto("C", "ch")).unwrap();
+        s.add_item(phrase("P")).unwrap();
+        s.add_item(note("N")).unwrap();
+        assert!(s.search(&q("zebra")).unwrap().is_empty());
+        assert!(titles(&s, &q("pw-zebra")).is_empty());
+    }
+
+    #[test]
+    fn expiring_uses_injected_clock() {
+        let (mut s, clock) = fresh();
+        let start = 1_700_000_000;
+        clock.set_unix(start);
+        let today = from_unix_secs(start).unwrap();
+        let outside = i64::from(EXPIRING_WITHIN_DAYS) + 1;
+        let expiry = from_unix_secs((i64::from(epoch_day(today)) + outside) * 86_400).unwrap();
+        let mut item = note("Due");
+        item.fields = vec![try_field(t("remind"), FieldValue::Text(t("")), Some(expiry)).unwrap()];
+        s.add_item(item).unwrap();
+        let expiring = Query {
+            expiring_only: true,
+            ..Query::default()
+        };
+        assert!(titles(&s, &expiring).is_empty());
+        assert_eq!(
+            s.search(&Query::default()).unwrap()[0].soonest_expiry,
+            Some(expiry)
+        );
+        clock.set_unix(start + 86_400);
+        assert_eq!(titles(&s, &expiring), ["Due"]);
     }
 }
