@@ -22,6 +22,9 @@ cargo install --locked cargo-fuzz --version 0.13.2
 | `import_csv` | raw bytes as a CSV import file (seeded from the import fixtures) | `import::parse` never panics or allocates over 64 MiB; an accepted file never yields more than `MAX_IMPORT_ROWS` rows |
 | `import_json` | raw bytes as a JSON import file (seeded from the import fixtures) | the same checks for the JSON importer |
 
+A version-1 body is accepted and re-encodes as version 2, so `decode_body` never asks
+for the input bytes back: stability means the second encode matches the first.
+
 `open_fixed_key` skips Argon2 through `holm_core::fuzzing`, which exists only with
 holm-core's `fuzzing` feature. Only this workspace turns it on; it must never be
 enabled in a shipping build. The feature also needs `--cfg fuzzing`, which cargo-fuzz
