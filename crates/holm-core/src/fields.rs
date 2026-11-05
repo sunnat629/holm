@@ -173,8 +173,7 @@ impl fmt::Debug for FieldValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FieldValue")
             .field("kind", &self.kind())
-            .field("value_len", &self.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -216,7 +215,6 @@ impl fmt::Debug for CustomField {
         f.debug_struct("CustomField")
             .field("kind", &self.kind())
             .field("label_len", &self.label().len())
-            .field("value_len", &self.value.len())
             .field("expiry", &self.expiry.is_some())
             .finish()
     }
@@ -776,5 +774,20 @@ mod tests {
         ] {
             assert!(preset_fields(preset).len() <= MAX_CUSTOM_FIELDS);
         }
+    }
+
+    #[test]
+    fn debug_has_no_secret_length() {
+        let secret = "EXAMPLE-secret-with-a-length-of-31";
+        let field = try_field(
+            Text::new("pin".to_owned()),
+            FieldValue::Secret(SecretText::new(secret.to_owned())),
+            None,
+        )
+        .unwrap();
+        let shown = format!("{field:?} {:?}", field.value());
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
+        assert!(!shown.contains(&secret.len().to_string()), "{shown}");
+        assert!(!shown.contains("value_len"), "{shown}");
     }
 }
