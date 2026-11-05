@@ -13,6 +13,7 @@ use core::ops::Range;
 use eframe::egui;
 use egui::text::CharIndex;
 use holm_core::category::CategoryId;
+use holm_core::fields::CustomField;
 use holm_core::item::{Item, ItemData, ItemId, ItemInput};
 use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::text::{SecretText, Text};
@@ -136,6 +137,8 @@ pub(crate) struct LoginForm {
     category: Option<CategoryId>,
     /// The stored item's favourite flag, carried through an edit unchanged.
     favourite: bool,
+    /// Fields returned after a failed submission, moved back into the next input.
+    fields: Vec<CustomField>,
     /// The title being typed.
     title: LineBuf,
     /// The username being typed.
@@ -168,6 +171,7 @@ impl LoginForm {
             id: None,
             category: None,
             favourite: false,
+            fields: Vec::new(),
             title: LineBuf::new(),
             username: LineBuf::new(),
             url: LineBuf::new(),
@@ -193,6 +197,7 @@ impl LoginForm {
             id: Some(item.id()),
             category: item.category(),
             favourite: item.favourite(),
+            fields: Vec::new(),
             title: LineBuf::from_text(item.title())?,
             username: LineBuf::from_text(username.as_str())?,
             url: LineBuf::from_text(urls.first().map_or("", Text::as_str))?,
@@ -213,11 +218,13 @@ impl LoginForm {
             category,
             favourite,
             data,
+            fields,
         } = input;
         let mut form = LoginForm::new_blank();
         form.id = id;
         form.category = category;
         form.favourite = favourite;
+        form.fields = fields;
         form.error = Some(error);
         form.title = LineBuf::from_text(title.as_str()).unwrap_or_else(LineBuf::new);
         if let ItemData::Login {
@@ -254,6 +261,7 @@ impl LoginForm {
         }
         urls.extend(kept_urls);
         ItemInput {
+            fields: core::mem::take(&mut self.fields),
             title,
             category: self.category,
             favourite: self.favourite,

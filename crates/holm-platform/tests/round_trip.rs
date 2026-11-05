@@ -137,6 +137,7 @@ fn view<S: VaultStore>(s: &mut Session<S>, password: &MasterPassword) -> View {
 
 fn input(title: &str, category: Option<CategoryId>, favourite: bool, data: ItemData) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category,
         favourite,

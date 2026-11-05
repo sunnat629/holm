@@ -334,6 +334,7 @@ pub(super) fn build(mut raw: RawRow, dialect: Dialect) -> Result<ImportRow, RowP
         },
     };
     let input = ItemInput {
+        fields: Vec::new(),
         title,
         category: None,
         favourite,

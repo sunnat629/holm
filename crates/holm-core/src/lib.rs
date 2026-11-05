@@ -84,6 +84,7 @@ pub mod envelope;
 compile_error!("the fuzzing feature is only for cargo-fuzz builds (needs --cfg fuzzing)");
 pub mod error;
 pub mod export;
+pub mod fields;
 pub mod format;
 // Test-only API for the fuzz targets. Absent from a normal build; see the
 // `fuzzing` feature in Cargo.toml.

@@ -46,6 +46,7 @@ const BODY_TWO: &str = "EXAMPLE second line";
 
 fn input(title: &str, data: ItemData) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,

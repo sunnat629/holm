@@ -174,6 +174,7 @@ pub(crate) fn add_to(
         },
     };
     let input = ItemInput {
+        fields: Vec::new(),
         title: text_of(args.title),
         category,
         favourite: args.favourite,
@@ -297,6 +298,7 @@ pub(crate) fn edit_in(
         },
     };
     let input = ItemInput {
+        fields: Vec::new(),
         title: args
             .title
             .map_or_else(|| keep_text_str(item.title()), text_of),

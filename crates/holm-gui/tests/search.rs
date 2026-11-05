@@ -24,6 +24,7 @@ const WAIT: Duration = Duration::from_secs(30);
 
 fn login(title: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,
@@ -38,6 +39,7 @@ fn login(title: &str) -> ItemInput {
 
 fn crypto(title: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,
@@ -427,6 +429,7 @@ fn count_line_counts_vault_not_search() {
 
 fn note(title: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,

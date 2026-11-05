@@ -405,6 +405,7 @@ fn edit_type_change_impossible() {
     let mut s = session(&path);
     let id = id_of(&s, &note);
     let as_login = ItemInput {
+        fields: Vec::new(),
         title: Text::new("Note".to_owned()),
         category: None,
         favourite: false,

@@ -795,6 +795,7 @@ mod tests {
 
     fn typed() -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: Text::new("Example Mail".to_owned()),
             category: None,
             favourite: false,

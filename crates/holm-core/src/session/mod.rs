@@ -760,11 +760,11 @@ mod tests {
     #[test]
     fn newer_body_schema_reported() {
         let (mut s, _) = session();
-        let (_, file) = envelope::create(&pw(PW), &FLOOR, &[2, 0]).unwrap();
+        let (_, file) = envelope::create(&pw(PW), &FLOOR, &[3, 0]).unwrap();
         s.store.bytes = Some(file);
         assert_eq!(
             s.unlock(&pw(PW)),
-            Err(CoreError::Body(crate::body::BodyError::NewerSchema(2)))
+            Err(CoreError::Body(crate::body::BodyError::NewerSchema(3)))
         );
         assert_eq!(failures(&s), 1);
         assert!(!s.is_unlocked());

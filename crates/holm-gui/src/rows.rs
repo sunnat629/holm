@@ -113,6 +113,7 @@ mod tests {
 
     fn input(title: &str, username: &str, urls: &[&str]) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category: None,
             favourite: false,
@@ -197,6 +198,7 @@ mod tests {
 
     fn other(title: &str, data: ItemData) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category: None,
             favourite: false,

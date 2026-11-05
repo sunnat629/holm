@@ -82,6 +82,9 @@ fn problem_text(p: RowProblem) -> &'static str {
         }
         RowProblem::Field(FieldError::TooManyUrls) => "more than 32 web addresses",
         RowProblem::Field(FieldError::Reserved(_)) => "a field holds a reserved value",
+        RowProblem::Field(FieldError::TooManyFields) => "An item can have at most 10 custom fields",
+        RowProblem::Field(FieldError::BadDate) => "That date is not a real calendar day",
+        RowProblem::Field(FieldError::NoSuchIndex) => "That field is not on the item",
         RowProblem::UnknownType => "the type isn't one Holm knows",
         RowProblem::MissingAddress => "a crypto address with no address",
         RowProblem::MissingPhrase => "a recovery phrase with no phrase",

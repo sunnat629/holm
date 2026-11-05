@@ -56,6 +56,7 @@ security, three exercises, and what to read next in
 | 49 | [Letter avatars](49-letter-avatars.md): `char::to_uppercase` as an iterator (`ß` is `SS`), `% len` for a stable palette slot, and `Option<usize>` from `iter().position`. Kotlin: `indexOfFirst` returning `-1`. |
 | 50 | [A debug-only dev unlock](50-dev-unlock-feature.md): `cfg(all(feature, debug_assertions))`, `compile_error!` as a build guard, and `Option::take` for a one-shot value. Kotlin: `BuildConfig.DEBUG` keeps the code, `cfg` removes it. |
 | 51 | [Closing the small gaps](51-closing-the-small-gaps.md): parent-folder sync, Unicode invisibles, and wiping argument fields. Kotlin: `FileChannel.force` and `Character.getType`. |
+| 52 | [A second schema](52-a-second-schema.md): separate postcard DTOs, bounded custom fields, and checked UTC dates. Kotlin: a version discriminator plus a second DTO instead of a defaulted property. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

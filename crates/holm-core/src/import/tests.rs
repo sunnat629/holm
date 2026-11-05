@@ -976,6 +976,7 @@ fn recovery_never_from_password() {
 
 fn seed_note(title: &str) -> Item {
     Item {
+        fields: Vec::new(),
         id: ItemId::random().unwrap(),
         title: Text::new(title.to_owned()),
         category: None,

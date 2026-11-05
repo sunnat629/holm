@@ -45,6 +45,7 @@ fn fresh() -> S {
 
 fn input(title: &str, category: Option<CategoryId>, favourite: bool, data: ItemData) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category,
         favourite,

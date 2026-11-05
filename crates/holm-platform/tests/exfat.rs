@@ -74,6 +74,7 @@ mod macos {
 
     fn login(title: &str) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category: None,
             favourite: false,

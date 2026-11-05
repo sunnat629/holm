@@ -13,6 +13,13 @@ pub const MAX_NOTE_BYTES: usize = 65_536;
 /// Most URLs on one login.
 pub const MAX_URLS: usize = 32;
 
+/// Most custom fields on one item.
+pub const MAX_CUSTOM_FIELDS: usize = 10;
+/// Longest custom label in Unicode scalar values.
+pub const MAX_LABEL_CHARS: usize = 64;
+/// Longest multiline custom secret in bytes.
+pub const MAX_MULTILINE_SECRET_BYTES: usize = 16 * 1024;
+
 /// A field that failed a rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Field {
@@ -38,6 +45,12 @@ pub enum Field {
     Body,
     /// Category name.
     CategoryName,
+    /// Custom field label.
+    CustomLabel,
+    /// Custom field value.
+    CustomValue,
+    /// Custom field date or reminder.
+    CustomDate,
 }
 
 /// A field rule that failed. It names the field and never holds the value.
@@ -58,6 +71,15 @@ pub enum FieldError {
     /// The value is reserved.
     #[error("{0:?} is a reserved name")]
     Reserved(Field),
+    /// An item has more than [`MAX_CUSTOM_FIELDS`] custom fields.
+    #[error("An item can have at most 10 custom fields")]
+    TooManyFields,
+    /// The numbers do not describe a real Gregorian day.
+    #[error("That date is not a real calendar day")]
+    BadDate,
+    /// The requested field position is absent or invalid.
+    #[error("That field is not on the item")]
+    NoSuchIndex,
 }
 
 /// Bidirectional controls that can disguise text, beyond `char::is_control`.

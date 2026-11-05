@@ -349,6 +349,7 @@ fn ok(ran: &Ran) {
 fn add_login(path: &Path, title: &str, password: &str) -> ItemId {
     let mut s = session(path);
     s.add_item(ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,
@@ -807,6 +808,7 @@ fn passwd_and_phrase_copy_ask_again_and_others_do_not() {
     let phrase = {
         let mut s = session(&path);
         s.add_item(ItemInput {
+            fields: Vec::new(),
             title: Text::new("Wallet".to_owned()),
             category: None,
             favourite: false,

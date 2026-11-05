@@ -321,6 +321,7 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
         return None;
     };
     Some(ItemInput {
+        fields: Vec::new(),
         title: input.title.clone(),
         category: input.category,
         favourite: input.favourite,
@@ -413,6 +414,7 @@ mod tests {
         use holm_core::item::ItemData;
         use holm_core::text::{SecretText, Text};
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category: None,
             favourite: false,

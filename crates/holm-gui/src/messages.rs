@@ -311,6 +311,11 @@ pub fn create_error(e: &CoreError) -> &'static str {
 #[must_use]
 pub fn field_error(e: &FieldError) -> &'static str {
     match e {
+        FieldError::Empty(Field::CustomLabel) => "The field name can't be empty",
+        FieldError::TooLong(Field::CustomValue) => "The field value is too long",
+        FieldError::BadDate => "That date is not a real calendar day",
+        FieldError::TooManyFields => "An item can have at most 10 custom fields",
+        FieldError::NoSuchIndex => "That field is not on the item",
         FieldError::Empty(Field::Title) => TITLE_EMPTY,
         FieldError::Empty(_) => FIELD_EMPTY,
         FieldError::TooLong(_) => FIELD_TOO_LONG,

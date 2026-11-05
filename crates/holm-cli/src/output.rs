@@ -369,11 +369,19 @@ fn field_word(field: Field) -> &'static str {
         Field::Phrase => "recovery phrase",
         Field::Body => "note",
         Field::CategoryName => "category name",
+        Field::CustomLabel => "field name",
+        Field::CustomValue => "field value",
+        Field::CustomDate => "date",
     }
 }
 
 fn field_message(e: FieldError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match e {
+        FieldError::Empty(Field::CustomLabel) => f.write_str("The field name can't be empty"),
+        FieldError::TooLong(Field::CustomValue) => f.write_str("The field value is too long"),
+        FieldError::BadDate => f.write_str("That date is not a real calendar day"),
+        FieldError::TooManyFields => f.write_str("An item can have at most 10 custom fields"),
+        FieldError::NoSuchIndex => f.write_str("That field is not on the item"),
         FieldError::Empty(field) => {
             write!(
                 f,

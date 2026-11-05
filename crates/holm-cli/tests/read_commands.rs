@@ -26,6 +26,7 @@ fn st(s: &str) -> SecretText {
 
 fn login(title: &str, user: &str, url: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: false,
@@ -174,6 +175,7 @@ fn list_search_filters_and_sorts() {
         zeta.favourite = true;
         s.add_item(zeta).unwrap();
         s.add_item(ItemInput {
+            fields: Vec::new(),
             title: t("Cold wallet"),
             category: None,
             favourite: false,
@@ -269,6 +271,7 @@ fn get_prints_no_secret_field() {
         ];
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Wallet"),
                 category: None,
                 favourite: true,
@@ -283,6 +286,7 @@ fn get_prints_no_secret_field() {
         );
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Seed"),
                 category: None,
                 favourite: false,
@@ -295,6 +299,7 @@ fn get_prints_no_secret_field() {
         );
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Diary"),
                 category: None,
                 favourite: false,

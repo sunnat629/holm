@@ -26,6 +26,7 @@ fn st(s: &str) -> SecretText {
 
 fn login(title: &str, password: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: false,
@@ -48,6 +49,7 @@ fn big_login(title: &str) -> ItemInput {
 
 fn phrase(title: &str, words: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: false,
@@ -60,6 +62,7 @@ fn phrase(title: &str, words: &str) -> ItemInput {
 
 fn note(title: &str, body: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: false,
@@ -69,6 +72,7 @@ fn note(title: &str, body: &str) -> ItemInput {
 
 fn crypto(title: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: true,
@@ -83,6 +87,7 @@ fn crypto(title: &str) -> ItemInput {
 
 fn seed_item(input: ItemInput) -> Item {
     Item {
+        fields: Vec::new(),
         id: ItemId::random().unwrap(),
         title: input.title,
         category: input.category,
@@ -219,6 +224,25 @@ fn update_rules() {
         Err(CoreError::Field(_))
     ));
     assert_eq!(s.item(l).unwrap().title(), "renamed");
+}
+
+#[test]
+fn update_keeps_custom_fields() {
+    use crate::fields::{FieldValue, try_field};
+    let (mut s, _) = created();
+    let mut input = login("a", "x");
+    input.fields =
+        vec![try_field(t("API key"), FieldValue::Secret(st("EXAMPLE-k")), None).unwrap()];
+    let l = s.add_item(input).unwrap();
+    s.update_item(l, login("renamed", "y")).unwrap();
+    assert_eq!(s.item(l).unwrap().fields().len(), 1);
+    assert_eq!(s.item(l).unwrap().fields()[0].label(), "API key");
+    // A failed save rolls back with the fields still on the item.
+    assert!(matches!(
+        s.update_item(l, login(" ", "y")),
+        Err(CoreError::Field(_))
+    ));
+    assert_eq!(s.item(l).unwrap().fields().len(), 1);
 }
 
 #[test]

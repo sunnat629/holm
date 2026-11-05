@@ -120,6 +120,7 @@ mod tests {
 
     fn note_in(title: &str, category: Option<crate::category::CategoryId>) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category,
             favourite: false,

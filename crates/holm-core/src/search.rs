@@ -253,6 +253,7 @@ mod tests {
 
     fn login(title: &str, user: &str, urls: &[&str]) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: t(title),
             category: None,
             favourite: false,
@@ -267,6 +268,7 @@ mod tests {
 
     fn crypto(title: &str, chain: &str) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: t(title),
             category: None,
             favourite: false,
@@ -281,6 +283,7 @@ mod tests {
 
     fn note(title: &str) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: t(title),
             category: None,
             favourite: false,
@@ -292,6 +295,7 @@ mod tests {
 
     fn phrase(title: &str) -> ItemInput {
         ItemInput {
+            fields: Vec::new(),
             title: t(title),
             category: None,
             favourite: false,
