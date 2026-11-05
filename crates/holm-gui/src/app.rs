@@ -19,6 +19,7 @@ use std::time::Duration;
 use eframe::egui;
 use holm_core::clock::{Clock, SleepWatch};
 use holm_core::error::CoreError;
+use holm_core::fields::from_unix_secs;
 use holm_core::session::Session;
 use holm_core::settings::{
     AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS, CLIPBOARD_DEFAULT_SECS,
@@ -546,6 +547,9 @@ impl HolmApp {
             copied: None,
         };
         if let Screen::Vault(view) = screen {
+            // The UTC day for the list badges, from the same wall time the session's
+            // clock gives `search`, so the badge and the Expiring chip agree.
+            view.set_today(from_unix_secs(self.ui_clock.now_unix().0));
             let action = view.show(ui, session, now, idle_left, &throttle, &mut io);
             self.focus = io.focus;
             if let Some(copied) = io.copied.take() {

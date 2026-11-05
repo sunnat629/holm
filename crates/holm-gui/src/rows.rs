@@ -5,6 +5,7 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use holm_core::category::Category;
+use holm_core::fields::{CalendarDate, ExpiryStatus, expiry_status};
 use holm_core::item::{ItemId, ItemType};
 use holm_core::search::ItemSummary;
 use holm_core::text::Text;
@@ -15,6 +16,25 @@ pub const CRYPTO_SUBTITLE: &str = "Crypto address";
 pub const PHRASE_SUBTITLE: &str = "Recovery phrase";
 /// The subtitle of every secure note.
 pub const NOTE_SUBTITLE: &str = "Secure note";
+
+/// The reminder badge of a row, copied from the core's [`ExpiryStatus`] so a row does
+/// not borrow the session. It carries a day count only, never a field value or label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpiryBadge {
+    /// The soonest reminder is this many UTC days away. Zero means today.
+    InDays(u32),
+    /// The soonest reminder is before today.
+    Expired,
+}
+
+impl From<ExpiryStatus> for ExpiryBadge {
+    fn from(status: ExpiryStatus) -> ExpiryBadge {
+        match status {
+            ExpiryStatus::InDays(n) => ExpiryBadge::InDays(n),
+            ExpiryStatus::Expired => ExpiryBadge::Expired,
+        }
+    }
+}
 
 /// One line of the item list. The title and subtitle are zeroizing text.
 pub struct ItemRow {
@@ -31,6 +51,8 @@ pub struct ItemRow {
     /// The category's index in the session's category list, which picks the avatar
     /// colour. `None` when the item has no category.
     pub category_slot: Option<usize>,
+    /// The soonest custom-field reminder as a badge. `None` when no field has one.
+    pub expiry_badge: Option<ExpiryBadge>,
 }
 
 impl fmt::Debug for ItemRow {
@@ -45,14 +67,22 @@ impl fmt::Debug for ItemRow {
                 &self.category.as_ref().map(|c| c.as_str().len()),
             )
             .field("category_slot", &self.category_slot)
+            .field("expiry_badge", &self.expiry_badge)
             .finish()
     }
 }
 
 /// Builds the rows for every item in `summaries` (from `Session::search`), sorted by
 /// title (ignoring case), then by id. `categories` gives the names for the badges.
+///
+/// `today` is the UTC calendar day the expiry badges are counted from. The badge comes
+/// from [`ItemSummary::soonest_expiry`] only, so no field value is read here.
 #[must_use]
-pub fn build_rows(summaries: &[ItemSummary<'_>], categories: &[Category]) -> Vec<ItemRow> {
+pub fn build_rows(
+    summaries: &[ItemSummary<'_>],
+    categories: &[Category],
+    today: CalendarDate,
+) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = summaries
         .iter()
         .map(|s| {
@@ -68,6 +98,9 @@ pub fn build_rows(summaries: &[ItemSummary<'_>], categories: &[Category]) -> Vec
                     .and_then(|i| categories.get(i))
                     .map(|c| Text::new(c.name().to_owned())),
                 category_slot: slot,
+                expiry_badge: s
+                    .soonest_expiry
+                    .map(|expiry| ExpiryBadge::from(expiry_status(expiry, today))),
             }
         })
         .collect();
@@ -103,6 +136,9 @@ fn cmp_ignoring_case(a: &str, b: &str) -> Ordering {
 mod tests {
     use super::*;
     use holm_core::clock::SystemClock;
+    use holm_core::fields::{
+        CustomField, FieldValue, epoch_day, from_unix_secs, parse_date, try_field,
+    };
     use holm_core::item::{ItemData, ItemInput};
     use holm_core::search::Query;
     use holm_core::session::Session;
@@ -126,6 +162,20 @@ mod tests {
         }
     }
 
+    fn today() -> CalendarDate {
+        parse_date("2026-11-05").unwrap()
+    }
+
+    fn reminder(days: i64) -> CustomField {
+        let day = from_unix_secs((i64::from(epoch_day(today())) + days) * 86_400).unwrap();
+        try_field(
+            Text::new("remind".to_owned()),
+            FieldValue::Secret(SecretText::new("EXAMPLE-field-secret".to_owned())),
+            Some(day),
+        )
+        .unwrap()
+    }
+
     fn rows_for(inputs: Vec<ItemInput>) -> Vec<ItemRow> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Holm").join("holm.vault");
@@ -139,6 +189,7 @@ mod tests {
         build_rows(
             &session.search(&Query::default()).unwrap(),
             session.categories().unwrap(),
+            today(),
         )
     }
 
@@ -158,6 +209,7 @@ mod tests {
         let rows = build_rows(
             &session.search(&Query::default()).unwrap(),
             session.categories().unwrap(),
+            today(),
         );
         assert_eq!(
             rows[0].category.as_ref().map(Text::as_str),
@@ -258,5 +310,32 @@ mod tests {
         let shown = format!("{:?}", rows[0]);
         assert!(!shown.contains("Example Mail"));
         assert!(!shown.contains("ada@example.com"));
+    }
+
+    #[test]
+    fn badge_comes_from_the_soonest_reminder() {
+        let mut due = input("a", "", &[]);
+        due.fields = vec![reminder(9), reminder(2)];
+        let mut past = input("b", "", &[]);
+        past.fields = vec![reminder(-1)];
+        let rows = rows_for(vec![due, past, input("c", "", &[])]);
+        assert_eq!(rows[0].expiry_badge, Some(ExpiryBadge::InDays(2)));
+        assert_eq!(rows[1].expiry_badge, Some(ExpiryBadge::Expired));
+        assert_eq!(rows[2].expiry_badge, None);
+        let shown = format!("{:?}", rows[0]);
+        assert!(!shown.contains("EXAMPLE-field-secret"), "{shown}");
+        assert!(!shown.contains("remind"), "{shown}");
+    }
+
+    #[test]
+    fn badge_copies_the_core_status() {
+        assert_eq!(
+            ExpiryBadge::from(ExpiryStatus::InDays(0)),
+            ExpiryBadge::InDays(0)
+        );
+        assert_eq!(
+            ExpiryBadge::from(ExpiryStatus::Expired),
+            ExpiryBadge::Expired
+        );
     }
 }

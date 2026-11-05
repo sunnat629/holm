@@ -12,11 +12,12 @@ use std::time::Duration;
 
 use eframe::egui;
 use egui::TextBuffer as _;
-use holm_core::category::CategoryId;
+use holm_core::category::{Category, CategoryId};
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::fields::{CalendarDate, from_unix_secs};
 use holm_core::item::{ItemData, ItemId, ItemInput, ItemType};
-use holm_core::search::{CategoryFilter, Query};
+use holm_core::search::{CategoryFilter, ItemSummary, Query};
 use holm_core::session::Session;
 use holm_core::text::{SecretText, Text};
 use holm_core::throttle::ThrottleStatus;
@@ -113,6 +114,16 @@ pub(crate) struct VaultView {
     chip: CategoryFilter,
     /// The chip the rows were built with.
     searched_chip: CategoryFilter,
+    /// The Expiring chip. Kept apart from `chip`, so it combines with a category chip
+    /// instead of replacing it. Reset to off when the view drops on lock.
+    expiring: bool,
+    /// The Expiring chip the rows were built with.
+    searched_expiring: bool,
+    /// Today's UTC day, set by the app each frame from its clock. `None` when the
+    /// clock is outside years 1 through 9999.
+    today: Option<CalendarDate>,
+    /// The UTC day the row badges were counted from. A new day rebuilds the rows.
+    built_day: Option<CalendarDate>,
     /// The category chips, after All and No category. Collected when rows are rebuilt.
     chips: Vec<(CategoryId, Text)>,
     /// The open import or export screen, if any.
@@ -158,10 +169,21 @@ impl VaultView {
             searched: Zeroizing::new(String::new()),
             chip: CategoryFilter::All,
             searched_chip: CategoryFilter::All,
+            expiring: false,
+            searched_expiring: false,
+            today: None,
+            built_day: None,
             chips: Vec::new(),
             transfer: None,
             dirty_before_job: false,
         }
+    }
+
+    /// Sets today's UTC day for the list badges. The app calls this before each
+    /// [`show`](Self::show) with the day of its clock, the same wall time the session's
+    /// search uses for the Expiring chip.
+    pub(crate) fn set_today(&mut self, today: Option<CalendarDate>) {
+        self.today = today;
     }
 
     /// Remembers whether the session was dirty as a job started.
@@ -355,7 +377,12 @@ impl VaultView {
         throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<VaultAction> {
-        if self.search.as_str() != self.searched.as_str() || self.chip != self.searched_chip {
+        let today = self.today;
+        if self.search.as_str() != self.searched.as_str()
+            || self.chip != self.searched_chip
+            || self.expiring != self.searched_expiring
+            || today != self.built_day
+        {
             self.rows_stale = true;
         }
         if self.rows_stale
@@ -363,6 +390,8 @@ impl VaultView {
         {
             self.searched = Zeroizing::new(self.search.as_str().to_owned());
             self.searched_chip = self.chip;
+            self.searched_expiring = self.expiring;
+            self.built_day = today;
             let categories = session.categories().unwrap_or_default();
             self.chips = categories
                 .iter()
@@ -371,13 +400,17 @@ impl VaultView {
             let query = Query {
                 text: Zeroizing::new(self.searched.as_str().to_owned()),
                 category: self.chip,
+                expiring_only: self.expiring,
                 ..Query::default()
             };
             let mut totals = None;
             match session.search(&query) {
                 Ok(found) => {
-                    self.rows = build_rows(&found, categories);
-                    if self.searched.is_empty() && self.chip == CategoryFilter::All {
+                    self.rows = rows_for(&found, categories, today);
+                    if self.searched.is_empty()
+                        && self.chip == CategoryFilter::All
+                        && !self.expiring
+                    {
                         totals = Some(tally(&self.rows));
                     }
                 }
@@ -388,7 +421,7 @@ impl VaultView {
             if totals.is_none()
                 && let Ok(all) = session.search(&Query::default())
             {
-                totals = Some(tally(&build_rows(&all, &[])));
+                totals = Some(tally(&rows_for(&all, &[], today)));
             }
             if let Some(t) = totals {
                 self.totals = t;
@@ -538,7 +571,9 @@ impl VaultView {
             self.rows_stale = true;
         }
         let current = self.chip;
+        let expiring = self.expiring;
         let mut pick = None;
+        let mut toggle_expiring = false;
         ui.horizontal_wrapped(|ui| {
             let mut chip = |filter: CategoryFilter, label: &str| {
                 if ui.selectable_label(current == filter, label).clicked() {
@@ -550,15 +585,28 @@ impl VaultView {
             for (id, name) in &self.chips {
                 chip(CategoryFilter::Only(*id), name.as_str());
             }
+            // Its own toggle, not a category: it combines with the chip picked above.
+            ui.separator();
+            if ui
+                .selectable_label(expiring, messages::CHIP_EXPIRING)
+                .clicked()
+            {
+                toggle_expiring = true;
+            }
         });
         if let Some(filter) = pick {
             self.chip = filter;
             self.rows_stale = true;
         }
+        if toggle_expiring {
+            self.expiring = !self.expiring;
+            self.rows_stale = true;
+        }
         ui.separator();
         // The footer sits below the list, outside the scroll area, so the area is
         // bounded by the panel and scrolls instead of growing with its rows.
-        let filtering = !self.searched.is_empty() || self.chip != CategoryFilter::All;
+        let filtering =
+            !self.searched.is_empty() || self.chip != CategoryFilter::All || self.expiring;
         let shown = filtering.then_some(self.rows.len());
         egui::Panel::bottom("vault-list-footer")
             .show_separator_line(true)
@@ -593,6 +641,10 @@ impl VaultView {
                     });
                     if !row.subtitle.as_str().is_empty() {
                         ui.small(row.subtitle.as_str());
+                    }
+                    // A day count only, never a field label or value.
+                    if let Some(badge) = row.expiry_badge {
+                        ui.small(messages::expiry_badge_line(badge));
                     }
                 }
             });
@@ -743,6 +795,26 @@ impl VaultView {
             }
         }
     }
+}
+
+/// The rows for `found`, with badges counted from `today`. Without a UTC day the rows
+/// carry no badge, as the session's expiring filter then matches nothing either.
+fn rows_for(
+    found: &[ItemSummary<'_>],
+    categories: &[Category],
+    today: Option<CalendarDate>,
+) -> Vec<ItemRow> {
+    // The fallback day only lets the rows be built; its badges are dropped below.
+    let Some(day) = today.or_else(|| from_unix_secs(0)) else {
+        return Vec::new();
+    };
+    let mut rows = build_rows(found, categories, day);
+    if today.is_none() {
+        for row in &mut rows {
+            row.expiry_badge = None;
+        }
+    }
+    rows
 }
 
 /// Logins and all other items among `rows`.

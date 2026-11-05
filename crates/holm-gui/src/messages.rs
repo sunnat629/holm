@@ -17,6 +17,8 @@ use holm_core::settings::{CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS};
 use holm_core::store::StoreError;
 use holm_core::throttle::ThrottleStatus;
 
+use crate::rows::ExpiryBadge;
+
 /// A wrong password, or a vault file that was changed or damaged. The two cannot be
 /// told apart, so one line covers both.
 pub const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
@@ -183,9 +185,25 @@ pub const PHRASE_WRONG_PASSWORD: &str = "That isn't the master password. The phr
 pub const LOCKED_SLEEP: &str =
     "Holm locked because the Mac slept, the screen locked or you logged out.";
 
+/// Label of the list chip that keeps items whose soonest reminder is within the
+/// expiring window, or already past. A chip label, so it has no full stop.
+pub const CHIP_EXPIRING: &str = "Expiring";
+
+/// The badge under a row's subtitle. It names a day count only, never a field label
+/// or value, so it is ordinary text that AccessKit may read.
+#[must_use]
+pub fn expiry_badge_line(badge: ExpiryBadge) -> String {
+    match badge {
+        ExpiryBadge::InDays(0) => "Expires today".to_owned(),
+        ExpiryBadge::InDays(1) => "Expires in 1 day".to_owned(),
+        ExpiryBadge::InDays(n) => format!("Expires in {n} days"),
+        ExpiryBadge::Expired => "Expired".to_owned(),
+    }
+}
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 60] = [
+const ALL: [&str; 61] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -246,6 +264,7 @@ const ALL: [&str; 60] = [
     PHRASE_FAILED,
     PHRASE_WRONG_PASSWORD,
     LOCKED_SLEEP,
+    CHIP_EXPIRING,
 ];
 
 /// Why the vault locked.
@@ -657,11 +676,42 @@ mod tests {
         assert!(!EYE_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
     }
 
+    /// Constants in `ALL` that are labels, not sentences, so they have no full stop.
+    const LABELS: [&str; 1] = [CHIP_EXPIRING];
+
+    #[test]
+    fn expiry_badge_lines() {
+        assert_eq!(expiry_badge_line(ExpiryBadge::InDays(0)), "Expires today");
+        assert_eq!(
+            expiry_badge_line(ExpiryBadge::InDays(1)),
+            "Expires in 1 day"
+        );
+        assert_eq!(
+            expiry_badge_line(ExpiryBadge::InDays(5)),
+            "Expires in 5 days"
+        );
+        assert_eq!(expiry_badge_line(ExpiryBadge::Expired), "Expired");
+        for badge in [
+            ExpiryBadge::InDays(0),
+            ExpiryBadge::InDays(2),
+            ExpiryBadge::InDays(u32::MAX),
+            ExpiryBadge::Expired,
+        ] {
+            let line = expiry_badge_line(badge);
+            assert!(
+                !line.contains(['{', '}', '%', '<', '>', '/', '\\']),
+                "not plain text: {line}"
+            );
+        }
+    }
+
     #[test]
     fn messages_have_no_placeholders() {
         for line in ALL {
             assert!(!line.is_empty());
-            assert!(line.ends_with('.'), "{line}");
+            if !LABELS.contains(&line) {
+                assert!(line.ends_with('.'), "{line}");
+            }
             assert!(
                 !line.contains(['{', '}', '%', '<', '>', '/', '\\']),
                 "not plain text: {line}"
