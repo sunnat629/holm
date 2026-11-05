@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use holm_core::category::name_key;
+use holm_core::fields::{FieldKind, FieldValue};
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -18,7 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::Env;
 use crate::args::{CategoryArg, GenArgs, GenKind, GetArgs, ListArgs};
-use crate::output::{CliError, clean, create_error, utc};
+use crate::output::{CliError, clean, create_error, date_text, utc};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -122,7 +123,7 @@ pub fn list(
             View::Active
         },
         sort: args.sort,
-        expiring_only: false,
+        expiring_only: args.expiring,
     };
     let hits = session.search(&query).map_err(|_| CliError::Failed)?;
     for hit in hits {
@@ -188,6 +189,19 @@ pub fn get(
             writeln!(out, "body: {HIDDEN}")?;
         }
     }
+    for (index, field) in item.fields().iter().enumerate() {
+        let n = index + 1;
+        let kind = kind_name(field.kind());
+        let shown = shown_field(field.value());
+        writeln!(
+            out,
+            "field {n}: {} ({kind}) = {shown}",
+            clean(field.label())
+        )?;
+        if let Some(date) = field.expiry() {
+            writeln!(out, "field {n} expiry: {}", date_text(date))?;
+        }
+    }
     writeln!(
         out,
         "category: {}",
@@ -201,6 +215,24 @@ pub fn get(
         None => writeln!(out, "in trash: no")?,
     }
     Ok(())
+}
+
+fn kind_name(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Text => "text",
+        FieldKind::Secret => "secret",
+        FieldKind::MultilineSecret => "multiline",
+        FieldKind::Date => "date",
+    }
+}
+
+/// Text and dates are shown. A secret or multiline value stays [`HIDDEN`].
+fn shown_field(value: &FieldValue) -> Cow<'_, str> {
+    match value {
+        FieldValue::Text(text) => clean(text.as_str()),
+        FieldValue::Date(date) => Cow::Owned(date_text(*date)),
+        FieldValue::Secret(_) | FieldValue::MultilineSecret(_) => Cow::Borrowed(HIDDEN),
+    }
 }
 
 /// `holm gen [password|passphrase|username]`: one new value from the default spec,

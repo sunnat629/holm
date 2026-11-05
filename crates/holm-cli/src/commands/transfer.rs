@@ -15,15 +15,18 @@ use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::export::EXPORT_WARNING;
 use holm_core::import::{
-    IMPORT_DELETE_SOURCE_WARNING, ImportBatch, ImportPreview, RowIssue, RowProblem,
+    IMPORT_DELETE_SOURCE_WARNING, ImportBatch, ImportFormat, ImportPreview, RowIssue, RowProblem,
 };
 use holm_core::rules::FieldError;
 use holm_core::session::Session;
+use holm_core::store::StoreError;
+use holm_crypto::MasterPassword;
 use holm_platform::fs_store::FsStore;
+use holm_platform::private_file::write_new_private_file;
 use holm_platform::transfer::{self, TransferError, export_backup, export_plain, refuse_existing};
 
 use crate::Env;
-use crate::args::{ExportArgs, ImportArgs};
+use crate::args::{CONFLICT, ExportArgs, ImportArgs};
 use crate::commands::copy::AGAIN_PROMPT;
 use crate::commands::write::confirm;
 use crate::output::{CliError, read_error as core_read_error};
@@ -241,9 +244,20 @@ pub fn export(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
+    if args.backup && args.format.is_some() {
+        return Err(CliError::Usage(CONFLICT));
+    }
     let file = export_target(args)?;
     let mut opened = vault::open(path, env, term, err)?;
-    export_to(&mut opened.session, &file, args.backup, term, out, err)
+    export_to(
+        &mut opened.session,
+        &file,
+        args.backup,
+        args.format,
+        term,
+        out,
+        err,
+    )
 }
 
 /// The export file as an absolute path. Nothing may be there yet.
@@ -265,10 +279,14 @@ pub(crate) fn export_to(
     session: &mut Session<FsStore>,
     file: &Path,
     backup: bool,
+    format: Option<ImportFormat>,
     term: &mut dyn Terminal,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
+    if backup && format.is_some() {
+        return Err(CliError::Usage(CONFLICT));
+    }
     if backup {
         export_backup(session, file).map_err(|e| match e {
             TransferError::Exists => CliError::FileExists,
@@ -283,7 +301,11 @@ pub(crate) fn export_to(
     writeln!(err, "{EXPORT_WARNING}")?;
     confirm(term, "Type export to continue: ", "export")?;
     let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
-    let items = export_plain(session, &password, file).map_err(|e| match e {
+    let items = match format {
+        Some(ImportFormat::Json) => export_json_file(session, &password, file),
+        Some(ImportFormat::Csv) | None => export_plain(session, &password, file),
+    }
+    .map_err(|e| match e {
         TransferError::Core(e) => core_read_error(&e),
         TransferError::Exists => CliError::FileExists,
         _ => CliError::ExportWriteFailed,
@@ -295,4 +317,20 @@ pub(crate) fn export_to(
         count(items, "item", "items")
     )?;
     Ok(())
+}
+
+/// Writes every active item as JSON. The GUI stays on [`export_plain`].
+fn export_json_file(
+    session: &mut Session<FsStore>,
+    password: &MasterPassword,
+    dest: &Path,
+) -> Result<usize, TransferError> {
+    refuse_existing(dest)?;
+    let json = session.export_json(password).map_err(TransferError::Core)?;
+    let count = session.active_items().map_err(TransferError::Core)?.count();
+    write_new_private_file(dest, json.expose()).map_err(|error| match error {
+        StoreError::AlreadyExists => TransferError::Exists,
+        _ => TransferError::WriteFailed,
+    })?;
+    Ok(count)
 }

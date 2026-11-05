@@ -12,6 +12,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use holm_core::clock::Clock;
+use holm_core::fields::FieldValue;
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -26,7 +27,7 @@ use zeroize::Zeroizing;
 
 use crate::Env;
 use crate::args::{CopyField, GenArgs, GenKind};
-use crate::output::{CliError, read_error};
+use crate::output::{CliError, date_text, read_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -76,14 +77,18 @@ pub(crate) fn open_clip(env: &Env) -> Result<Box<dyn Clip>, CliError> {
 ///
 /// # Errors
 /// [`CliError::NotFound`], [`CliError::NoSuchField`] if the item's type has no such
-/// field, [`CliError::EmptyField`], a terminal error, [`CliError::WrongPassword`] or
-/// [`CliError::Throttled`].
+/// field or `field=N` is past its custom fields, [`CliError::EmptyField`], a terminal
+/// error, [`CliError::WrongPassword`] or [`CliError::Throttled`]. A custom field does
+/// not ask for the master password again.
 pub fn value_of(
     session: &mut Session<FsStore>,
     id: ItemId,
     field: CopyField,
     term: &mut dyn Terminal,
 ) -> Result<Zeroizing<String>, CliError> {
+    if let CopyField::Custom(index) = field {
+        return custom_value(session, id, index);
+    }
     let item = session.item(id).map_err(|_| CliError::NotFound)?;
     let value = match (field, item.data()) {
         (CopyField::Phrase, ItemData::RecoveryPhrase { .. }) => {
@@ -119,6 +124,29 @@ pub fn value_of(
             Zeroizing::new(body.expose().to_owned())
         }
         _ => return Err(CliError::NoSuchField),
+    };
+    if value.is_empty() {
+        return Err(CliError::EmptyField);
+    }
+    Ok(value)
+}
+
+/// Custom field `index` (0-based) in a wiping buffer. Never printed.
+fn custom_value(
+    session: &Session<FsStore>,
+    id: ItemId,
+    index: u8,
+) -> Result<Zeroizing<String>, CliError> {
+    let item = session.item(id).map_err(|_| CliError::NotFound)?;
+    let Some(field) = item.fields().get(usize::from(index)) else {
+        return Err(CliError::NoSuchField);
+    };
+    let value = match field.value() {
+        FieldValue::Text(text) => Zeroizing::new(text.as_str().to_owned()),
+        FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => {
+            Zeroizing::new(text.expose().to_owned())
+        }
+        FieldValue::Date(date) => Zeroizing::new(date_text(*date)),
     };
     if value.is_empty() {
         return Err(CliError::EmptyField);

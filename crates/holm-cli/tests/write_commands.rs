@@ -5,6 +5,8 @@
 mod common;
 
 use std::cell::{Cell, RefCell};
+use std::ffi::OsString;
+use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -14,10 +16,14 @@ use common::{
     session, usage, vault_dir,
 };
 use holm_cli::CliError;
-use holm_cli::args::CopyField;
+use holm_cli::args::{Command, CopyField};
 use holm_cli::commands::copy::{copy_and_wait, value_of};
 use holm_cli::output::write_error;
 use holm_core::error::CoreError;
+use holm_core::fields::{
+    CustomField, FieldKind, FieldPreset, FieldValue, move_field, preset_fields, remove_field,
+    try_field,
+};
 use holm_core::generator::PasswordSpec;
 use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::session::Session;
@@ -887,4 +893,375 @@ fn no_command_output_holds_a_secret() {
     // The canaries really were stored and copied.
     assert!(std::fs::read_to_string(&csv).unwrap().contains(CANARIES[2]));
     assert_eq!(clip.borrow().sets, 6);
+}
+
+fn text_field(label: &str, value: &str) -> CustomField {
+    try_field(
+        Text::new(label.to_owned()),
+        FieldValue::Text(Text::new(value.to_owned())),
+        None,
+    )
+    .unwrap()
+}
+
+fn secret_field(label: &str, value: &str) -> CustomField {
+    try_field(
+        Text::new(label.to_owned()),
+        FieldValue::Secret(SecretText::new(value.to_owned())),
+        None,
+    )
+    .unwrap()
+}
+
+fn login_input(title: &str, fields: Vec<CustomField>) -> ItemInput {
+    ItemInput {
+        fields,
+        title: Text::new(title.to_owned()),
+        category: None,
+        favourite: false,
+        data: ItemData::Login {
+            username: Text::new("me".to_owned()),
+            password: SecretText::new("EXAMPLE-pw-1".to_owned()),
+            urls: Vec::new(),
+            notes: SecretText::new(String::new()),
+        },
+    }
+}
+
+fn prefix_of(path: &Path, input: ItemInput) -> String {
+    let mut s = session(path);
+    let hex = s.add_item(input).unwrap().to_hex();
+    hex[..8].to_owned()
+}
+
+fn kinds_of(fields: &[CustomField]) -> Vec<(String, FieldKind)> {
+    fields
+        .iter()
+        .map(|field| (field.label().to_owned(), field.kind()))
+        .collect()
+}
+
+fn value_empty(field: &CustomField) -> bool {
+    match field.value() {
+        FieldValue::Text(text) => text.as_str().is_empty(),
+        FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => text.expose().is_empty(),
+        FieldValue::Date(_) => false,
+    }
+}
+
+#[test]
+fn copy_custom_does_not_print_the_secret() {
+    const SECRET: &str = "EXAMPLE-field-secret";
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = prefix_of(
+        &path,
+        login_input("Mail", vec![secret_field("API token", SECRET)]),
+    );
+    let clip = Rc::new(RefCell::new(ClipState::default()));
+    let env = env_with_clip(&clip);
+    let mut term = FakeTerminal::new(&[PW]);
+    term.on_wait = Some(Box::new({
+        let state = Rc::clone(&clip);
+        move || assert_eq!(state.borrow().contents.as_deref(), Some(SECRET))
+    }));
+    let ran = run_env(&path, &["get", &id, "--copy", "field=1"], &mut term, &env);
+    ok(&ran);
+    assert!(!ran.out.contains(SECRET));
+    assert!(!ran.err.contains(SECRET));
+    assert_eq!(term.kinds(), vec![Kind::Secret, Kind::Wait]);
+    assert_eq!(term.prompts[0].1, "Master password: ");
+    assert!(
+        term.prompts
+            .iter()
+            .all(|prompt| prompt.1 != "Master password again: ")
+    );
+    assert!(clip.borrow().contents.is_none());
+    assert_eq!(clip.borrow().sets, 1);
+    assert_eq!(clip.borrow().clears, 1);
+}
+
+#[test]
+fn copy_custom_empty_is_an_error() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = prefix_of(&path, login_input("Mail", vec![text_field("Note", "")]));
+    let clip = Rc::new(RefCell::new(ClipState::default()));
+    let env = env_with_clip(&clip);
+
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run_env(&path, &["get", &id, "--copy", "field=1"], &mut term, &env);
+    failed(&ran);
+    assert!(ran.err.contains("That field is empty"));
+    assert_eq!(term.kinds(), vec![Kind::Secret]);
+    assert_eq!(clip.borrow().sets, 0);
+
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run_env(&path, &["get", &id, "--copy", "field=2"], &mut term, &env);
+    failed(&ran);
+    assert!(ran.err.contains("no such field"));
+    assert_eq!(clip.borrow().sets, 0);
+}
+
+#[test]
+fn add_preset_empty_values() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let mut term = FakeTerminal::new(&[PW, "EXAMPLE-pw-1", "EXAMPLE-pw-1"]);
+    let ran = run(
+        &path,
+        &["add", "login", "--title", "Mail", "--preset", "server"],
+        &mut term,
+    );
+    let id = added(&ran);
+    assert!(ran.out.contains("Added 5 custom fields with empty values."));
+    assert!(
+        term.prompts
+            .iter()
+            .all(|prompt| prompt.1 != "Field value: ")
+    );
+    assert_eq!(term.kinds(), vec![Kind::Secret, Kind::Secret, Kind::Secret]);
+    let s = session(&path);
+    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    assert_eq!(fields.len(), preset_fields(FieldPreset::Server).len());
+    for (field, row) in fields.iter().zip(preset_fields(FieldPreset::Server)) {
+        assert_eq!(field.label(), row.label);
+        assert_eq!(field.kind(), row.kind);
+        assert!(field.expiry().is_none());
+        assert!(value_empty(field));
+    }
+    drop(s);
+
+    let mut term = FakeTerminal::new(&[PW, "EXAMPLE-pw-1", "EXAMPLE-pw-1"]);
+    let ran = run(
+        &path,
+        &["add", "login", "--title", "Card", "--preset", "bank-card"],
+        &mut term,
+    );
+    let id = added(&ran);
+    assert!(ran.out.contains("Added 3 custom fields with empty values."));
+    let s = session(&path);
+    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    let rows: Vec<_> = preset_fields(FieldPreset::BankCard)
+        .iter()
+        .filter(|row| row.kind != FieldKind::Date)
+        .collect();
+    assert_eq!(fields.len(), rows.len());
+    assert!(fields.iter().all(|field| field.label() != "Expiry"));
+    for (field, row) in fields.iter().zip(rows) {
+        assert_eq!(field.label(), row.label);
+        assert_eq!(field.kind(), row.kind);
+        assert!(value_empty(field));
+    }
+}
+
+#[test]
+fn edit_field_add_prompts_for_secret() {
+    const SECRET: &str = "EXAMPLE-prompt-secret";
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = add_login(&path, "EXAMPLE-pw-1");
+    let args = [
+        "edit",
+        id.as_str(),
+        "--field-add",
+        "API token",
+        "--kind",
+        "secret",
+    ];
+    assert!(args.iter().all(|arg| !arg.contains(SECRET)));
+    let mut term = FakeTerminal::new(&[PW, SECRET]);
+    let ran = run(&path, &args, &mut term);
+    ok(&ran);
+    assert!(
+        term.prompts
+            .iter()
+            .any(|prompt| prompt.0 == Kind::Secret && prompt.1 == "Field value: ")
+    );
+    assert!(!ran.out.contains(SECRET));
+    assert!(!ran.err.contains(SECRET));
+    let s = session(&path);
+    let field = &s.item(id_of(&s, &id)).unwrap().fields()[0];
+    assert_eq!(field.label(), "API token");
+    let FieldValue::Secret(value) = field.value() else {
+        panic!("not a secret");
+    };
+    assert_eq!(value.expose(), SECRET);
+}
+
+#[test]
+fn secret_value_rejected_on_command_line() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let before = fs::read(&path).unwrap();
+    let lines: &[&[&str]] = &[
+        &[
+            "edit",
+            "abcdef",
+            "--field-add",
+            "Token",
+            "--kind",
+            "secret",
+            "--value",
+            "EXAMPLE",
+        ],
+        &[
+            "edit",
+            "abcdef",
+            "--field-add",
+            "Token",
+            "--value",
+            "EXAMPLE",
+            "--kind",
+            "secret",
+        ],
+        &[
+            "edit",
+            "abcdef",
+            "--field-add",
+            "Token",
+            "--kind",
+            "multiline",
+            "--value",
+            "EXAMPLE",
+        ],
+    ];
+    for line in lines {
+        let mut term = FakeTerminal::new(&[]);
+        let ran = run(&path, line, &mut term);
+        assert_eq!(ran.code, usage());
+        assert!(
+            ran.err
+                .contains("A secret is typed at the prompt, not on the command line.")
+        );
+        assert!(!ran.err.contains("EXAMPLE"));
+        assert!(!ran.out.contains("EXAMPLE"));
+        assert!(term.prompts.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}
+
+#[test]
+fn edit_field_remove_and_move() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = prefix_of(
+        &path,
+        login_input(
+            "Box",
+            vec![
+                text_field("One", "1"),
+                text_field("Two", "2"),
+                text_field("Three", "3"),
+            ],
+        ),
+    );
+    let mut parallel = vec![
+        text_field("One", "1"),
+        text_field("Two", "2"),
+        text_field("Three", "3"),
+    ];
+    move_field(&mut parallel, 2, 0).unwrap();
+
+    let mut term = FakeTerminal::new(&[PW]);
+    ok(&run(
+        &path,
+        &["edit", &id, "--field-move", "3", "--to", "1"],
+        &mut term,
+    ));
+    let s = session(&path);
+    assert_eq!(
+        kinds_of(s.item(id_of(&s, &id)).unwrap().fields()),
+        kinds_of(&parallel)
+    );
+    drop(s);
+
+    remove_field(&mut parallel, 1).unwrap();
+    let mut term = FakeTerminal::new(&[PW]);
+    ok(&run(
+        &path,
+        &["edit", &id, "--field-remove", "2"],
+        &mut term,
+    ));
+    let s = session(&path);
+    assert_eq!(
+        kinds_of(s.item(id_of(&s, &id)).unwrap().fields()),
+        kinds_of(&parallel)
+    );
+}
+
+#[test]
+fn export_format_json() {
+    let (dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "EXAMPLE-pw-1");
+    let file = dir.path().join("out.json");
+    let file_arg = file.to_str().unwrap();
+    let mut term = FakeTerminal::new(&[PW, "export", PW]);
+    let ran = run(&path, &["export", file_arg, "--format", "json"], &mut term);
+    ok(&ran);
+    assert_eq!(term.kinds(), vec![Kind::Secret, Kind::Line, Kind::Secret]);
+    let bytes = fs::read(&file).unwrap();
+    assert!(bytes.starts_with(b"["));
+    let batch = holm_core::import::parse(&bytes, holm_core::import::ImportFormat::Json).unwrap();
+    assert!(batch.ready() >= 1);
+    assert!(batch.issues().is_empty());
+
+    let other = dir.path().join("both.json");
+    let mut term = FakeTerminal::new(&[PW, "export", PW]);
+    let ran = run(
+        &path,
+        &[
+            "export",
+            other.to_str().unwrap(),
+            "--format",
+            "json",
+            "--backup",
+        ],
+        &mut term,
+    );
+    assert_eq!(ran.code, usage());
+    assert!(term.prompts.is_empty());
+    assert!(!other.exists());
+}
+
+#[test]
+fn args_debug_has_no_secret() {
+    let edit = command(&[
+        "edit",
+        "abcdef",
+        "--field-add",
+        "EXAMPLE-label",
+        "--kind",
+        "text",
+        "--value",
+        "EXAMPLE-value",
+    ]);
+    let Command::Edit(edit) = edit else {
+        panic!("not edit");
+    };
+    let shown = format!("{edit:?}");
+    assert!(!shown.contains("EXAMPLE"));
+    assert!(shown.contains("Text"));
+    assert!(shown.contains("value_len"));
+
+    let add = command(&[
+        "add",
+        "login",
+        "--title",
+        "EXAMPLE-title",
+        "--preset",
+        "server",
+    ]);
+    let Command::Add(add) = add else {
+        panic!("not add");
+    };
+    let shown = format!("{add:?}");
+    assert!(!shown.contains("EXAMPLE"));
+    assert!(shown.contains("Server"));
+}
+
+fn command(list: &[&str]) -> Command {
+    let args: Vec<OsString> = list.iter().copied().map(OsString::from).collect();
+    holm_cli::args::parse(&args).unwrap().command
 }

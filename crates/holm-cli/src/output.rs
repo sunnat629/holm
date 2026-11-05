@@ -8,6 +8,7 @@ use std::io::ErrorKind;
 use holm_core::body::BodyError;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::fields::{CalendarDate, format_date};
 use holm_core::import::ImportError;
 use holm_core::item::Timestamp;
 use holm_core::rules::{Field, FieldError};
@@ -493,6 +494,12 @@ impl CliError {
             _ => 1,
         }
     }
+}
+
+/// Ten ASCII bytes, `YYYY-MM-DD`. A date is not a secret.
+#[must_use]
+pub(crate) fn date_text(date: CalendarDate) -> String {
+    format_date(date).into_iter().map(char::from).collect()
 }
 
 /// `text` with every control character and every bidirectional formatting character

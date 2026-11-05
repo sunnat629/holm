@@ -59,6 +59,7 @@ security, three exercises, and what to read next in
 | 52 | [A second schema](52-a-second-schema.md): separate postcard DTOs, bounded custom fields, and checked UTC dates. Kotlin: a version discriminator plus a second DTO instead of a defaulted property. |
 | 53 | [Labels, dates and secrets](53-labels-dates-and-secrets.md): search reads field labels only, expiry takes a UTC date, and a failed save puts the old fields back. Kotlin: pass a clock into the use case, and do not call `System.currentTimeMillis` inside the matcher. |
 | 54 | [Four cells a field](54-four-cells-a-field.md): measure the escaped length, then fill the buffer once, so a newline in a cell does not grow a second copy. JSON stays a flat list of columns. Kotlin: a column list, not a `JsonObject` inside the cell. |
+| 55 | [Secrets at the prompt](55-secrets-at-the-prompt.md): a secret that never enters the args struct cannot show up in Debug. The prompt reads it, and copy clears the clipboard. Kotlin: Console.readPassword, not args. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

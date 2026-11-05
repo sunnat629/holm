@@ -60,20 +60,24 @@ Commands:
   holm init                 Make a new vault.
   holm list [options]       List items: id, type, title, detail.
       --search TEXT         Only items whose title, username, web address,
-                            chain or category contains TEXT.
+                            chain, category or a custom field's name
+                            contains TEXT.
       --type TYPE           login, crypto, phrase or note.
       --category NAME       Only items in this category.
       --uncategorised       Only items with no category.
       --favourites          Only favourites.
       --trash               The Trash instead of the active items.
+      --expiring            Only items with a reminder inside 30 days,
+                            including dates already past.
       --sort ORDER          title (default), updated or created.
   holm get ID               Show an item. Secret fields show as (hidden).
                             ID is the item's id, or its first 6 or more
                             characters, as holm list shows it.
       --copy FIELD          Copy one field instead: password, username, url,
-                            address, memo, notes, body or phrase. Holm clears
-                            the clipboard after the vault's clear time, or
-                            when you press Enter. macOS only.
+                            address, memo, notes, body, phrase or field=N
+                            (N from 1 to 10). Holm clears the clipboard
+                            after the vault's clear time, or when you press
+                            Enter. macOS only.
   holm gen [KIND] [--copy]  Make a new password (default), passphrase or
                             username. No vault needed.
   holm add TYPE --title T   Add a login, crypto, phrase or note. Secrets are
@@ -85,10 +89,19 @@ Commands:
       --favourite           Mark it a favourite.
       --generate            Login: generate the password.
       --with-notes          Ask for notes too.
+      --preset NAME         Add that preset's fields, empty. A date row is
+                            left out until you set it.
   holm edit ID [options]    Change an item. Anything not given stays.
       --title T, --username U, --url URL (adds one), --clear-urls,
       --category NAME, --uncategorised, --favourite, --no-favourite,
       --new-password, --generate, --new-notes
+      --field-add LABEL --kind KIND [--expiry YYYY-MM-DD]
+                            Add a custom field. A secret or multiline value
+                            is asked for. Text and date need --value.
+      --field-remove N      Remove custom field N (from 1 to 10).
+      --field-move N --to M Move field N to position M.
+      --field-set N         Replace field N. Same value rule as --field-add.
+      --clear-expiry        With --field-set, drop the reminder.
   holm rm ID                Move an item to the Trash.
   holm rm --forever ID      Delete an item in the Trash for good.
   holm restore ID           Take an item out of the Trash.
@@ -97,6 +110,8 @@ Commands:
   holm import FILE          Add items from a CSV or JSON file.
       --format csv|json     The file's format (default: from its name).
   holm export FILE          Write every item to a new CSV file, in plain text.
+      --format csv|json     csv is the default. json writes a JSON array.
+                            Not with --backup.
   holm export --backup FILE Write an encrypted copy of the vault.
   holm shell                Run many commands with one unlock. The vault
                             locks itself after the vault's auto-lock time
@@ -105,7 +120,8 @@ Commands:
   holm version              Show the version.
 
 Holm asks for the master password at a hidden prompt on the terminal. It never
-takes a password from the command line, the environment or a pipe.
+takes a password, or a custom secret, from the command line, the environment
+or a pipe.
 ";
 
 /// Runs one parsed command and returns the exit code: 0 on success, 1 on failure,

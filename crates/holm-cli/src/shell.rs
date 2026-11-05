@@ -682,7 +682,7 @@ impl Shell<'_> {
             }
             Command::Export(args) => {
                 let file = transfer::export_target(&args)?;
-                transfer::export_to(session, &file, args.backup, term, out, err)
+                transfer::export_to(session, &file, args.backup, args.format, term, out, err)
             }
         }
     }
