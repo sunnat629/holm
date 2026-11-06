@@ -84,7 +84,14 @@ test that loops over your theme colours.
 ```rust
 let mut chip = |filter: CategoryFilter, label: &str, dot: Option<egui::Color32>| {
     let clicked = match dot {
-        Some(colour) => ui.horizontal(|ui| { /* dot, then label */ }).inner,
+        Some(colour) => {
+            // `need` is the label's width plus the dot and the padding.
+            if ui.available_size_before_wrap().x < need {
+                ui.end_row();
+            }
+            chip_dot(ui, colour);
+            ui.selectable_label(current == filter, label).clicked()
+        }
         None => ui.selectable_label(current == filter, label).clicked(),
     };
     if clicked {
@@ -93,17 +100,24 @@ let mut chip = |filter: CategoryFilter, label: &str, dot: Option<egui::Color32>|
 };
 ```
 
-The closure writes to `pick`, so it borrows `pick` mutably and must be `mut`.
-The borrow ends after the last call, so the code after the loop can read `pick`.
-`None` draws the All and Uncategorised chips with no dot. `Some(colour)` draws a
+The closure writes to `pick` and draws with `ui`, so it borrows both mutably and
+must be `mut`. The borrows end after the last call, so the code after the loop
+can read `pick`.
+
+`None` draws the All and No category chips with no dot. `Some(colour)` draws a
 category chip with one. One closure covers both, so the click logic is written
 once.
+
+The dot and the label are not wrapped in a nested `ui.horizontal`. The chips sit
+in a wrapping row, and a nested row cannot wrap, so it would widen the panel.
+Instead the closure measures first. If the dot and the label would not both fit,
+it starts a new row with `ui.end_row()`, so the two stay together.
 
 In Kotlin a lambda that assigns to a captured `var` is allowed freely. Rust
 makes you say `mut` and checks that nobody else reads `pick` while the closure
 is alive.
 
-## Check yourself
+## Try it
 
 1. In `avatar.rs` tests, add a case that `avatar_colour(Some(3), true)` equals
    `avatar_colour(Some(11), true)`. Why does it pass?
@@ -115,6 +129,9 @@ is alive.
 
 ## Read next
 
+- Lesson 59, the lesson before this one (listed in [the index](README.md))
+- [Lesson 61](61-recovery-codes-and-schema-3.md), the next lesson
+- [the index](README.md)
 - [Colour index](../../crates/holm-core/src/category.rs)
 - [Avatar colours and contrast](../../crates/holm-gui/src/widgets/avatar.rs)
 - [The category chips](../../crates/holm-gui/src/screens/vault.rs)

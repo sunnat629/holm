@@ -23,8 +23,8 @@ sends a `Job::SetFields` to the worker, which saves the item.
 In the editor, a codes row has one box. Leave it empty and the stored codes stay,
 used flags included. Paste new codes and they replace the list, all unused.
 
-The item list shows `2 codes left`, `1 code left` or `No codes left` once an item
-is down to two or fewer.
+Once an item is down to two codes or fewer, the item list shows a badge with the
+count, such as `2 codes left`.
 
 ## Rust ideas in this task
 
@@ -189,6 +189,14 @@ button's handler, which hands it to the clipboard and never to a label.
 Colour is not the only signal here. The strike line and the missing Copy button
 say "used" too, and the button reads Mark unused.
 
+## Kotlin side
+
+In Kotlin the same screen is a `LazyColumn` with `key(position, i)` on each row.
+A mark is `copy(used = !used)` on a data class, and the badge is
+`codesLeft?.takeIf { it <= 2 }`. The Rust differences are `push_id` instead of a
+`key` block, a rebuild instead of `copy` because a secret has no `Clone`, and
+`^` on two `bool`s instead of `!used`.
+
 ## Try it
 
 1. In `codes_badge_shows_at_two_or_fewer` (in `rows.rs`), add `with_codes("e", 2)`
@@ -201,17 +209,11 @@ say "used" too, and the button reads Mark unused.
 
 ## Read next
 
+- [Lesson 62](62-one-form-four-kinds.md), the lesson before this one
+- [the index](README.md)
 - [Rows and the codes badge](../../crates/holm-gui/src/rows.rs)
 - [`code_rows` and the item view](../../crates/holm-gui/src/screens/item_view.rs)
 - [The copy that flips one flag](../../crates/holm-gui/src/worker.rs)
 - [The editor's kept codes](../../crates/holm-gui/src/screens/fields.rs)
 - [Pattern guards in `match`](https://doc.rust-lang.org/book/ch19-03-pattern-syntax.html#extra-conditionals-with-match-guards)
 - [`Option::filter`](https://doc.rust-lang.org/std/option/enum.Option.html#method.filter)
-
-## Kotlin side
-
-In Kotlin the same screen is a `LazyColumn` with `key(position, i)` on each row.
-A mark is `copy(used = !used)` on a data class, and the badge is
-`codesLeft?.takeIf { it <= 2 }`. The Rust differences are `push_id` instead of a
-`key` block, a rebuild instead of `copy` because a secret has no `Clone`, and
-`^` on two `bool`s instead of `!used`.

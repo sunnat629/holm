@@ -82,8 +82,8 @@ Body::Login { username, url, password } => f
 ```
 
 `#[derive(Debug)]` would print every field. Here we write `Debug` by hand. A
-`LineBuf` shows only its byte length. A `SecretInput` already prints only its
-character count. A stray `{:?}` in a log line can never show a username or a
+`LineBuf` shows only its byte length. A `SecretInput` has its own `Debug` that
+leaves the text out. A stray `{:?}` in a log line can never show a username or a
 phrase. A test checks that the debug text of a phrase form does not contain the
 phrase.
 
@@ -104,14 +104,14 @@ let menu = ui.menu_button(NEW_LABEL, |ui| {
 ```
 
 `menu_button` draws a button and runs the closure only while the menu is open.
-A click on an entry does not close the menu by itself. `ui.close()` does that.
-Without it, the menu would stay open over the new form.
+After an entry opens its form, `ui.close()` closes the menu, so it does not stay
+open over the new form.
 
 `NEW_ENTRIES` is a `[(&str, NewKind); 4]`. The array length is part of its
 type, so the list and the number four cannot drift apart.
 
-In Kotlin you'd call `expanded = false` on a `DropdownMenu` inside the item's
-`onClick`. It is the same job: the menu does not know you are done.
+In Kotlin you'd set `expanded = false` for a `DropdownMenu` inside the item's
+`onClick`. It is the same job: you tell the menu you are done.
 
 ### A triangle painted from points
 
@@ -129,8 +129,7 @@ ui.painter().add(egui::Shape::convex_polygon(
 
 A small down arrow next to "New" tells the user this is a menu. The obvious
 way is to put U+25BE in the label. The bundled Atkinson Hyperlegible font has no
-glyph for it, so egui would draw a box. In the kittest tests a missing glyph
-panics, so it would also fail the build.
+glyph for it, so egui would draw a box.
 
 So we draw it. Three points make a triangle, the fill is the theme's text
 colour, and there is no outline. It works in both themes and needs no font.
@@ -197,6 +196,9 @@ is the same kind of wall, but Rust checks it at the crate boundary.
 
 ## Read next
 
+- [Lesson 61](61-recovery-codes-and-schema-3.md), the lesson before this one
+- [Lesson 63](63-codes-you-cross-off.md), the next lesson
+- [the index](README.md)
 - [The form and its buffers](../../crates/holm-gui/src/screens/login_form.rs)
 - [The New menu and `DetailMode`](../../crates/holm-gui/src/screens/vault.rs)
 - [Enums](https://doc.rust-lang.org/book/ch06-00-enums.html)

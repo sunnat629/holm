@@ -110,7 +110,7 @@ impl fmt::Debug for RecoveryCode {
 trait by hand and list only `used`. `finish_non_exhaustive` adds `..` to show that
 something was left out.
 
-`SecretText` already prints `[REDACTED]`. This gives a second guard: even if someone
+This guard does not depend on how the code's own type prints itself. Even if someone
 later changes the field type, the print still has no code in it. A test checks that
 `EXAMPLE` never shows up in the output.
 
@@ -197,6 +197,9 @@ In Kotlin you'd use `StringBuilder(len)`. The difference is that the JVM may cop
 
 ## Read next
 
+- [Lesson 60](60-colour-by-category.md), the lesson before this one
+- [Lesson 62](62-one-form-four-kinds.md), the next lesson
+- [the index](README.md)
 - [Custom fields and recovery codes](../../crates/holm-core/src/fields.rs)
 - [Wire types and `BoundedVec`](../../crates/holm-core/src/wire.rs)
 - [Body decode and the schema 2 check](../../crates/holm-core/src/body.rs)
