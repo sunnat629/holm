@@ -12,10 +12,10 @@ move leave nothing behind.
 
 `holm add`, `edit`, `rm`, `passwd`, `import` and `export` are in `crates/holm-cli/src/commands/`
 (`write.rs` and `transfer.rs`). `holm get ID --copy FIELD` and `holm gen --copy` are in
-`copy.rs`: they put one value on the macOS pasteboard, marked concealed so clipboard managers
-skip it, wait for the vault's clear time or Enter, then clear the clipboard only if it still
-holds Holm's value. The clipboard itself is `holm-platform`'s `ConcealedClipboard` (feature
-`clipboard`), and `Env.clip` is a factory, so the tests swap in a fake one.
+`copy.rs`: they put one value on the macOS pasteboard, marked concealed (a request that
+clipboard managers skip it), wait for the vault's clear time or Enter, then clear the clipboard
+if it still holds Holm's value or can't be read. The clipboard itself is `holm-platform`'s
+`ConcealedClipboard`, and `Env.clip` is a factory, so the tests swap in a fake one.
 
 ## Rust ideas in this task
 
@@ -59,12 +59,12 @@ fn keep(s: &SecretText) -> SecretText {
 }
 ```
 
-`to_owned()` allocates exactly the length of the `&str`, so there is no growing `String` that
+`to_owned()` allocates once, at the length of the `&str`, so there is no growing `String` that
 reallocates and leaves old copies behind (lesson 32). The temporary `String` is moved into the
 wrapper; it is never bound to a variable that could be logged or cloned.
 
-The clipboard read-back for the "still Holm's value?" check works the same way: arboard returns
-a `String`, and `.map(Zeroizing::new)` moves it into a wiping buffer before the compare.
+The "still Holm's value?" check after the wait never hands the clipboard's text back to the
+CLI. `Clip::check` takes Holm's value and answers `ClipCheck::Holds`, `Other` or `Unreadable`.
 
 In Kotlin you'd write `SecretText(password.expose().copyOf())` and trust the garbage collector,
 which may have copied the old array during a compaction already.
@@ -103,61 +103,75 @@ tells the compiler which trait object to build; without it the closure's return 
 In Kotlin you'd write `val clip: () -> Clip = { ConcealedClipboard.open() }`, a factory lambda,
 and pass `{ FakeClip(state) }` in tests.
 
-### 4. `Instant` deadlines for the wait
+### 4. One deadline, two clocks
 
-`copy_and_wait` computes one deadline and hands it to the terminal:
+`copy_and_wait` sets the value, works out one deadline, and hands it to the terminal:
 
 ```rust
 clip.set(&value).map_err(|_| CliError::CopyFailed)?;
-let until = Instant::now() + Duration::from_secs(u64::from(secs));
-let said = writeln!(err, "Copied. Holm clears the clipboard in {secs} seconds. ...");
-let waited = term.wait_for_key(until);
-let unchanged = clip.holds(&value);
-if unchanged {
-    clip.clear();
-    if clip.holds(&value) {
-        return Err(CliError::ClearFailed);
-    }
-}
-drop(value);
+let pending = PendingClear::new(value, secs, clock);
+let wait = pending.due().saturating_sub(clock.monotonic());
+let until = Instant::now() + wait;
+let said = writeln!(
+    err,
+    "Copied. Holm clears the clipboard in {} seconds. Press Enter to clear it now.",
+    (wait + Duration::from_millis(500)).as_secs()
+);
+let due = || pending.is_due(clock);
+let waited = term.wait_for_key_interruptible(until, Some(&due));
+let cleared = clear_copied(clip, pending.value());
+drop(pending);
+let cleared = cleared?;
 said?;
 waited?;
+writeln!(err, "{cleared}")?;
 ```
 
-Three things to see:
+Things to see:
 
+- `PendingClear::new` takes the `Zeroizing<String>` by value, so from here on it owns the only
+  copy. It also clamps `secs` to the settings range, so the message and the wait use the same
+  time. Adding half a second before `as_secs()` rounds the shown number to the nearest second.
 - `Instant` is monotonic. If the wall clock jumps (NTP, a time-zone change), the wait does not
-  get longer or shorter. `SystemTime` would.
-- `wait_for_key` polls the terminal every 0.1 s and compares against `until`. One deadline,
-  computed once, means a slow write or a key press doesn't reset the clock.
+  get longer or shorter. But while a Mac sleeps, the monotonic clock stops too. So the terminal
+  also calls `due` about every 0.1 s, and `is_due` checks both of the `Clock`'s clocks. Lesson 38
+  covers this in full.
+- One deadline, computed once, means a slow write or a key press doesn't reset the clock.
+- `clear_copied` empties the clipboard if it still holds Holm's value or can't be read, and
+  leaves another app's copy alone. It returns the line to print, or `CliError::ClearFailed` if
+  the value is still there after the clear.
 - `said` and `waited` are kept as `Result`s and only checked with `?` *after* the clear. If the
   message fails to print or the terminal goes away, the clipboard is still cleared first. A
   `?` straight after `writeln!` would have returned with the password still on the clipboard.
 
-`drop(value)` makes the wipe explicit: the `Zeroizing<String>` is gone before anything else is
-printed.
+`drop(pending)` makes the wipe explicit: the value is gone before anything else is printed.
 
 In Kotlin you'd write `val until = TimeSource.Monotonic.markNow() + secs.seconds` and check
 `until.hasPassedNow()`; with `java.time` you'd use `System.nanoTime()`, never
 `currentTimeMillis()`.
 
-## Exercises
+## Try it
 
 1. Add a unit test in `write.rs` for `secret_of`: build a `Zeroizing<String>` from
    `"EXAMPLE-pw"`, pass it in, and check that the `SecretText` exposes `"EXAMPLE-pw"`. (You
    can't look at the moved-from buffer after the call; explain in a comment why that is the
    point.) Check: `cargo test -p holm-cli --locked --lib`
 2. Give `ClipState` in `tests/common/mod.rs` a `refuse` flag that makes `FakeClip::set` return
-   `Err(ClipboardError::Refused)`, then write a test in `tests/write_commands.rs` that sets it. Check that the
+   an `Err` such as `ClipboardError::Unavailable`, then write a test in `tests/write_commands.rs`
+   that sets it. Check that the
    run exits 1 with `CliError::CopyFailed`'s text, that nothing was printed to `out`, and that
    no "Clipboard cleared." line appears. Check: `cargo test -p holm-cli --locked --test
    write_commands copy_`
 3. `gen --copy` always waits `CLIPBOARD_DEFAULT_SECS`. Give `GenArgs` a `--clear-after SECS`
-   option, capped at 300. Make `FakeTerminal::wait_for_key` record the `until` it gets, and test
-   that it is about that far in the future. Check: `cargo test -p holm-cli --locked`
+   option and pass it to `copy_and_wait`. `FakeTerminal` already records each wait as a
+   `Kind::Wait` prompt that holds the seconds left. Test that `--clear-after 30` records `"30"`,
+   and that a value above `CLIPBOARD_MAX_SECS` records the clamped maximum. Check:
+   `cargo test -p holm-cli --locked`
 
 ## Read next
 
+- Previous: [Lesson 33: A CLI without a framework](33-a-cli-without-a-framework.md)
+- Next: [Lesson 35: A read-eval loop with a deadline](35-a-read-eval-loop-with-a-deadline.md)
+- [The index](README.md)
 - [std::mem::take](https://doc.rust-lang.org/std/mem/fn.take.html)
 - [std::time::Instant](https://doc.rust-lang.org/std/time/struct.Instant.html)
-- [Lesson 33: A CLI without a framework](33-a-cli-without-a-framework.md)

@@ -9,12 +9,12 @@ the file readable by its owner only, and write the bytes exactly as they are in 
 
 ## What we built
 
-`crates/holm-core/src/export.rs` adds `Session::export_csv`. It checks the master password again
-through the throttle, takes every item outside the Trash in list order, and builds the CSV in one
-buffer of the exact final size. `crates/holm-platform/src/private_file.rs` adds
-`write_new_private_file`, which creates a new owner-only file and removes it if the write fails,
-and `read_capped`, which reads an import file only if it is a regular file under the size cap. The
-on-disk round trip test now exports, writes the file, reads it back and imports it into a new vault.
+`crates/holm-core/src/export.rs` adds `Session::export_csv` (and later `Session::export_json`).
+Each one checks the master password again through the throttle, takes every item outside the
+Trash in list order, and builds the text in one buffer of the exact final size.
+`crates/holm-platform/src/private_file.rs` adds `write_new_private_file`, which creates a new
+owner-only file and cleans it up if the write fails, and `read_capped`, which reads an import file
+only if it is a regular file under the size cap.
 
 ## Rust ideas in this task
 
@@ -36,11 +36,13 @@ assert_eq!(out.len(), total, "export measure and fill disagree");
 A `String` that runs out of room allocates a bigger buffer, copies the bytes over and frees the
 old one. `Zeroizing` wipes only the buffer it owns at drop time, so the freed one keeps a copy of
 every password written so far. Walking the items twice (once to add up the length, once to write)
-costs a little time and leaves no copy. `push_quoted` and `push_fitting` both `assert!` there is
-room before they write, in release builds too, so a measuring bug panics instead of reallocating.
+costs a little time and leaves no copy. `push_fitting` uses `assert!` to check there is room
+before it writes. Unlike `debug_assert!`, that check also runs in release builds, so a measuring
+bug panics instead of reallocating. The `assert_eq!` at the end catches a measure that was too
+big.
 
-At the end, `mem::take(&mut *out).into_bytes()` moves the heap buffer into a `SecretBuf` without
-copying a byte.
+At the end, `write_csv` calls `core::mem::take(&mut *text).into_bytes()`. That moves the heap
+buffer into a `SecretBuf` without copying a byte.
 
 In Kotlin you'd write `StringBuilder(capacity)`, but a `StringBuilder` grows silently when you
 guess low, and the garbage collector frees the old array without wiping it. Rust lets you check.
@@ -58,12 +60,24 @@ RFC 4180 says a cell may be wrapped in `"`, and inside it a `"` is written twice
 and `\r\n` inside quotes are part of the cell. Holm quotes every cell, not just the ones that
 need it, so one rule covers a password with a comma, a note with line breaks and a title with a
 quote. `quoted_len` is that rule as a length: the cell, one more byte per `"`, and two quotes.
-The test `export_quotes_everything` pins the exact bytes.
+The function lives in `crates/holm-core/src/plain.rs`, next to `push_quoted`, which writes the
+same bytes. The test `export_quotes_everything` pins the exact bytes of one row.
 
 In Kotlin you'd write `"\"" + cell.replace("\"", "\"\"") + "\""`, which builds two new strings per
 cell. Here nothing is built: the bytes go straight into the one buffer.
 
 ### 3. A file nobody else can open, created new
+
+```rust
+let mut file = create_exclusive(path)?;
+let written = write(&mut file, bytes)
+    .and_then(|()| sync(&file))
+    .and_then(|()| sync_parent(path, sync));
+```
+
+`create_exclusive` is the vault store's own helper, from `fs_store.rs`. It creates a new file
+that only its owner can read (mode 0600 on Unix). It fails with `StoreError::AlreadyExists` if
+anything is already at the path. Inside, it does this:
 
 ```rust
 let mut options = OpenOptions::new();
@@ -82,9 +96,21 @@ makes Holm write the passwords somewhere else. `mode(0o600)` sets the permission
 there is no moment where the file is readable by others. `OpenOptionsExt` is a Unix-only
 extension trait, which is why it is imported inside the `cfg` block.
 
-If the write or `sync_all` fails, `write_new_private_file` removes the file, so a half-written
-export does not sit on disk. The test `failed_write_removes_partial_file` passes in a writer that
-writes three bytes and then fails.
+After the write, the file is synced, and then on Unix its parent folder is synced, so the new
+name is on disk too. If any step fails, this runs:
+
+```rust
+let _ = file.set_len(0);
+let _ = file.sync_all();
+drop(file);
+let _ = fs::remove_file(path);
+Err(StoreError::Io(e.kind()))
+```
+
+The file is emptied through the handle before it is removed. If the remove fails too, less
+plaintext is left behind. Every cleanup step is best effort, and the original error is the one
+reported. This is not secure erasure: the disk may still keep the freed blocks. The test
+`failed_write_removes_partial_file` passes in a writer that writes three bytes and then fails.
 
 In Kotlin you'd write
 `Files.newOutputStream(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)` and set
@@ -105,8 +131,9 @@ match reader.read(&mut probe) {
 }
 ```
 
-`read_capped` checks the size before it opens anything, opens with `O_NONBLOCK` so a FIFO cannot
-hang it, checks again on the handle it really reads, and reads exactly that many bytes into one
+`read_capped` checks the size before it opens anything. On Unix it opens with `O_NONBLOCK` (where
+Holm knows the flag's value), so a FIFO cannot hang it. It checks again on the handle it really
+reads, and reads exactly that many bytes into one
 `Zeroizing<Vec<u8>>`. One more read must return 0; if it returns a byte, the file grew and the
 parsed bytes would not be the bytes whose size was checked.
 
@@ -117,10 +144,11 @@ In Kotlin you'd write `Files.readAllBytes(path)`, which has no cap and blocks on
 Spreadsheet apps run a cell that starts with `=`, `+`, `-` or `@` as a formula. Some exporters put
 a `'` in front. Holm does not: `=SUM(A1)` can be a real password, and changing it would break the
 import back into Holm or into another manager. Instead the warning says not to open the file in a
-spreadsheet app, and the user must type the master password and confirm. The test
-`export_does_not_escape_formulas` checks that all four come back byte-exact.
+spreadsheet app, and the user must type the master password and confirm. The tests
+`export_does_not_escape_formulas` and `formula_still_unescaped` check that all four come back
+byte-exact, in a password and in a custom field.
 
-## Exercises
+## Try it
 
 1. Change `String::with_capacity(total)` in `build` to `String::with_capacity(total - 1)` and run
    the tests. Read which assert fires and why that is better than a silent reallocation. Then undo
@@ -134,6 +162,8 @@ spreadsheet app, and the user must type the master password and confirm. The tes
 
 ## Read next
 
+- Previous: [Lesson 31: Hostile input, all or nothing](31-hostile-input-all-or-nothing.md)
+- Next: [Lesson 33: A CLI without a framework](33-a-cli-without-a-framework.md)
+- [The index](README.md)
 - [std::fs::OpenOptions::create_new](https://doc.rust-lang.org/std/fs/struct.OpenOptions.html#method.create_new)
 - [RFC 4180: Common Format for CSV Files](https://www.rfc-editor.org/rfc/rfc4180)
-- [Lesson 30: Parsing untrusted text](30-parsing-untrusted-text.md)

@@ -91,8 +91,13 @@ pub trait Terminal {
     fn line(&mut self, prompt: &str, max_bytes: usize, deadline: Option<Instant>)
         -> Result<Option<Zeroizing<String>>, TtyError>;
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError>;
+    // ... plus methods with a default body, such as `secret_until` and the
+    // `*_interruptible` ones.
 }
 ```
+
+A trait method with a body is a default: a type that implements the trait gets it for free,
+or writes its own. `RealTerminal` writes its own for every method.
 
 `main.rs` passes `RealTerminal`. The tests pass a `FakeTerminal` that answers from a queue and
 records every prompt, so a test can say "the second instance was refused before any prompt":
@@ -100,12 +105,17 @@ records every prompt, so a test can say "the second instance was refused before 
 ```rust
 impl Terminal for FakeTerminal {
     fn secret(&mut self, prompt: &str, _max_bytes: usize) -> Result<Zeroizing<String>, TtyError> {
-        self.prompts.push((Kind::Secret, prompt.to_owned()));
-        self.answers.pop_front().map(Zeroizing::new).ok_or(TtyError::Cancelled)
+        self.record(Kind::Secret, prompt);
+        self.answers
+            .pop_front()
+            .map(Zeroizing::new)
+            .ok_or(TtyError::EndOfInput)
     }
     // ...
 }
 ```
+
+An empty queue answers `TtyError::EndOfInput`, as Ctrl-D would.
 
 `dyn Terminal` is a fat pointer (data plus vtable), the same idea as a Kotlin interface
 reference. `out` and `err` are `&mut dyn Write` for the same reason: tests read `Vec<u8>`s.
@@ -137,10 +147,12 @@ impl Drop for ModeGuard<'_> {
 ```
 
 The guard is built from the saved copy before raw mode is switched on, so even a failing
-`tcsetattr` leaves something that restores. `flush_input` is set after Ctrl-C or an over-long
-line, so the rest of a pasted password is thrown away instead of reaching the shell.
+`tcsetattr` leaves something that restores. `flush_input` is set after Ctrl-C, Ctrl-D on an
+empty line, an over-long line, or an interrupt. Then the rest of a pasted password is thrown away
+instead of reaching the shell. Raw mode is also switched on with `OptionalActions::Flush`. That
+drops anything typed before the prompt appeared, while echo was still on.
 
-The same pattern holds the vault: `Opened` owns the session and the `holm.lock` guard, and its
+The same pattern holds the vault: `Opened` owns the session and the folder's `InstanceLock`, and its
 `Drop` locks the session. Fields drop in declaration order, so the session (declared first) is
 wiped before the lock is released.
 
@@ -154,15 +166,20 @@ scope is enough.
 ### 5. `ExitCode` instead of `process::exit`
 
 `main` returns `ExitCode`. Returning, unlike `std::process::exit`, runs every destructor first,
-so guards, locks and wiping buffers all finish:
+so guards, locks and wiping buffers all finish.
+
+`run` hands the command's result to `finish`, which turns it into the exit code:
 
 ```rust
-match dispatch(inv, env, term, out, err) {
-    Ok(()) => ExitCode::SUCCESS,
-    Err(CliError::Usage(e)) => usage_error(&e, err),
-    Err(e) => {
-        let _ = writeln!(err, "holm: {e}");
-        ExitCode::from(e.exit_code())
+pub(crate) fn finish(result: Result<(), CliError>, err: &mut dyn Write) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(CliError::Usage(e)) => usage_error(&e, err),
+        Err(e) => {
+            // Nothing better to do if the error stream itself fails.
+            let _ = writeln!(err, "holm: {e}");
+            ExitCode::from(e.exit_code())
+        }
     }
 }
 ```
@@ -173,20 +190,23 @@ path, a typed value or a library message.
 Kotlin: `exitProcess(code)` skips `finally` blocks on other threads and shutdown order is up to
 the JVM. Returning a value from `main` keeps the cleanup in your hands.
 
-## Exercises
+## Try it
 
-1. Add a test to `tty::tests` that Ctrl-D in the middle of a line is ignored: the bytes
-   `a 0x04 b CR` give `"ab"`. Check:
-   `cargo test -p holm-platform --features tty --locked tty`
+1. Add a test to `tty::tests` that Ctrl-U with echo on rubs out characters, not bytes. The input
+   `"a\u{e9}\x15\r"` should give an empty line, and the echo should end with exactly two
+   `\x08 \x08`. Check: `cargo test -p holm-platform --features tty --locked tty`
 2. Add a test to `args::tests` that `list --sort` with no value is `MISSING_VALUE` and that
-   `list --trash --trash` is `REPEATED_FLAG`. Check:
+   `list --favourites --favourites` is `REPEATED_FLAG`. Check:
    `cargo test -p holm-cli --locked --lib args`
 3. Write a test in `tests/read_commands.rs` that runs `init` with an empty `FakeTerminal` queue
-   and checks for exit 1, "Cancelled" on stderr, one prompt recorded, and no vault file. Check:
+   (it answers `TtyError::EndOfInput`, as Ctrl-D would) and checks for exit 1, one secret prompt
+   recorded, and no vault file. Check:
    `cargo test -p holm-cli --locked --test read_commands init_`
 
 ## Read next
 
+- Previous: [Lesson 32: Building output safely](32-building-output-safely.md)
+- Next: [Lesson 34: Moving secrets in and out](34-moving-secrets-in-and-out.md)
+- [The index](README.md)
 - [std::process::ExitCode](https://doc.rust-lang.org/std/process/struct.ExitCode.html)
 - [rustix::termios](https://docs.rs/rustix/1.1.5/rustix/termios/index.html)
-- [Lesson 32: Building output safely](32-building-output-safely.md)
