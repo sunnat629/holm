@@ -12,3 +12,7 @@
 | 53-labels-dates-and-secrets | fixed | Window named EXPIRING_WITHIN_DAYS, test filters include tests::, unverifiable undo snippet replaced with a real mem::replace, links added. |
 | 54-four-cells-a-field | fixed | Added the codes kind, measure snippet taken from export.rs, removed claims about dedup, null cells and the column limit, links added. |
 | 55-secrets-at-the-prompt | fixed | Snippets match; added recovery codes behaviour in get, copy, preset and edit, window wording, Try it heading and links. |
+| 35-a-read-eval-loop-with-a-deadline | fixed | Loop, deadline and Shell struct snippets updated (away check, p.clear.due(), Rc clock, Pending), unverified idle_expired detail and test names removed, Try it and links added. |
+| 36-thin-screens-over-the-core | rewritten | File dialog, backup and Choosing variants now described, Job and on_result snippets updated, unverified test and core-test claims removed, Try it and links added. |
+| 37-hold-to-reveal | fixed | revealing snippet now includes Space on the focused eye, multiline paint_secret noted, exercise points at real unit tests, Try it and links added. |
+| 38-one-clear-for-every-client | fixed | Removed unverified ConcealedClipboard and one-OS-call claims, clocks described through the Clock trait, duplicate exercise replaced, Try it and links added (next links the index, as the lesson 39 file name is not known here). |
