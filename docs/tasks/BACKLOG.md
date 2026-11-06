@@ -201,7 +201,7 @@ From the Phase 4 per-task reviews, re-reviews and the final review. The final fi
 Phase 6 (release)
 
 - Clear the 206 `cargo vet` exemptions noted `gui-only, pre-release; audit or replace before Phase 6`, and renew or drop the 49 GUI `trusted` entries that end 2026-12-31.
-- Code signing and notarisation (owner approval).
+- Code signing and notarisation: `scripts/release-macos.sh` (P6). Waits on the Developer ID Application certificate for the first real DMG.
 
 ## Phase 5 Task 10
 

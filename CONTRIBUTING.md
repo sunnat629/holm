@@ -36,6 +36,29 @@ HOLM_DEV_PASSWORD=... cargo run -p holm-gui --features dev-unlock -- --vault /tm
 - Release builds refuse the feature (a `compile_error!`), and `scripts/ci-local.sh` greps
   the release binary to check the variable name is not in it.
 
+## Releases
+
+Maintainers only. `scripts/release-macos.sh` builds, signs, notarises and staples
+`target/release-macos/Holm-<version>.dmg`. The version comes from the one `version` line in
+the workspace `Cargo.toml`.
+
+One-time setup on the release Mac:
+
+1. The Account Holder creates the signing certificate in Xcode: Settings > Accounts >
+   Manage Certificates > + > Developer ID Application. The App Store Connect API cannot.
+2. Store the notary credentials in the keychain from an App Store Connect API key. Read the
+   values from files or the environment; never paste them into a shared terminal or a log:
+   `xcrun notarytool store-credentials holm-notary --key <AuthKey .p8> --key-id <id> --issuer <issuer>`.
+
+Each release:
+
+1. Bump `version` in `Cargo.toml`, run `cargo update -w`, and run `bash scripts/ci-local.sh`.
+2. Run `scripts/release-macos.sh --preflight`, then `scripts/release-macos.sh`.
+3. The script signs with the hardened runtime and a secure timestamp, with no entitlements,
+   waits for notarisation, staples the ticket and checks the DMG and the app with `codesign`
+   and `spctl`. It stops at the first failure and never signs ad-hoc instead.
+4. Publish the DMG together with its `.sha256` file.
+
 ## Pull requests
 
 - Keep each pull request small and about one topic.

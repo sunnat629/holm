@@ -50,6 +50,11 @@ To build a local `Holm.app` (arm64, ad-hoc signed, not notarised), run
 `scripts/bundle-macos.sh`. It writes `target/bundle/Holm.app`; add `--zip` for a zip and
 its SHA-256.
 
+The release build is a signed and notarised DMG (arm64, version 0.1.0 beta):
+`scripts/release-macos.sh` writes `target/release-macos/Holm-<version>.dmg` and its SHA-256.
+It needs a Developer ID Application identity and the `holm-notary` notary profile, and stops
+if either is missing. See [CONTRIBUTING.md](CONTRIBUTING.md#releases).
+
 On Windows and Linux, `holm-gui` builds but only reports that it is macOS-only for now.
 The CLI is not supported there yet.
 Windows: see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) (untested, test vaults only).
@@ -61,7 +66,7 @@ Windows: see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) (untested, test vaul
 - [x] macOS app
 - [x] Search, import/export, CLI
 - [ ] Hardening and polish: clipboard auto-clear, lock on sleep, all item types in the app, a downloadable macOS app
-- [ ] Release: signed installers, an outside security audit, then Windows and Linux. Mobile comes later.
+- [ ] Release: signed installers (macOS DMG script ready for 0.1.0 beta), an outside security audit, then Windows and Linux. Mobile comes later.
 
 See [CHANGELOG.md](CHANGELOG.md) for what has changed so far.
 
