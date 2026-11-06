@@ -48,6 +48,8 @@ pub enum FieldValue {
 `RecoveryCodes` came later, in schema 3. There is no separate kind flag that could
 label a secret as plain text.
 In Kotlin you'd write a `sealed interface FieldValue` with one class per kind.
+Rust also prevents accidental copies: `FieldValue` has no `Clone` implementation,
+so a secret value is moved, never duplicated. A test in `fields.rs` checks this.
 Rust also prevents accidental copies: these values have no `Clone` implementation.
 
 ### UTC days need floor division
