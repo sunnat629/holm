@@ -14,6 +14,12 @@ use holm_crypto::kdf::KdfParams;
 use holm_platform::clipboard::ConcealedClipboard;
 use holm_platform::paths::default_vault_path;
 
+/// Every freed block is zeroed before it goes back to the system, so a secret that was
+/// once in the heap does not linger in freed pages.
+#[global_allocator]
+static ALLOC: holm_platform::zeroing_alloc::ZeroingAlloc =
+    holm_platform::zeroing_alloc::ZeroingAlloc::new();
+
 fn main() -> ExitCode {
     if holm_platform::hardening::disable_core_dumps().is_err() {
         eprintln!("Holm could not disable core dumps.");

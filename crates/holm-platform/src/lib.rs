@@ -15,16 +15,13 @@
 //! [`prefs`] keeps device preferences that are not part of a vault, and [`capture`] hides
 //! the app's windows from screenshots and screen sharing (macOS with `gui-window`; elsewhere it
 //! reports `Unsupported`). [`hardening`] turns off core dumps at process start so a crash
-//! cannot write secrets to disk.
+//! cannot write secrets to disk. [`zeroing_alloc`] is a global allocator that wipes every
+//! block before it is freed.
 
-// No `unsafe` in the default build: everything there uses safe std APIs, and `unsafe`
-// stays forbidden. The `gui-window` feature on macOS lowers this to `deny` so that the
-// `window` module alone can allow it, each block with a `// SAFETY:` comment.
-#![cfg_attr(
-    not(all(feature = "gui-window", target_os = "macos")),
-    forbid(unsafe_code)
-)]
-#![cfg_attr(all(feature = "gui-window", target_os = "macos"), deny(unsafe_code))]
+// `unsafe` is denied crate-wide in every build. Every other module carries its own
+// `#![forbid(unsafe_code)]`. `window` (macOS with `gui-window`) and `zeroing_alloc` are
+// the only modules that allow it, each block with a `// SAFETY:` comment.
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod capture;
@@ -42,6 +39,7 @@ pub mod transfer;
 pub mod tty;
 #[cfg(all(feature = "gui-window", target_os = "macos"))]
 pub mod window;
+pub mod zeroing_alloc;
 
 #[cfg(test)]
 pub(crate) mod test_support {

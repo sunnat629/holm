@@ -6,6 +6,12 @@
 
 use std::process::ExitCode;
 
+/// Every freed block is zeroed before it goes back to the system, so a secret that was
+/// once in the heap does not linger in freed pages.
+#[global_allocator]
+static ALLOC: holm_platform::zeroing_alloc::ZeroingAlloc =
+    holm_platform::zeroing_alloc::ZeroingAlloc::new();
+
 #[cfg(not(target_os = "macos"))]
 fn main() -> ExitCode {
     eprintln!("Holm's window runs on macOS only for now.");
