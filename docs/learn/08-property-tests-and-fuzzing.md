@@ -21,8 +21,10 @@ Line by line:
 - `rest.split_at(len)` would panic if `len` is bigger than `rest`. `split_at_checked`
   returns an `Option` instead: `Some((head, tail))` or `None`.
 - `.ok_or(VaultError::BadPadding)` turns `None` into `Err(BadPadding)`.
-- `?` returns that error to the caller. Here `len` came from four bytes of the file, so an
-  attacker chose it.
+- `?` returns that error to the caller. Here `len` came from the first four bytes of the
+  decrypted body. `unpad` only runs after the AEAD check passed, so a bad length means a
+  buggy writer, not an attacker. It still must not panic, and the fuzz target `unpad` feeds
+  it raw bytes to prove that.
 
 A panic is for "this can only happen if our own code is wrong". A `Result` is for "the
 outside world gave us something bad". File contents always belong to the second kind.
@@ -61,7 +63,7 @@ Line by line:
 
 Instead of "for this input, expect that output", a property says "for every input, this is
 true". Here: parse never panics, and if parse accepts the header, encoding it again gives
-back the same 164 bytes.
+back the same header bytes, and the body it returns is exactly the rest of the input.
 
 In Kotlin you'd write: Kotest `forAll(Arb.byteArray(Arb.int(0..399), Arb.byte())) { ... }`.
 Same idea, and Kotest also shrinks failures.
@@ -111,8 +113,9 @@ and, further down:
 let mut bytes = header.encode().to_vec();
 bytes.extend_from_slice(&body);
 // ... apply up to 4 edits to `bytes` ...
-if let Ok((parsed, _body)) = Header::parse(&bytes) {
+if let Ok((parsed, body)) = Header::parse(&bytes) {
     assert_eq!(&parsed.encode()[..], &bytes[..HEADER_LEN]);
+    assert_eq!(body, &bytes[HEADER_LEN..]);
 }
 ```
 
@@ -124,9 +127,9 @@ Line by line:
   the version and the length fields.
 - The edits then damage that valid file in a few places. Most inputs are "almost valid",
   which is where parser bugs hide: a length that is off by one, a field just over its limit.
-- The `assert_eq!` is the property. If the parser accepts bytes, they must be exactly what
-  `encode` would write for the parsed header. Anything else means the parser accepted a
-  second spelling of the same header.
+- The two `assert_eq!` lines are the property. If the parser accepts bytes, the header part
+  must be exactly what `encode` would write for the parsed header, and the body must be the
+  rest. Anything else means the parser accepted a second spelling of the same header.
 
 Random bytes are rejected at the first check, the 8-byte magic, almost every time, so the
 code behind it barely runs. The raw `parse_header` target is seeded with one valid file
@@ -219,6 +222,9 @@ crates/holm-core/tests/format_props.proptest-regressions`
 
 ## Read next
 
+- Previous: lesson 07, listed in [the index](README.md).
+- Next: [Lesson 09, Feature unification and cargo vet](09-feature-unification-and-vet.md).
+- All lessons: [the index](README.md).
 - *The Rust Programming Language* [chapter 9.3, To `panic!` or Not to `panic!`](https://doc.rust-lang.org/book/ch09-03-to-panic-or-not-to-panic.html)
 - [The Rust Fuzz Book, `cargo fuzz`](https://rust-fuzz.github.io/book/cargo-fuzz.html)
 - [The proptest book](https://proptest-rs.github.io/proptest/intro.html)
