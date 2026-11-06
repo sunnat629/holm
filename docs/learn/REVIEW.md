@@ -24,3 +24,7 @@
 | 18-files-fsync-and-processes | fixed | Task and phase references removed, Kotlin order fixed (force the temp before the move), Try it heading, previous, next and index links added. |
 | 16-borrowing-in-practice | fixed | Snippets and Rust facts fine; Try it heading, next and index links added (previous points at the index, as the lesson 15 file name is not known here). |
 | 22-a-gui-crate-and-its-supply-chain | fixed | Font hashes and try_lock facts match; "this task" and "AI skim" wording replaced, Try it heading, previous, next and index links added. |
+| 12-owning-the-strength-check | fixed | Length-cap snippet updated to the raw-count cap and too_long helper, unverified line count, timings and zxcvbn 100-character claim removed, previous, next and index links added. |
+| 13-serde-and-versioned-formats | fixed | Checked against wire.rs: string cap named as MAX_WIRE_STR_BYTES, validate_fields noted; schema 3 noted, golden bytes no longer pinned, serde guard cites assert_not_impl_any, clamp covers generator specs, links added. |
+| 14-time-and-saturating-maths | fixed | Snippets match throttle.rs; corrected which Throttle methods are public, replaced a task reference with Session::unlock, unverified test count dropped, links added. |
+| 15-generics-and-trait-objects | fixed | Removed the "next task" note, linked lesson 16, previous and the index, unverified test count dropped. |

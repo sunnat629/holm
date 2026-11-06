@@ -4,7 +4,7 @@
 
 `Session` is the heart of Holm: it creates, unlocks, saves, backs up and locks a vault, and changes its master password. It owns a store (where the file lives), a clock, the unlock throttle and, while unlocked, the keys and the decrypted data. `store.rs` defines the `VaultStore` trait that every store must follow, and `error.rs` gathers every failure into one `CoreError` enum. The golden vault in `tests/vectors/` is now a real schema-1 vault that a test rebuilds byte for byte. The code is in `crates/holm-core/src/session.rs`, `store.rs` and `error.rs`.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Generic over the store, a trait object for the clock
 
@@ -100,7 +100,7 @@ A password manager that loses a write must never end up with memory and disk on 
 
 1. Run the session tests.
    - Run: `cargo test -p holm-core --locked --lib session::tests`
-   - Check: the last line says `28 passed; 0 failed`.
+   - Check: the `test result:` line says `ok.` with `0 failed`.
    - Undo: nothing to undo, it only reads.
 2. Swap the keys before the write in `change_password` and watch the test catch it.
    - Run: `perl -0pi.bak -e 's/(        self\.store\.replace\(&file\)\?;\n)(        open\.keys = new_keys;\n)/$2$1/' crates/holm-core/src/session.rs && cargo test -p holm-core --locked --lib change_password_write_failure`
@@ -117,4 +117,6 @@ A password manager that loses a write must never end up with memory and disk on 
 - [The Rust book, ch18-02: Trait objects](https://doc.rust-lang.org/book/ch18-02-trait-objects.html), `dyn Trait` and dynamic dispatch.
 - [std::option::Option::take](https://doc.rust-lang.org/std/option/enum.Option.html#method.take)
 
-Next lesson: none yet. Lesson 16 arrives with the next task.
+Previous lesson: [Lesson 14: Time and saturating maths](14-time-and-saturating-maths.md).
+Next lesson: [Lesson 16: Borrowing in practice](16-borrowing-in-practice.md).
+All lessons: [the index](README.md).
