@@ -14,20 +14,20 @@ Holm already has accepts a flat object whose values are strings or null.
 
 The CSV header keeps its first 14 names, then adds four cells for each of the
 10 slots: `field1_label`, `field1_kind`, `field1_value`, `field1_expiry`,
-through `field10_expiry`. That is 54 columns. `MAX_IMPORT_COLUMNS` stays 64.
+through `field10_expiry`. That is 54 columns, which fits under
+`MAX_IMPORT_COLUMNS`.
 
 `Session::export_json` writes one JSON array of those same keys, in that order,
 after the same password check as CSV. Every value is a JSON string. An empty
-cell is `""`. A null on the way in is an empty cell.
+cell is `""`.
 
-Kind cells are `text`, `secret`, `multiline` or `date`. Dates are `YYYY-MM-DD`.
+Kind cells are `text`, `secret`, `multiline`, `date` or `codes`. Dates are
+`YYYY-MM-DD`.
 An empty slot is absent. Slots are packed from 1, so a later slot filled while
 an earlier one is empty is `FieldGap` and the row is skipped. A bad kind is
 `BadFieldKind`. A bad date is `BadDate`. None of those errors carries the cell.
 
-A secret value is moved out of its cell. It is not trimmed. The dedup key stays
-the display fields. `same_item` still compares custom-field bytes in place, so
-two rows that differ only in a custom secret are both kept.
+A secret value is moved out of its cell. It is not trimmed.
 
 Browser files do not gain these columns.
 
@@ -35,21 +35,20 @@ Browser files do not gain these columns.
 
 ### Measure, then fill, when the cell holds a newline
 
+Every cell is quoted. A newline counts as one byte, the quotes around the cell
+add two, and each `"` inside the cell becomes `""`, which adds one more. The
+export adds those lengths up first:
+
 ```rust
-pub(crate) fn quoted_len(cell: &str) -> usize {
-    let quotes = cell.bytes().filter(|&b| b == b'"').count();
-    cell.len().saturating_add(quotes).saturating_add(2)
+let mut total = row_len(&EXPORT_COLUMNS);
+for item in items {
+    total = total.saturating_add(with_cells(item, categories, row_len));
 }
-```
 
-`cell.len()` already counts a newline as one byte. The `+ 2` is the pair of
-quotes around the cell. Each `"` inside the cell becomes `""`, so it adds one
-extra byte. The export adds those lengths up, allocates one `String` of that
-size, and fills it.
-
-```rust
 let mut out = Zeroizing::new(String::with_capacity(total));
 ```
+
+Then it fills that one `String` and checks that the length came out the same.
 
 The buffer never grows, so the secret is not copied into a discarded
 allocation. In Kotlin you'd size a `StringBuilder` before you append, instead
@@ -93,7 +92,7 @@ counter. In Kotlin you'd write a list of column strings. A `JsonObject` nested
 in the cell would need its own parser beside the one that already reads flat
 objects.
 
-## Exercises
+## Try it
 
 1. In `export_header_has_54_columns`, assert that `EXPORT_COLUMNS[18]` is
    `field2_label`.
@@ -106,6 +105,10 @@ objects.
    `cargo test -p holm-core --locked --lib import::tests::field_gap_is_a_row_error`
 
 ## Read next
+
+- Previous: [Lesson 53](53-labels-dates-and-secrets.md)
+- Next: [Lesson 55](55-secrets-at-the-prompt.md)
+- [The index](README.md)
 
 - [Export](../../crates/holm-core/src/export.rs)
 - [JSON reader and writer](../../crates/holm-core/src/plain/json.rs)

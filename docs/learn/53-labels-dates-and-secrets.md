@@ -15,8 +15,9 @@ it was. Presets supply labels and kinds only.
 
 `expiry_status`, `soonest_expiry` and `is_expiring` take a `CalendarDate` for
 today. They do not read a clock. `Session::search` asks the session clock once,
-keeps an item when `expiring_only` is set and the soonest reminder is inside 30
-days (including dates already past), and matches custom labels. It does not match
+keeps an item when `expiring_only` is set and the soonest reminder is inside the
+`EXPIRING_WITHIN_DAYS` window (including dates already past), and matches custom
+labels. It does not match
 secret values, text values or dates.
 
 `Session::set_custom_fields` replaces the list and bumps `updated`. If the vault
@@ -56,35 +57,39 @@ if item
 `SecretText` never enters `fold`. In Kotlin you'd read `field.label` and leave
 `field.secret` untouched, instead of `secret.use { it.contains(needle) }`.
 
-### `mem::replace` keeps the old list for undo
+### `mem::replace` moves the old value out
+
+`std::mem::replace` puts a new value behind a `&mut` and hands back the old one.
+The command line uses it to take the field edit out of its arguments:
 
 ```rust
-let old_fields = std::mem::replace(&mut data.items[pos].fields, fields);
-data.items[pos].updated = now;
-self.commit_or_undo(move |d| {
-    d.items[pos].fields = old_fields;
-    d.items[pos].updated = old_updated;
-})
+match mem::replace(&mut args.fields, FieldEdit::None) {
 ```
 
-The new list moves in. The old list moves into the undo closure. There is no
-`Clone` on `CustomField`, so the secret is not copied. In Kotlin you'd keep the
-previous list and assign it back in a `finally` only for the failure you can
-roll back. Here that failure is "the vault has no room".
+Nothing is copied: the old value moves out and a placeholder moves in.
+`Session::set_custom_fields` uses the same kind of move. The new list goes into
+the item and the old list is kept, so it can be put back if the save fails.
+There is no `Clone` on `CustomField`, so no secret is copied. In Kotlin you'd
+keep the previous list and assign it back only for the failure you can roll
+back.
 
-## Exercises
+## Try it
 
 1. Add a date 400 days after `2026-11-05` to `expiry_status_days` and expect
    `InDays(400)`.
-   `cargo test -p holm-core --locked --lib fields::expiry_status_days`
+   `cargo test -p holm-core --locked --lib fields::tests::expiry_status_days`
 2. In `search_skips_text_value`, store a date field whose value is `2026-11-05`
    and show that searching that text misses while the label hits.
-   `cargo test -p holm-core --locked --lib search::search_skips_text_value`
+   `cargo test -p holm-core --locked --lib search::tests::search_skips_text_value`
 3. Extend `insert_remove_move_roundtrip` so the last field moves to index 0, and
    check the new order.
-   `cargo test -p holm-core --locked --lib fields::insert_remove_move_roundtrip`
+   `cargo test -p holm-core --locked --lib fields::tests::insert_remove_move_roundtrip`
 
 ## Read next
+
+- Previous: [Lesson 52](52-a-second-schema.md)
+- Next: [Lesson 54](54-four-cells-a-field.md)
+- [The index](README.md)
 
 - [Custom fields and calendar dates](../../crates/holm-core/src/fields.rs)
 - [Search](../../crates/holm-core/src/search.rs)

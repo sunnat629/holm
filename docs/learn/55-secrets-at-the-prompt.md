@@ -13,24 +13,29 @@ a text value that did get parsed is not written out as characters.
 
 `holm get` prints each custom field after the built-in lines. A text value is
 shown. A date is `YYYY-MM-DD`. A secret or a multiline value is `(hidden)`.
+A recovery codes field is `(hidden)` plus a count, such as `(2 of 3 left)`.
 That path does not call `expose`.
 
 `holm get ID --copy field=N` loads the value into a `Zeroizing<String>` and
 passes it to `copy_and_wait`. The clipboard gets it, Holm waits, and
 `PendingClear` clears it if the clipboard still holds Holm's value. Stdout
 never receives it. An empty field is an error. A number past the item's fields
-is an error. A custom field does not ask for the master password again. A
+is an error. A recovery codes field is refused: one code is copied from the
+Holm window. A custom field does not ask for the master password again. A
 recovery phrase still does.
 
 `holm add --preset NAME` stores that preset's labels and kinds with empty
 values. A date row is left out, so Holm does not invent a day. When at least
-one field is stored, the line before `Added {id}.` says how many. Add does not
-prompt for each field.
+one field is stored with an empty value, the line before `Added {id}.` says
+how many. Add does not prompt for each field. The one exception is a recovery
+codes row: a codes list cannot be empty, so it is asked for at a hidden prompt,
+and typing nothing skips the row.
 
 `holm edit` changes the list with `--field-add`, `--field-remove`,
 `--field-move` and `--to`, or `--field-set`. Numbers on the command line start
-at 1. A secret or a multiline value is read once with `term.secret` and the
-prompt `Field value: `. `--value` on those kinds is a usage error. Text and
+at 1. A secret, a multiline value or a codes list is read once with
+`term.secret` and the prompt `Field value: `. `--value` on those kinds is a
+usage error. Text and
 date need `--value`, because that kind is shown.
 
 For `--field-add`, the error returns before `EditArgs` is built. For
@@ -38,8 +43,9 @@ For `--field-add`, the error returns before `EditArgs` is built. For
 buffer until the vault is open. A secret kind drops that buffer and returns
 the same error. `Debug` of `EditArgs` and `AddArgs` prints lengths and kinds.
 
-`holm list --expiring` keeps an item whose reminder is inside 30 days,
-including dates already past. `holm list --search` matches a custom label and
+`holm list --expiring` keeps an item whose reminder is inside the
+`EXPIRING_WITHIN_DAYS` window, including dates already past.
+`holm list --search` matches a custom label and
 does not match a secret. `holm export --format json` writes a JSON array.
 `--format` together with `--backup` is refused. With no `--format`, export
 stays CSV.
@@ -104,7 +110,7 @@ let pending = PendingClear::new(value, secs, clock);
 In Kotlin you'd keep the copied text in a `char[]` and fill it with zeros
 after the clipboard is done, instead of a `String` the runtime keeps.
 
-## Exercises
+## Try it
 
 1. In `secret_value_rejected_on_command_line`, add a fourth command where
    `--value EXAMPLE-LATE` comes before `--kind MULTILINE`. Expect the same
@@ -120,6 +126,10 @@ after the clipboard is done, instead of a `String` the runtime keeps.
    `cargo test -p holm-cli --locked --test write_commands args_debug_has_no_secret`
 
 ## Read next
+
+- Previous: [Lesson 54](54-four-cells-a-field.md)
+- Next: [Lesson 56](56-paint-the-secret.md)
+- [The index](README.md)
 
 - [Command arguments](../../crates/holm-cli/src/args.rs)
 - [Showing an item](../../crates/holm-cli/src/commands/read.rs)

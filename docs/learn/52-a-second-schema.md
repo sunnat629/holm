@@ -9,8 +9,9 @@ default cannot tell it where the old item ended.
 ## What we built
 
 The two-byte little-endian body version selects a separate wire type. Schema 1
-keeps its original structs and gives each decoded item an empty field list. Every
-save writes schema 2, with custom fields last on each item. The sealed schema-1
+keeps its original structs and gives each decoded item an empty field list. Schema 2
+puts custom fields last on each item. Today every save writes schema 3, which has the
+same layout plus recovery codes ([Lesson 61](61-recovery-codes-and-schema-3.md)). The sealed schema-1
 golden stays unchanged. The header and encryption format stay at version 1.
 
 Custom values keep secrets in wiping wrappers. The decoder bounds lists and
@@ -40,10 +41,12 @@ pub enum FieldValue {
     Secret(SecretText),
     MultilineSecret(SecretText),
     Date(CalendarDate),
+    RecoveryCodes(Vec<RecoveryCode>),
 }
 ```
 
-There is no separate kind flag that could label a secret as plain text.
+`RecoveryCodes` came later, in schema 3. There is no separate kind flag that could
+label a secret as plain text.
 In Kotlin you'd write a `sealed interface FieldValue` with one class per kind.
 Rust also prevents accidental copies: these values have no `Clone` implementation.
 
@@ -57,7 +60,7 @@ One second before the Unix epoch belongs to the previous day. Truncating divisio
 would put it on day zero. In Kotlin you'd write `Math.floorDiv(secs, 86_400L)`.
 Holm checks the supported year range before converting back to a calendar date.
 
-## Exercises
+## Try it
 
 1. Add a schema-1 migration case with a trashed login and confirm its timestamps
    survive. `cargo test -p holm-core --locked --lib v1_then_encode_is_v2`
@@ -67,6 +70,10 @@ Holm checks the supported year range before converting back to a calendar date.
    `cargo test -p holm-core --locked --lib unix_epoch_is_1970_01_01`
 
 ## Read next
+
+- Previous: [Lesson 51](51-custom-fields.md)
+- Next: [Lesson 53](53-labels-dates-and-secrets.md)
+- [The index](README.md)
 
 - [The body codec](../../crates/holm-core/src/body.rs)
 - [Wire types and bounds](../../crates/holm-core/src/wire.rs)

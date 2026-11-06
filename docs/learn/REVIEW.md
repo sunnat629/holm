@@ -8,3 +8,7 @@
 | 57-a-badge-from-a-date | fixed | build_rows signature updated with now and offset, duplicate exercise replaced, Exercises renamed Try it, plan reference removed, links added. |
 | 58-the-chapter-and-the-bytes | fixed | Updated to schema 3: match arm, golden byte 3, chapter name, save version and fuzz re-encode note; exercise 3 now uses version 4; plan reference removed, Try it and links added. |
 | 59-scroll-cards-and-clocks | fixed | Snippets and exercise answer match the code; previous, next and index links added. |
+| 52-a-second-schema | fixed | Saves now write schema 3, FieldValue snippet gains RecoveryCodes, Try it heading, previous, next and index links added. |
+| 53-labels-dates-and-secrets | fixed | Window named EXPIRING_WITHIN_DAYS, test filters include tests::, unverifiable undo snippet replaced with a real mem::replace, links added. |
+| 54-four-cells-a-field | fixed | Added the codes kind, measure snippet taken from export.rs, removed claims about dedup, null cells and the column limit, links added. |
+| 55-secrets-at-the-prompt | fixed | Snippets match; added recovery codes behaviour in get, copy, preset and edit, window wording, Try it heading and links. |
