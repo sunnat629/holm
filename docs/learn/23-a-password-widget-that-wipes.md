@@ -14,7 +14,7 @@ The master password is the one secret that unlocks everything, and the moment it
 
 `egui::TextEdit` edits a `String` you own (or any `TextBuffer`). On every edit it may grow that string, which means a new allocation and a copy, and the old block is freed without being wiped. It also keeps an undo history of earlier states, lays the text out into a galley that egui caches, sets the AccessKit value to the text, and supports select, copy and cut. Each of those is a copy we cannot wipe.
 
-So the rule (Global Constraints) is: secrets go through `secret_field` only. `TextEdit` is allowed for title, username and URL, which are not secrets.
+So Holm's rule is: secrets go through `secret_field` only. `TextEdit` is allowed for title, username and URL, which are not secrets.
 
 In Kotlin you'd write a Compose `TextField` with `visualTransformation = PasswordVisualTransformation()`, which hides the characters on screen but still keeps the text in an immutable `String` that lives until the garbage collector gets to it.
 
@@ -22,11 +22,15 @@ In Kotlin you'd write a Compose `TextField` with `visualTransformation = Passwor
 
 ```rust
 pub fn with_capacity(cap: usize) -> SecretInput {
-    SecretInput { bytes: Vec::with_capacity(cap), cap }
+    SecretInput {
+        bytes: Vec::with_capacity(cap),
+        cap,
+        multiline: false,
+    }
 }
 ```
 
-`Vec::with_capacity` allocates once. As long as the length stays at or below the capacity, `extend_from_slice` writes in place and the pointer never moves. `push_str` checks each character against `cap` before writing it and stops at the first one that would not fit, so the vector never asks for more memory. The `never_reallocates` test fills a buffer to its cap and checks that the pointer and the capacity are unchanged.
+`Vec::with_capacity` allocates once. As long as the length stays at or below the capacity, `extend_from_slice` writes in place and the pointer never moves. `push_str` skips characters the buffer does not keep (a single-line buffer drops every control character, newlines included). It checks each remaining character against `cap` before writing it and stops at the first one that would not fit, so the vector never asks for more memory. The `never_reallocates` test fills a buffer to its cap and checks that the pointer and the capacity are unchanged.
 
 Removing bytes is where most "wiping" code goes wrong. `Vec::truncate` only changes the length; the old bytes stay in the allocation. So `pop_char` zeroes the bytes first, then truncates:
 
@@ -78,7 +82,7 @@ ui.input(|input| {
 
 (Simplified; the real code also records `changed`.) The events are borrowed, never cloned, so this widget makes no extra copy of what was typed. `Event::Copy`, `Event::Cut`, `Event::Paste` and Cmd+A fall into `_ => {}`: there is nothing to select, and nothing goes to the clipboard.
 
-Cmd+V arrives as a key event only because Task 1 set `clipboard_shortcuts: false` in `NativeOptions`. With the default, `egui-winit` turns Cmd+V into `Event::Paste(String)` by reading the system clipboard itself. Here the field only reports `paste_requested`, and Task 5 decides what to paste.
+Cmd+V arrives as a key event only because the app sets `clipboard_shortcuts: false` in `NativeOptions`. With the default, `egui-winit` turns Cmd+V into `Event::Paste(String)` by reading the system clipboard itself. Here the field only reports `paste_requested`, and the app's paste code (see [Lesson 26](26-the-clipboard-is-shared.md)) decides what to paste.
 
 `egui-winit` still builds a `String` for each `Event::Text` it delivers, and egui drops those strings without wiping them. That copy is outside our control; we keep it to one short string per key press and make no more.
 
@@ -103,7 +107,7 @@ ui.ctx().accesskit_node_builder(id, |node| {
 });
 ```
 
-`label` is `&'static str`, so it can only be fixed text from our code, never data. egui 0.37 re-exports `accesskit::Role` as `egui::Role`, and `WidgetType` is now only a deprecated alias for it, so the code names the role directly. The focus calls (`Response::request_focus`, `Response::has_focus`) kept their names. `PasswordInput` tells screen readers such as VoiceOver that this is a secure field.
+`label` is `&'static str`, so it can only be fixed text from our code, never data. The code names the AccessKit role directly. `PasswordInput` tells screen readers such as VoiceOver that this is a secure field.
 
 In Kotlin you'd write `Modifier.semantics { password(); contentDescription = "Master password" }`.
 
@@ -117,13 +121,13 @@ assert_eq!(node.accesskit_node().role(), Role::PasswordInput);
 assert_eq!(node.value(), None);
 ```
 
-`build_ui_state` gives the closure a `&mut Form` that holds two `SecretInput`s and counts submits and paste requests, so a test can type, step a frame, and read the buffer. `copy_cut_and_selection_ignored` sends `Event::Copy`, `Event::Cut` and Cmd+A, then checks that the platform output has no `OutputCommand::CopyText`. Every harness installs Holm's fonts first, because `default_fonts` is off and kittest panics on a missing glyph.
+`build_ui_state` gives the closure a `&mut Form` that holds two `SecretInput`s and counts submits and paste requests, so a test can type, step a frame, and read the buffer. `copy_cut_and_selection_ignored` sends `Event::Copy`, `Event::Cut` and Cmd+A, then checks that the platform output has no `OutputCommand::CopyText`. Every harness installs Holm's fonts first, because egui's `default_fonts` feature is off.
 
 The strength meter is split the same way: `meter_segments` and `meter_word` are plain functions over a `StrengthVerdict` with a table test, and only `strength_meter` touches egui. The meter never calls a password "Strong" unless core's `acceptable` is true, and the word always comes with the coloured segments, so colour is never the only signal.
 
 In Kotlin you'd write a Compose UI test with `onNodeWithContentDescription("Master password").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))`.
 
-## Exercises
+## Try it
 
 1. In `with_capacity`, replace `Vec::with_capacity(cap)` with `Vec::new()` and run the test. Which assertion fails first, and if the buffer were allowed to grow, what would each reallocation leave behind in the old block? Undo the change.
    Check: `cargo test -p holm-gui --locked never_reallocates`
@@ -134,6 +138,9 @@ In Kotlin you'd write a Compose UI test with `onNodeWithContentDescription("Mast
 
 ## Read next
 
+- Previous: lesson 22, listed in [the index](README.md)
+- Next: [Lesson 24](24-state-machines-and-worker-threads.md)
+- [The index](README.md)
 - [`std::mem::replace`](https://doc.rust-lang.org/std/mem/fn.replace.html)
 - [The `zeroize` crate](https://docs.rs/zeroize/1.9.1/zeroize/)
 - [AccessKit `Role`](https://docs.rs/accesskit/0.25.1/accesskit/enum.Role.html)

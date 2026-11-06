@@ -70,13 +70,13 @@ In Kotlin you'd return `Boolean` and rely on code review. `#[must_use]` lets the
 
 ## Why "concealed" is best effort
 
-`exclude_from_history` adds the pasteboard type `org.nspasteboard.ConcealedType`. This is a convention from nspasteboard.org: clipboard managers that honour it don't save or show the entry. It is a request, not a lock. Any app can still read the password while it is on the pasteboard, and a manager that ignores the convention still saves it. That is why the Copy message tells the user that Holm doesn't clear the clipboard yet.
+`exclude_from_history` adds the pasteboard type `org.nspasteboard.ConcealedType`. This is a convention from nspasteboard.org: clipboard managers that honour it don't save or show the entry. It is a request, not a lock. Any app can still read the password while it is on the pasteboard, and a manager that ignores the convention still saves it.
 
-## What auto-clear will add (Phase 5)
+## Clearing it later
 
-Phase 5 will clear the clipboard 30 seconds after a copy, and again when the vault locks, but only if the clipboard still holds what Holm put there. That way it never wipes something the user copied since. This shortens the time the password is exposed, but it doesn't close the gap: until the clear, any app can still read it.
+In this lesson Holm only copies; it does not clear the clipboard afterwards. Clearing came later, in [Lesson 38](38-one-clear-for-every-client.md): Holm clears the clipboard after a delay, but only if it still holds what Holm put there, so it never wipes something the user copied since. This shortens the time the password is exposed, but it doesn't close the gap: until the clear, any app can still read it.
 
-## Exercises
+## Try it
 
 1. Run the test that checks the real pasteboard by hand. It replaces your current clipboard with a fake value. Check: `cargo test -p holm-gui --locked --test clipboard -- --ignored system_clipboard_marks_concealed`.
 2. In `tests/clipboard.rs`, change `copy_failure_shows_message` so it expects `messages::COPIED`. See it fail, then undo. Check: `cargo test -p holm-gui --locked --test clipboard copy_failure`.
@@ -84,6 +84,9 @@ Phase 5 will clear the clipboard 30 seconds after a copy, and again when the vau
 
 ## Read next
 
+- Previous: [Lesson 25](25-borrowing-across-a-frame.md)
+- Next: lesson 27, listed in [the index](README.md)
+- [The index](README.md)
 - [`arboard::SetExtApple`](https://docs.rs/arboard/3.7.0/arboard/trait.SetExtApple.html)
 - [`std::borrow::Cow`](https://doc.rust-lang.org/std/borrow/enum.Cow.html)
 - [nspasteboard.org: pasteboard type identifiers](http://nspasteboard.org/)
