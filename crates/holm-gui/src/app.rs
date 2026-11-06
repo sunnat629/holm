@@ -550,6 +550,11 @@ impl HolmApp {
             // The UTC day for the list badges, from the same wall time the session's
             // clock gives `search`, so the badge and the Expiring chip agree.
             view.set_today(from_unix_secs(self.ui_clock.now_unix().0));
+            // Wall time and the Mac's zone offset, for the cards' updated time only.
+            view.set_clock(
+                self.ui_clock.now_unix(),
+                holm_platform::window::utc_offset_secs(),
+            );
             let action = view.show(ui, session, now, idle_left, &throttle, &mut io);
             self.focus = io.focus;
             if let Some(copied) = io.copied.take() {

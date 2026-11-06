@@ -63,6 +63,7 @@ security, three exercises, and what to read next in
 | 56 | [Paint the secret](56-paint-the-secret.md): a revealed custom secret is painted, never put in a widget AccessKit reads, a multiline buffer never grows, and `mem::take` keeps one owner. Kotlin: draw on a `Canvas`, not a `Text` TalkBack reads. |
 | 57 | [A badge from a date](57-a-badge-from-a-date.md): a `Copy` enum computed once when the rows are built, so a frame does not walk the vault. Also `From` between layers, today passed in from the app's clock, and literal match arms before the general one. Kotlin: mapping a list in the `ViewModel`, not in composition. |
 | 58 | [The chapter and the bytes](58-the-chapter-and-the-bytes.md): the format page and `default_body_golden` quote the same 51 bytes, and the sealed golden vault stays schema 1. Kotlin: a format note checked against a fixture, not against memory. |
+| 59 | [Scroll, cards and clocks](59-scroll-cards-and-clocks.md): `Cow` to borrow unless a hyphen is mapped, a pure `updated_label` with the UTC offset passed in, `saturating_add` and `rem_euclid`, and a named `ScrollArea` whose state lock forgets. Kotlin: pass a `Clock` and `ZoneOffset` in, and clear `rememberSaveable` state on purpose. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

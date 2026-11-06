@@ -241,7 +241,7 @@ pub(crate) fn show_item(
     throttle: &ThrottleStatus,
     io: &mut FieldIo<'_>,
 ) -> ItemAction {
-    ui.heading(item.title());
+    ui.heading(crate::fonts::display(item.title()).as_ref());
     ui.add_space(8.0);
     let mut action = ItemAction::None;
     match item.data() {

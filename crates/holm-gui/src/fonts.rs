@@ -5,6 +5,7 @@
 //! OFL-1.1 (see `LICENSES/OFL-1.1.txt` and `NOTICE`; `scripts/ci-local.sh` checks
 //! their SHA-256). Nothing is read from the system's font folders.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
@@ -23,6 +24,19 @@ static MONO_FONT: &[u8] = include_bytes!("../assets/fonts/AtkinsonHyperlegibleMo
 /// [`FontFamily::Proportional`] and the mono font as [`FontFamily::Monospace`].
 pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(definitions());
+}
+
+/// `text` with U+2010 (hyphen) and U+2011 (non-breaking hyphen) shown as `-`, because
+/// the bundled text font has no glyph for them. For display only: stored data is
+/// never changed. Borrows when there is nothing to map.
+#[must_use]
+pub fn display(text: &str) -> Cow<'_, str> {
+    const MAPPED: [char; 2] = ['\u{2010}', '\u{2011}'];
+    if text.contains(MAPPED) {
+        Cow::Owned(text.replace(MAPPED, "-"))
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 /// An empty [`FontDefinitions`] plus the two built-in fonts, nothing else.
@@ -72,6 +86,29 @@ mod tests {
     fn fonts_are_truetype_files() {
         assert_eq!(TEXT_FONT[..4], TRUETYPE_MAGIC);
         assert_eq!(MONO_FONT[..4], TRUETYPE_MAGIC);
+    }
+
+    #[test]
+    fn display_borrows_plain_text() {
+        assert!(matches!(display("Cafe Wi-Fi"), Cow::Borrowed("Cafe Wi-Fi")));
+    }
+
+    #[test]
+    fn display_maps_both_hyphens() {
+        assert_eq!(display("Caf\u{e9} Wi\u{2011}Fi"), "Caf\u{e9} Wi-Fi");
+        assert_eq!(display("a\u{2010}b\u{2011}c"), "a-b-c");
+    }
+
+    /// kittest panics on a missing glyph, so this proves the mapped title draws.
+    #[test]
+    fn the_mapped_title_draws() {
+        let mut harness = Harness::builder()
+            .with_context_setup(install_fonts)
+            .build_ui(|ui| {
+                ui.label(display("Caf\u{e9} Wi\u{2011}Fi").as_ref());
+            });
+        harness.run();
+        let _ = harness.get_by_label("Caf\u{e9} Wi-Fi");
     }
 
     /// kittest panics on a missing glyph, so this proves both fonts cover printable

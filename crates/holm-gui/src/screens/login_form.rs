@@ -445,14 +445,36 @@ pub(crate) fn line_field(
     label: &'static str,
     buf: &mut LineBuf,
 ) -> bool {
+    line_field_inner(ui, io, label, None, buf)
+}
+
+/// Like [`line_field`], with `hint` shown while the field is empty.
+pub(crate) fn line_field_hint(
+    ui: &mut egui::Ui,
+    io: &mut FieldIo<'_>,
+    label: &'static str,
+    hint: &'static str,
+    buf: &mut LineBuf,
+) -> bool {
+    line_field_inner(ui, io, label, Some(hint), buf)
+}
+
+/// Shared body of [`line_field`] and [`line_field_hint`].
+fn line_field_inner(
+    ui: &mut egui::Ui,
+    io: &mut FieldIo<'_>,
+    label: &'static str,
+    hint: Option<&'static str>,
+    buf: &mut LineBuf,
+) -> bool {
     let label_id = ui.label(label).id;
-    let response = ui
-        .add(
-            egui::TextEdit::singleline(buf)
-                .char_limit(MAX_LINE_BYTES / 4)
-                .desired_width(320.0),
-        )
-        .labelled_by(label_id);
+    let mut edit = egui::TextEdit::singleline(buf)
+        .char_limit(MAX_LINE_BYTES / 4)
+        .desired_width(320.0);
+    if let Some(hint) = hint {
+        edit = edit.hint_text(hint);
+    }
+    let response = ui.add(edit).labelled_by(label_id);
     io.note_plain(response.has_focus());
     response.changed()
 }

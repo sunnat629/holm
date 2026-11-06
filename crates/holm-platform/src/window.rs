@@ -31,7 +31,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSNotificationName,
-    NSOperationQueue, NSString,
+    NSOperationQueue, NSString, NSTimeZone,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -39,6 +39,21 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 /// Lock Screen menu item, or the screen saver asking for the password). AppKit has no
 /// constant for it.
 const SCREEN_LOCKED: &str = "com.apple.screenIsLocked";
+
+/// The largest UTC offset we report, in seconds: 18 hours. Real zones stay within
+/// +-14 hours; anything beyond this is treated as bad data and clamped.
+const MAX_UTC_OFFSET_SECS: i32 = 64_800;
+
+/// Seconds east of UTC for the Mac's current time zone, read fresh each call. For display only (the list's "updated" time); stored data stays UTC.
+///
+/// Clamped to +-18 hours. Falls back to 0 (UTC) if the value does not fit an `i32`.
+#[must_use]
+pub fn utc_offset_secs() -> i32 {
+    let seconds = NSTimeZone::localTimeZone().secondsFromGMT();
+    i32::try_from(seconds)
+        .unwrap_or(0)
+        .clamp(-MAX_UTC_OFFSET_SECS, MAX_UTC_OFFSET_SECS)
+}
 
 /// Whether `window` is minimised to the Dock (`NSWindow.isMiniaturized`).
 ///
@@ -155,7 +170,7 @@ impl Drop for LockEvents {
 mod tests {
     use raw_window_handle::{HandleError, HasWindowHandle, WindowHandle};
 
-    use super::{LockEvents, is_minimised};
+    use super::{LockEvents, MAX_UTC_OFFSET_SECS, is_minimised, utc_offset_secs};
 
     /// A window source that must never be asked for its handle.
     struct MustNotRead;
@@ -188,6 +203,16 @@ mod tests {
         // Off the main thread too (a test thread), so this returns before the handle;
         // either way the answer is "unknown", never "not minimised".
         assert_eq!(is_minimised(&NoHandle), None);
+    }
+
+    #[test]
+    fn utc_offset_is_within_range() {
+        // Range only: some zones have offsets that are not a multiple of 60 seconds.
+        let offset = utc_offset_secs();
+        assert!(
+            (-MAX_UTC_OFFSET_SECS..=MAX_UTC_OFFSET_SECS).contains(&offset),
+            "offset {offset} is out of range"
+        );
     }
 
     #[test]

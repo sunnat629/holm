@@ -5,8 +5,8 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use holm_core::category::Category;
-use holm_core::fields::{CalendarDate, ExpiryStatus, expiry_status};
-use holm_core::item::{ItemId, ItemType};
+use holm_core::fields::{CalendarDate, ExpiryStatus, expiry_status, format_date, from_unix_secs};
+use holm_core::item::{ItemId, ItemType, Timestamp};
 use holm_core::search::ItemSummary;
 use holm_core::text::Text;
 
@@ -16,6 +16,10 @@ pub const CRYPTO_SUBTITLE: &str = "Crypto address";
 pub const PHRASE_SUBTITLE: &str = "Recovery phrase";
 /// The subtitle of every secure note.
 pub const NOTE_SUBTITLE: &str = "Secure note";
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// The reminder badge of a row, copied from the core's [`ExpiryStatus`] so a row does
 /// not borrow the session. It carries a day count only, never a field value or label.
@@ -53,6 +57,8 @@ pub struct ItemRow {
     pub category_slot: Option<usize>,
     /// The soonest custom-field reminder as a badge. `None` when no field has one.
     pub expiry_badge: Option<ExpiryBadge>,
+    /// When the item last changed, for the card's right edge. Never a secret.
+    pub updated: String,
 }
 
 impl fmt::Debug for ItemRow {
@@ -68,6 +74,7 @@ impl fmt::Debug for ItemRow {
             )
             .field("category_slot", &self.category_slot)
             .field("expiry_badge", &self.expiry_badge)
+            .field("updated", &self.updated)
             .finish()
     }
 }
@@ -77,11 +84,16 @@ impl fmt::Debug for ItemRow {
 ///
 /// `today` is the UTC calendar day the expiry badges are counted from. The badge comes
 /// from [`ItemSummary::soonest_expiry`] only, so no field value is read here.
+///
+/// `now` and `utc_offset_secs` give the local time the "updated" labels are worded
+/// against; see [`updated_label`].
 #[must_use]
 pub fn build_rows(
     summaries: &[ItemSummary<'_>],
     categories: &[Category],
     today: CalendarDate,
+    now: Timestamp,
+    utc_offset_secs: i32,
 ) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = summaries
         .iter()
@@ -101,6 +113,7 @@ pub fn build_rows(
                 expiry_badge: s
                     .soonest_expiry
                     .map(|expiry| ExpiryBadge::from(expiry_status(expiry, today))),
+                updated: updated_label(s.updated, now, utc_offset_secs),
             }
         })
         .collect();
@@ -122,6 +135,47 @@ fn subtitle<'a>(s: &ItemSummary<'a>) -> &'a str {
             .unwrap_or(CRYPTO_SUBTITLE),
         ItemType::RecoveryPhrase => PHRASE_SUBTITLE,
         ItemType::SecureNote => NOTE_SUBTITLE,
+    }
+}
+
+/// Year, month (1 to 12) and day of a checked date, read from its `YYYY-MM-DD` form.
+fn date_parts(date: CalendarDate) -> (u16, u16, u16) {
+    let text = format_date(date);
+    let digits = |from: usize, to: usize| {
+        text[from..to]
+            .iter()
+            .fold(0_u16, |acc, c| acc * 10 + u16::from(c.saturating_sub(b'0')))
+    };
+    (digits(0, 4), digits(5, 7), digits(8, 10))
+}
+
+/// The "updated" text of a card, in the local time given by `utc_offset_secs`.
+///
+/// The same local day as `now` gives "HH:MM". The same local year gives "D Mon". Any
+/// other day gives "D Mon YYYY". A time after `now` is worded by the same rules from
+/// its own date. A time outside years 1 through 9999 gives an empty string.
+#[must_use]
+pub fn updated_label(updated: Timestamp, now: Timestamp, utc_offset_secs: i32) -> String {
+    let offset = i64::from(utc_offset_secs);
+    let local = updated.0.saturating_add(offset);
+    let local_now = now.0.saturating_add(offset);
+    let Some(date) = from_unix_secs(local) else {
+        return String::new();
+    };
+    let today = from_unix_secs(local_now);
+    if today == Some(date) {
+        let secs = local.rem_euclid(86_400);
+        return format!("{:02}:{:02}", secs / 3_600, secs % 3_600 / 60);
+    }
+    let (year, month, day) = date_parts(date);
+    let name = MONTHS
+        .get(usize::from(month.saturating_sub(1)))
+        .copied()
+        .unwrap_or_default();
+    if today.map(date_parts).is_some_and(|(y, _, _)| y == year) {
+        format!("{day} {name}")
+    } else {
+        format!("{day} {name} {year}")
     }
 }
 
@@ -166,6 +220,15 @@ mod tests {
         parse_date("2026-11-05").unwrap()
     }
 
+    fn now() -> Timestamp {
+        Timestamp(i64::from(epoch_day(today())) * 86_400 + 43_200)
+    }
+
+    fn ts(date: &str, hour: i64, minute: i64) -> Timestamp {
+        let day = i64::from(epoch_day(parse_date(date).unwrap()));
+        Timestamp(day * 86_400 + hour * 3_600 + minute * 60)
+    }
+
     fn reminder(days: i64) -> CustomField {
         let day = from_unix_secs((i64::from(epoch_day(today())) + days) * 86_400).unwrap();
         try_field(
@@ -190,6 +253,8 @@ mod tests {
             &session.search(&Query::default()).unwrap(),
             session.categories().unwrap(),
             today(),
+            now(),
+            0,
         )
     }
 
@@ -210,6 +275,8 @@ mod tests {
             &session.search(&Query::default()).unwrap(),
             session.categories().unwrap(),
             today(),
+            now(),
+            0,
         );
         assert_eq!(
             rows[0].category.as_ref().map(Text::as_str),
@@ -325,6 +392,50 @@ mod tests {
         let shown = format!("{:?}", rows[0]);
         assert!(!shown.contains("EXAMPLE-field-secret"), "{shown}");
         assert!(!shown.contains("remind"), "{shown}");
+    }
+
+    #[test]
+    fn updated_today_is_a_local_time() {
+        let now = ts("2026-11-05", 13, 30);
+        assert_eq!(updated_label(ts("2026-11-05", 13, 5), now, 3_600), "14:05");
+        assert_eq!(updated_label(ts("2026-11-05", 0, 0), now, 0), "00:00");
+    }
+
+    #[test]
+    fn updated_earlier_this_year_has_day_and_month() {
+        let now = ts("2026-11-05", 12, 0);
+        assert_eq!(updated_label(ts("2026-11-03", 9, 0), now, 0), "3 Nov");
+        assert_eq!(updated_label(ts("2026-01-31", 9, 0), now, 0), "31 Jan");
+    }
+
+    #[test]
+    fn updated_in_an_older_year_has_the_year() {
+        let now = ts("2026-11-05", 12, 0);
+        assert_eq!(updated_label(ts("2025-11-03", 9, 0), now, 0), "3 Nov 2025");
+    }
+
+    #[test]
+    fn updated_offset_can_cross_midnight() {
+        let now = ts("2026-11-05", 12, 0);
+        let updated = ts("2026-11-04", 23, 30);
+        assert_eq!(updated_label(updated, now, 0), "4 Nov");
+        assert_eq!(updated_label(updated, now, 3_600), "00:30");
+        assert_eq!(updated_label(updated, now, -3_600), "4 Nov");
+    }
+
+    #[test]
+    fn updated_in_the_future_uses_its_own_date() {
+        let now = ts("2026-11-05", 12, 0);
+        assert_eq!(updated_label(ts("2026-12-01", 8, 0), now, 0), "1 Dec");
+        assert_eq!(updated_label(ts("2027-01-02", 8, 0), now, 0), "2 Jan 2027");
+        assert_eq!(updated_label(ts("2026-11-05", 18, 45), now, 0), "18:45");
+    }
+
+    #[test]
+    fn updated_out_of_range_is_empty() {
+        let now = ts("2026-11-05", 12, 0);
+        assert_eq!(updated_label(Timestamp(i64::MAX), now, 3_600), "");
+        assert_eq!(updated_label(Timestamp(i64::MIN), now, -3_600), "");
     }
 
     #[test]

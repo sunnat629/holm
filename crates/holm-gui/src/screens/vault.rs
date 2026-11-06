@@ -16,7 +16,7 @@ use holm_core::category::{Category, CategoryId};
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::fields::{CalendarDate, from_unix_secs};
-use holm_core::item::{ItemData, ItemId, ItemInput, ItemType};
+use holm_core::item::{ItemData, ItemId, ItemInput, ItemType, Timestamp};
 use holm_core::search::{CategoryFilter, ItemSummary, Query};
 use holm_core::session::Session;
 use holm_core::text::{SecretText, Text};
@@ -29,6 +29,7 @@ use super::item_view::{ItemAction, ItemView, show_item};
 use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
 use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
 use crate::file_dialog::DialogKind;
+use crate::fonts::display;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
 use crate::widgets::avatar::{avatar, avatar_colour, avatar_letter};
@@ -122,6 +123,10 @@ pub(crate) struct VaultView {
     /// Today's UTC day, set by the app each frame from its clock. `None` when the
     /// clock is outside years 1 through 9999.
     today: Option<CalendarDate>,
+    /// Wall time, set by the app each frame, for the cards' updated time. Display only.
+    now: Timestamp,
+    /// The Mac's zone offset from UTC in seconds, set with `now`. Display only.
+    utc_offset_secs: i32,
     /// The UTC day the row badges were counted from. A new day rebuilds the rows.
     built_day: Option<CalendarDate>,
     /// The category chips, after All and No category. Collected when rows are rebuilt.
@@ -172,6 +177,8 @@ impl VaultView {
             expiring: false,
             searched_expiring: false,
             today: None,
+            now: Timestamp(0),
+            utc_offset_secs: 0,
             built_day: None,
             chips: Vec::new(),
             transfer: None,
@@ -184,6 +191,13 @@ impl VaultView {
     /// search uses for the Expiring chip.
     pub(crate) fn set_today(&mut self, today: Option<CalendarDate>) {
         self.today = today;
+    }
+
+    /// Sets the wall time and the Mac's zone offset for the cards' updated time. Display
+    /// only: nothing here decides anything from them.
+    pub(crate) fn set_clock(&mut self, now: Timestamp, utc_offset_secs: i32) {
+        self.now = now;
+        self.utc_offset_secs = utc_offset_secs;
     }
 
     /// Remembers whether the session was dirty as a job started.
@@ -378,6 +392,7 @@ impl VaultView {
         io: &mut FieldIo<'_>,
     ) -> Option<VaultAction> {
         let today = self.today;
+        let (stamp, offset) = (self.now, self.utc_offset_secs);
         if self.search.as_str() != self.searched.as_str()
             || self.chip != self.searched_chip
             || self.expiring != self.searched_expiring
@@ -406,7 +421,7 @@ impl VaultView {
             let mut totals = None;
             match session.search(&query) {
                 Ok(found) => {
-                    self.rows = rows_for(&found, categories, today);
+                    self.rows = rows_for(&found, categories, today, stamp, offset);
                     if self.searched.is_empty()
                         && self.chip == CategoryFilter::All
                         && !self.expiring
@@ -421,7 +436,7 @@ impl VaultView {
             if totals.is_none()
                 && let Ok(all) = session.search(&Query::default())
             {
-                totals = Some(tally(&rows_for(&all, &[], today)));
+                totals = Some(tally(&rows_for(&all, &[], today, stamp, offset)));
             }
             if let Some(t) = totals {
                 self.totals = t;
@@ -483,15 +498,25 @@ impl VaultView {
             });
         let job = egui::CentralPanel::default()
             .show(ui, |ui| {
-                if choosing {
-                    ui.label(CHOOSING_FILE);
-                    None
-                } else if self.transfer.is_some() {
-                    let retry = self.show_save_banner(ui, session);
-                    self.show_transfer(ui, throttle, io).or(retry)
-                } else {
-                    self.show_detail(ui, session, now, throttle, io)
-                }
+                // Solid bar like the list. Lock clears all scroll state, so the pane
+                // reopens at the top.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                egui::ScrollArea::vertical()
+                    .id_salt("detail-pane")
+                    .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                    .show(ui, |ui| {
+                        if choosing {
+                            ui.label(CHOOSING_FILE);
+                            None
+                        } else if self.transfer.is_some() {
+                            let retry = self.show_save_banner(ui, session);
+                            self.show_transfer(ui, throttle, io).or(retry)
+                        } else {
+                            self.show_detail(ui, session, now, throttle, io)
+                        }
+                    })
+                    .inner
             })
             .inner;
         if self.lock_dialog {
@@ -624,28 +649,53 @@ impl VaultView {
             .show(ui, |ui| {
                 for row in &self.rows {
                     let on = self.selected == Some(row.id);
-                    ui.horizontal(|ui| {
-                        let colour = avatar_colour(row.category_slot, ui.visuals().dark_mode);
-                        avatar(ui, avatar_letter(row.title.as_str()), colour);
-                        if ui.selectable_label(on, row.title.as_str()).clicked() {
-                            clicked = Some(row.id);
-                        }
-                        if let Some(name) = &row.category {
+                    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                    let mut card = egui::Frame::new()
+                        .stroke(egui::Stroke::new(1.0, stroke.color))
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::symmetric(6, 4));
+                    if on {
+                        card = card.fill(ui.visuals().selection.bg_fill);
+                    }
+                    card.show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let colour = avatar_colour(row.category_slot, ui.visuals().dark_mode);
+                            avatar(ui, avatar_letter(row.title.as_str()), colour);
+                            // Title, subtitle and badge share one column beside the avatar.
+                            ui.vertical(|ui| {
+                                if ui
+                                    .selectable_label(on, &*display(row.title.as_str()))
+                                    .clicked()
+                                {
+                                    clicked = Some(row.id);
+                                }
+                                if !row.subtitle.as_str().is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(&*display(row.subtitle.as_str()))
+                                            .small()
+                                            .weak(),
+                                    );
+                                }
+                                // A day count only, never a field label or value.
+                                if let Some(badge) = row.expiry_badge {
+                                    ui.small(messages::expiry_badge_line(badge));
+                                }
+                            });
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.small(name.as_str());
+                                    ui.label(
+                                        egui::RichText::new(row.updated.as_str()).small().weak(),
+                                    );
+                                    if let Some(name) = &row.category {
+                                        ui.small(name.as_str());
+                                    }
                                 },
                             );
-                        }
+                        });
                     });
-                    if !row.subtitle.as_str().is_empty() {
-                        ui.small(row.subtitle.as_str());
-                    }
-                    // A day count only, never a field label or value.
-                    if let Some(badge) = row.expiry_badge {
-                        ui.small(messages::expiry_badge_line(badge));
-                    }
+                    ui.add_space(5.0);
                 }
             });
         if let Some(id) = clicked
@@ -811,12 +861,14 @@ fn rows_for(
     found: &[ItemSummary<'_>],
     categories: &[Category],
     today: Option<CalendarDate>,
+    now: Timestamp,
+    utc_offset_secs: i32,
 ) -> Vec<ItemRow> {
     // The fallback day only lets the rows be built; its badges are dropped below.
     let Some(day) = today.or_else(|| from_unix_secs(0)) else {
         return Vec::new();
     };
-    let mut rows = build_rows(found, categories, day);
+    let mut rows = build_rows(found, categories, day, now, utc_offset_secs);
     if today.is_none() {
         for row in &mut rows {
             row.expiry_badge = None;

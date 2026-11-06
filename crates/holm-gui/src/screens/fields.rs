@@ -24,7 +24,7 @@ use holm_core::rules::{FieldError, MAX_CUSTOM_FIELDS};
 use holm_core::text::{SecretText, Text};
 
 use super::FieldIo;
-use super::login_form::{LineBuf, line_field};
+use super::login_form::{LineBuf, line_field, line_field_hint};
 use crate::messages::{self, ADD_FIELD, MOVE_DOWN, MOVE_UP, PRESET_LABEL, REMIND_ON, REMOVE_FIELD};
 use crate::secret_input::{ITEM_SECRET_CAP, MULTILINE_SECRET_CAP, SecretInput};
 
@@ -44,9 +44,11 @@ const SECRET_VALUE_LABEL: &str = "Secret value";
 const MULTILINE_VALUE_LABEL: &str = "Secret text";
 /// What a picker shows before anything is picked.
 const CHOOSE: &str = "Choose\u{2026}";
+/// Hint shown in an empty date box.
+const DATE_HINT: &str = "YYYY-MM-DD";
 
 /// The presets the picker offers, with their fixed display names.
-const PRESETS: [(FieldPreset, &str); 8] = [
+const PRESETS: [(FieldPreset, &str); 10] = [
     (FieldPreset::Email, "Email"),
     (FieldPreset::Cloudflare, "Cloudflare"),
     (FieldPreset::GitHub, "GitHub"),
@@ -55,6 +57,8 @@ const PRESETS: [(FieldPreset, &str); 8] = [
     (FieldPreset::Aws, "AWS"),
     (FieldPreset::ApiKey, "API key"),
     (FieldPreset::WiFi, "Wi-Fi"),
+    (FieldPreset::BankCard, "Bank card"),
+    (FieldPreset::Custom, "Custom (empty)"),
 ];
 
 /// Names suggested beyond the preset labels.
@@ -291,7 +295,7 @@ impl DraftRow {
 
         touched |= match self.kind {
             Kind::Text => line_field(ui, io, TEXT_VALUE_LABEL, &mut self.text),
-            Kind::Date => line_field(ui, io, DATE_VALUE_LABEL, &mut self.date),
+            Kind::Date => line_field_hint(ui, io, DATE_VALUE_LABEL, DATE_HINT, &mut self.date),
             Kind::Secret => {
                 io.secret_field(
                     ui,
@@ -313,7 +317,7 @@ impl DraftRow {
                 .changed
             }
         };
-        touched |= line_field(ui, io, REMIND_ON, &mut self.reminder);
+        touched |= line_field_hint(ui, io, REMIND_ON, DATE_HINT, &mut self.reminder);
         touched
     }
 }
@@ -587,6 +591,14 @@ mod tests {
             assert!(row.reminder.is_empty());
         }
         assert_eq!(editor.secret_char_count(), 0);
+    }
+
+    #[test]
+    fn custom_preset_adds_no_rows() {
+        let mut editor = FieldEditor::new();
+        assert!(!editor.apply_preset(FieldPreset::Custom));
+        assert_eq!(editor.len(), 0);
+        assert!(editor.shows_preset(), "the picker stays");
     }
 
     #[test]
