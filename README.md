@@ -16,6 +16,8 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+Windows: see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) (untested, test vaults only).
+
 ## Read more
 
 - [How Holm encrypts your vault](docs/CRYPTO.md): the key hierarchy, file format and error model.
