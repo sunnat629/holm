@@ -11,7 +11,7 @@ members = [
 exclude = ["oracle", "fuzz"]
 
 [workspace.package]
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.99.1"
@@ -24,9 +24,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.dependencies]
 # Internal crates
-holm-crypto = { path = "crates/holm-crypto", version = "0.0.0" }
-holm-core = { path = "crates/holm-core", version = "0.0.0" }
-holm-platform = { path = "crates/holm-platform", version = "0.0.0" }
+holm-crypto = { path = "crates/holm-crypto", version = "0.1.0" }
+holm-core = { path = "crates/holm-core", version = "0.1.0" }
+holm-platform = { path = "crates/holm-platform", version = "0.1.0" }
 
 # Runtime
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }

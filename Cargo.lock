@@ -1452,7 +1452,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "holm-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "holm-core",
  "holm-crypto",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "holm-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "holm-crypto",
@@ -1481,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "holm-crypto"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "argon2",
  "blake2",
@@ -1498,7 +1498,7 @@ dependencies = [
 
 [[package]]
 name = "holm-gui"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_kittest",
@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "holm-platform"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arboard",
  "block2 0.6.2",
