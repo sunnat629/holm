@@ -51,36 +51,48 @@ pub unsafe fn wipe(ptr: *mut u8, len: usize) {
     compiler_fence(Ordering::SeqCst);
 }
 
-/// A [`GlobalAlloc`] over [`System`] that zeroes every block before it is freed.
+/// A [`GlobalAlloc`] over an inner allocator (by default [`System`]) that zeroes every
+/// block before it is freed. The inner type is a parameter only so a test can check that
+/// a block is zero at the moment it is handed back.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ZeroingAlloc;
+pub struct ZeroingAlloc<A: GlobalAlloc = System> {
+    inner: A,
+}
 
-impl ZeroingAlloc {
-    /// The allocator. `const` so it can be a `#[global_allocator]` static.
+impl ZeroingAlloc<System> {
+    /// The allocator over [`System`]. `const` so it can be a `#[global_allocator]` static.
     #[must_use]
-    pub const fn new() -> ZeroingAlloc {
-        ZeroingAlloc
+    pub const fn new() -> ZeroingAlloc<System> {
+        ZeroingAlloc { inner: System }
     }
 }
 
-// SAFETY: allocation and freeing are delegated to `System`, which upholds the
-// `GlobalAlloc` contract. Before a block is handed back to `System`, we only write zeros
+impl<A: GlobalAlloc> ZeroingAlloc<A> {
+    /// The allocator over `inner`.
+    #[must_use]
+    pub const fn with_inner(inner: A) -> ZeroingAlloc<A> {
+        ZeroingAlloc { inner }
+    }
+}
+
+// SAFETY: allocation and freeing are delegated to the inner allocator, which upholds the
+// `GlobalAlloc` contract. Before a block is handed back to it, we only write zeros
 // into memory the caller owns. `realloc` returns either null (leaving the old block
-// untouched) or a fresh `System` block with the caller's layout alignment and `new_size`
+// untouched) or a fresh inner block with the caller's layout alignment and `new_size`
 // bytes, holding the copied prefix.
-unsafe impl GlobalAlloc for ZeroingAlloc {
+unsafe impl<A: GlobalAlloc> GlobalAlloc for ZeroingAlloc<A> {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract, which we pass on
         // unchanged.
-        unsafe { System.alloc(layout) }
+        unsafe { self.inner.alloc(layout) }
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract, which we
         // pass on unchanged.
-        unsafe { System.alloc_zeroed(layout) }
+        unsafe { self.inner.alloc_zeroed(layout) }
     }
 
     #[inline]
@@ -88,9 +100,9 @@ unsafe impl GlobalAlloc for ZeroingAlloc {
         // SAFETY: the caller guarantees `ptr` is a live block from this allocator with
         // `layout`, so `layout.size()` bytes at `ptr` are valid for writes.
         unsafe { wipe(ptr, layout.size()) };
-        // SAFETY: `ptr` was allocated by `System` (every path here allocates through it)
-        // with `layout`, and it has not been freed yet.
-        unsafe { System.dealloc(ptr, layout) };
+        // SAFETY: `ptr` was allocated by the inner allocator (every path here allocates
+        // through it) with `layout`, and it has not been freed yet.
+        unsafe { self.inner.dealloc(ptr, layout) };
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -103,7 +115,7 @@ unsafe impl GlobalAlloc for ZeroingAlloc {
         // `Layout`.
         let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
         // SAFETY: `new_layout` has a non-zero size, as shown above.
-        let new_ptr = unsafe { System.alloc(new_layout) };
+        let new_ptr = unsafe { self.inner.alloc(new_layout) };
         if new_ptr.is_null() {
             return new_ptr;
         }
@@ -122,6 +134,104 @@ unsafe impl GlobalAlloc for ZeroingAlloc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use core::sync::atomic::AtomicUsize;
+
+    /// An inner allocator that checks, at the moment a block is freed, that every byte
+    /// is zero. It never panics (it runs inside the allocator); it counts instead.
+    #[derive(Default)]
+    struct CheckingAlloc {
+        frees: AtomicUsize,
+        dirty_frees: AtomicUsize,
+    }
+
+    // SAFETY: every method forwards to `System` unchanged; `dealloc` only reads the block
+    // first, which the caller guarantees is live and `layout.size()` bytes long.
+    unsafe impl GlobalAlloc for CheckingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: forwarded with the caller's contract.
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` is a live block of `layout.size()` bytes.
+            let bytes = unsafe { core::slice::from_raw_parts(ptr, layout.size()) };
+            self.frees.fetch_add(1, Ordering::SeqCst);
+            if bytes.iter().any(|&b| b != 0) {
+                self.dirty_frees.fetch_add(1, Ordering::SeqCst);
+            }
+            // SAFETY: forwarded with the caller's contract.
+            unsafe { System.dealloc(ptr, layout) };
+        }
+    }
+
+    fn counts(a: &ZeroingAlloc<CheckingAlloc>) -> (usize, usize) {
+        (
+            a.inner.frees.load(Ordering::SeqCst),
+            a.inner.dirty_frees.load(Ordering::SeqCst),
+        )
+    }
+
+    #[test]
+    fn checker_notices_a_dirty_free() {
+        // The checker itself must work, or the tests below prove nothing.
+        let c = CheckingAlloc::default();
+        let layout = Layout::from_size_align(32, 8).unwrap();
+        // SAFETY: non-zero layout.
+        let p = unsafe { c.alloc(layout) };
+        // SAFETY: `p` is a live 32-byte block.
+        unsafe { ptr::write_bytes(p, 0x77, 32) };
+        // SAFETY: `p` is live with `layout`, freed once.
+        unsafe { c.dealloc(p, layout) };
+        assert_eq!(c.dirty_frees.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dealloc_hands_back_zeroed_bytes() {
+        let a = ZeroingAlloc::with_inner(CheckingAlloc::default());
+        let layout = Layout::from_size_align(200, 8).unwrap();
+        // SAFETY: non-zero layout.
+        let p = unsafe { a.alloc(layout) };
+        // SAFETY: `p` is a live 200-byte block.
+        unsafe { ptr::write_bytes(p, 0xC3, 200) };
+        // SAFETY: `p` is live with `layout`, freed once.
+        unsafe { a.dealloc(p, layout) };
+        assert_eq!(counts(&a), (1, 0));
+    }
+
+    #[test]
+    fn realloc_hands_back_zeroed_old_block() {
+        for (old, new) in [(16usize, 4096usize), (4096, 16), (100, 101)] {
+            let a = ZeroingAlloc::with_inner(CheckingAlloc::default());
+            let layout = Layout::from_size_align(old, 8).unwrap();
+            // SAFETY: non-zero layout.
+            let p = unsafe { a.alloc(layout) };
+            // SAFETY: `p` is a live block of `old` bytes.
+            unsafe { ptr::write_bytes(p, 0xC3, old) };
+            // SAFETY: `p` is live with `layout`; `new` is non-zero.
+            let q = unsafe { a.realloc(p, layout, new) };
+            assert!(!q.is_null());
+            // The old block was freed by realloc and must have been zero at that moment.
+            assert_eq!(counts(&a), (1, 0), "old {old} new {new}");
+            // SAFETY: `q` is live with size `new` and align 8, freed once.
+            unsafe { a.dealloc(q, Layout::from_size_align(new, 8).unwrap()) };
+            assert_eq!(counts(&a), (2, 0), "old {old} new {new}");
+        }
+    }
+
+    /// Times the wipe of a 256 MiB block, the size of the default Argon2 area. Run with
+    /// `cargo test -p holm-platform --release -- --ignored --nocapture wipe_256`.
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn wipe_256_mib_timing() {
+        let mut v = vec![1u8; 256 << 20];
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            // SAFETY: `v` is a live buffer of `v.len()` bytes.
+            unsafe { wipe(v.as_mut_ptr(), v.len()) };
+            std::println!("wipe 256 MiB: {:?}", t.elapsed());
+            v[0] = 1;
+        }
+    }
 
     #[test]
     fn wipe_zeroes_a_buffer() {

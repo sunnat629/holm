@@ -58,13 +58,13 @@ encrypted anyway. Saying no, with reasons, is a design decision too (see `docs/D
 | `lto = "fat"` | The compiler sees the whole program at once and removes what is unused. |
 | `codegen-units = 1` | One unit means more inlining, at the cost of a slower build. |
 | `strip = true` | Drops symbols and debug info, so source paths are not shipped. |
-| `panic` stays `unwind` | The GUI worker and a test rely on catching a panic. `abort` would skip both. |
+| `panic` stays `unwind` | The GUI worker wakes the UI when its thread unwinds. `abort` would skip that. |
 
 ## Before and after
 
 Measured with `scripts/measure-macos.sh` on a release build, default Argon2id (256 MiB, 3
 passes). The after-unlock rows are 3 s after the keystrokes; the window was not confirmed to
-show the vault list (see the script's note), so treat them as attempted-unlock numbers.
+show the vault list (see the script's note). A real 256 MiB unlock should peak above about 340 MiB, but these peaks are only about 100 to 110 MiB over baseline, so the unlock probably did not run. Treat every unlock row as UNPROVEN.
 
 | Measurement | Before | After |
 |---|---|---|
@@ -75,11 +75,12 @@ show the vault list (see the script's note), so treat them as attempted-unlock n
 | Unlock peak, 1,000 items | 195.8 MiB | 189.3 MiB |
 | 3 s after unlock, 5 items | 86.8 MiB | 87.1 MiB |
 | 3 s after unlock, 1,000 items | 87.4 MiB | 85.5 MiB |
-| Wiping 256 MiB on free | n/a | 10 to 30 ms |
+| Wiping 256 MiB on free | n/a | 9 to 15 ms (wipe only, timing test) |
 
-The Argon2 area comes back to the OS after unlock in both columns: the footprint falls to the
-locked baseline. The allocator adds tens of milliseconds to an unlock that takes one to two
-seconds.
+Whether the Argon2 area comes back to the OS after unlock is UNPROVEN: the table does not show
+a real unlock. The code frees it as one allocation when the derive returns. The wipe of 256 MiB
+alone takes about 10 ms (`cargo test -p holm-platform --release -- --ignored --nocapture
+wipe_256`); the effect on a whole unlock is not measured yet.
 
 ## Kotlin comparison
 

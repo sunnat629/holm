@@ -116,7 +116,27 @@ if platform != workspace:
 print("lint drift OK")
 PYTHON
 }
+# Structural checks the lint table cannot make: both binaries install the zeroing
+# allocator, and unsafe code is allowed in exactly two platform files.
+alloc_unsafe_gate() {
+  local f n
+  for f in crates/holm-gui/src/main.rs crates/holm-cli/src/main.rs; do
+    n=$(grep -c '^#\[global_allocator\]' "$f")
+    if [ "$n" != 1 ]; then
+      echo "$f: expected one #[global_allocator], found $n" >&2
+      return 1
+    fi
+  done
+  local found
+  found=$(grep -rlzE 'allow\(\s*unsafe_code' crates fuzz --include='*.rs' | sort | tr '\n' ' ')
+  if [ "$found" != "crates/holm-platform/src/window.rs crates/holm-platform/src/zeroing_alloc.rs " ]; then
+    echo "allow(unsafe_code) must appear only in window.rs and zeroing_alloc.rs, found: $found" >&2
+    return 1
+  fi
+}
+
 gate lint-drift lint_drift_gate
+gate alloc-unsafe alloc_unsafe_gate
 
 # The EFF wordlist and the zxcvbn common-password lists are include_str!'d into the binary.
 # Their pinned SHA-256 values (also in NOTICE) must match, and a missing shasum or file fails
