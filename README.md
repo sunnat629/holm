@@ -24,6 +24,7 @@ Your passwords in one encrypted file on your own computer. No account, no cloud,
 - Password generator.
 - Copy password. Only the CLI clears the clipboard today; the macOS app gets clipboard auto-clear in the next update.
 - Idle auto-lock.
+- Optional: hide the window from screenshots and screen sharing (macOS, off by default; it may hide Holm from some captures, but many capture tools, screen recorders and cameras can still see it).
 - Import from CSV or JSON. Exports are plaintext, and Holm warns you about it.
 - Command-line tool (`holm`) with an interactive shell.
 

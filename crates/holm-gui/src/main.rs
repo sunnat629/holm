@@ -99,6 +99,7 @@ mod macos {
                     clipboard: Box::new(SystemClipboard::new()),
                     file_dialog: Box::new(holm_gui::file_dialog::RfdDialog),
                     lock_events,
+                    capture: Box::new(holm_gui::capture::SystemCapture),
                 });
                 #[cfg(all(feature = "dev-unlock", debug_assertions))]
                 let app = match holm_gui::dev_unlock::password_from_env() {

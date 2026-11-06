@@ -33,8 +33,10 @@ use holm_platform::clip_clear::{ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
+use holm_platform::prefs::{self, Prefs};
 use holm_platform::window::LockEvents;
 
+use crate::capture::CaptureControl;
 use crate::clipboard::SecretClipboard;
 use crate::file_dialog::{DialogKind, FileDialog};
 use crate::messages;
@@ -74,6 +76,9 @@ pub struct AppConfig {
     /// before the window opens. `None` in tests and when they could not be added; the
     /// wall-clock check still catches a sleep.
     pub lock_events: Option<LockEvents>,
+    /// Hides the app's windows from screenshots and screen sharing. [`NoCapture`]
+    /// (`crate::capture::NoCapture`) in tests that do not care.
+    pub capture: Box<dyn CaptureControl>,
 }
 
 /// Where the app learns whether its window is minimised. eframe's own
@@ -170,6 +175,15 @@ pub struct HolmApp {
     /// The open vault's `lock_on_sleep`, as last read, for frames where the session
     /// is on the worker. On until a vault says otherwise.
     lock_on_sleep: bool,
+    /// Hides the windows from captures; the OS call lives behind this.
+    capture: Box<dyn CaptureControl>,
+    /// The "hide from screenshots and screen sharing" setting, as shown. Never on when
+    /// `capture` is unsupported.
+    hide_from_capture: bool,
+    /// The last `capture.apply` failed, so the footer must not imply the window is hidden.
+    capture_failed: bool,
+    /// The preference could not be written, so it lasts until Holm quits.
+    prefs_unsaved: bool,
     /// A sleep was seen while the worker held the session; the vault locks as soon
     /// as the job hands it back.
     slept_while_working: bool,
@@ -214,6 +228,7 @@ impl HolmApp {
             clipboard,
             file_dialog,
             lock_events,
+            capture,
         } = config;
         let sleep_watch = SleepWatch::new(&*ui_clock);
         let mut app = HolmApp {
@@ -235,10 +250,20 @@ impl HolmApp {
             lock_events,
             sleep_watch,
             lock_on_sleep: true,
+            hide_from_capture: false,
+            capture_failed: false,
+            prefs_unsaved: false,
+            capture,
             slept_while_working: false,
             #[cfg(all(feature = "dev-unlock", debug_assertions))]
             dev_password: None,
         };
+        // Before anything is drawn, so the unlock screen is already covered. A missing
+        // or damaged file means off.
+        if app.capture.supported() && prefs::load(&vault_path).hide_from_capture {
+            app.hide_from_capture = true;
+            app.capture_failed = app.capture.apply(true).is_err();
+        }
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
             app.screen = Screen::Fatal(messages::dir_error(e));
             return app;
@@ -422,6 +447,10 @@ impl HolmApp {
     /// here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
         self.apply_forget(ctx);
+        // Every frame while on, so a window opened since the last frame is covered too.
+        if self.hide_from_capture {
+            self.capture_failed = self.capture.apply(true).is_err();
+        }
         // Both checks run every frame, so an event or a gap is used once and never
         // carried into a later frame.
         let os_event = window.os_lock_event();
@@ -511,6 +540,51 @@ impl HolmApp {
         }
     }
 
+    /// Whether windows are hidden from captures now (the setting, as shown). For tests.
+    #[must_use]
+    pub fn hide_from_capture(&self) -> bool {
+        self.hide_from_capture
+    }
+
+    /// Turns hiding from captures on or off now, and saves the choice next to the vault.
+    /// Ignored when the platform cannot do it.
+    fn set_hide_from_capture(&mut self, on: bool) {
+        if !self.capture.supported() {
+            return;
+        }
+        self.hide_from_capture = on;
+        self.capture_failed = self.capture.apply(on).is_err();
+        self.prefs_unsaved = prefs::save(
+            &self.vault_path,
+            Prefs {
+                hide_from_capture: on,
+            },
+        )
+        .is_err();
+    }
+
+    /// The footer with the capture toggle, on every screen but the fatal one. Nothing
+    /// is drawn where the platform cannot hide windows.
+    fn show_capture_footer(&mut self, ui: &mut egui::Ui) {
+        if !self.capture.supported() || matches!(self.screen, Screen::Fatal(_)) {
+            return;
+        }
+        let mut on = self.hide_from_capture;
+        egui::Panel::bottom("capture-footer").show(ui, |ui| {
+            ui.checkbox(&mut on, messages::HIDE_FROM_CAPTURE_LABEL);
+            ui.small(messages::HIDE_FROM_CAPTURE_HINT);
+            if self.capture_failed {
+                ui.small(messages::HIDE_FROM_CAPTURE_FAILED);
+            }
+            if self.prefs_unsaved {
+                ui.small(messages::PREFS_NOT_SAVED);
+            }
+        });
+        if on != self.hide_from_capture {
+            self.set_hide_from_capture(on);
+        }
+    }
+
     /// Draws the current screen, and starts the worker when a form submits. With the
     /// vault open it first notes activity and handles Cmd+L.
     pub fn show(&mut self, ui: &mut egui::Ui) {
@@ -532,6 +606,7 @@ impl HolmApp {
                 self.request_lock();
             }
         }
+        self.show_capture_footer(ui);
         let throttle = self.current_throttle();
         let kdf = self.kdf;
         let now = self.ui_clock.monotonic();

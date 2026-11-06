@@ -19,6 +19,14 @@ use holm_core::throttle::ThrottleStatus;
 
 use crate::rows::ExpiryBadge;
 
+/// The label of the capture protection toggle.
+pub const HIDE_FROM_CAPTURE_LABEL: &str = "Hide window from screenshots and screen sharing";
+/// The toggle's hint. Honest about what it does not stop.
+pub const HIDE_FROM_CAPTURE_HINT: &str = "May hide Holm from some screenshots and screen sharing. Many capture tools, screen recorders and cameras can still see it.";
+/// Shown when the OS refused the change, so the user does not trust a hidden window.
+pub const HIDE_FROM_CAPTURE_FAILED: &str = "Holm could not hide its window from captures.";
+/// Shown when the preference could not be written; it then lasts until Holm closes.
+pub const PREFS_NOT_SAVED: &str = "Holm could not save this setting. It lasts until you quit.";
 /// A wrong password, or a vault file that was changed or damaged. The two cannot be
 /// told apart, so one line covers both.
 pub const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
