@@ -732,6 +732,10 @@ impl VaultView {
                                 if let Some(badge) = row.expiry_badge {
                                     ui.small(messages::expiry_badge_line(badge));
                                 }
+                                // A count only, never a code.
+                                if let Some(left) = row.codes_low {
+                                    ui.small(messages::codes_badge_line(left));
+                                }
                             });
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),

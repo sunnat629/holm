@@ -201,6 +201,28 @@ pub fn expiry_badge_line(badge: ExpiryBadge) -> String {
     }
 }
 
+/// The badge under a row's subtitle when an item is nearly out of recovery codes. It
+/// names a count only, never a code.
+#[must_use]
+pub fn codes_badge_line(n: usize) -> String {
+    match n {
+        0 => "No codes left".to_owned(),
+        1 => "1 code left".to_owned(),
+        n => format!("{n} codes left"),
+    }
+}
+
+/// The line under an empty recovery codes box that holds the stored codes. `n` is how
+/// many are kept.
+#[must_use]
+pub fn codes_kept_line(n: usize) -> String {
+    if n == 1 {
+        "Keeps the current code. Paste new codes to replace it.".to_owned()
+    } else {
+        format!("Keeps the current {n} codes. Paste new codes to replace them.")
+    }
+}
+
 /// Button that adds a custom field. A label, so it has no closing period.
 pub const ADD_FIELD: &str = "Add field";
 /// Button that removes one custom field.

@@ -17,8 +17,8 @@ use std::sync::LazyLock;
 use eframe::egui;
 use egui::TextBuffer as _;
 use holm_core::fields::{
-    CustomField, FieldKind, FieldPreset, FieldValue, format_date, parse_date, preset_fields,
-    try_field,
+    CustomField, FieldKind, FieldPreset, FieldValue, RecoveryCode, format_date, parse_date,
+    parse_recovery_codes, preset_fields, try_field,
 };
 use holm_core::rules::{FieldError, MAX_CUSTOM_FIELDS};
 use holm_core::text::{SecretText, Text};
@@ -42,13 +42,17 @@ const DATE_VALUE_LABEL: &str = "Date (YYYY-MM-DD)";
 const SECRET_VALUE_LABEL: &str = "Secret value";
 /// Label of a multiline secret's field.
 const MULTILINE_VALUE_LABEL: &str = "Secret text";
+/// Label of a recovery codes list's field.
+const CODES_VALUE_LABEL: &str = "Recovery code list";
+/// The line under a recovery codes field.
+const CODES_HINT: &str = "One code per line, up to 20.";
 /// What a picker shows before anything is picked.
 const CHOOSE: &str = "Choose\u{2026}";
 /// Hint shown in an empty date box.
 const DATE_HINT: &str = "YYYY-MM-DD";
 
 /// The presets the picker offers, with their fixed display names.
-const PRESETS: [(FieldPreset, &str); 10] = [
+const PRESETS: [(FieldPreset, &str); 11] = [
     (FieldPreset::Email, "Email"),
     (FieldPreset::Cloudflare, "Cloudflare"),
     (FieldPreset::GitHub, "GitHub"),
@@ -58,6 +62,7 @@ const PRESETS: [(FieldPreset, &str); 10] = [
     (FieldPreset::ApiKey, "API key"),
     (FieldPreset::WiFi, "Wi-Fi"),
     (FieldPreset::BankCard, "Bank card"),
+    (FieldPreset::RecoveryCodes, "Recovery codes"),
     (FieldPreset::Custom, "Custom (empty)"),
 ];
 
@@ -95,11 +100,24 @@ enum Kind {
     Multiline,
     /// A calendar date.
     Date,
+    /// One-time recovery codes, one per line.
+    Codes,
 }
 
 impl Kind {
     /// Every kind, in picker order.
-    const ALL: [Kind; 4] = [Kind::Text, Kind::Secret, Kind::Multiline, Kind::Date];
+    const ALL: [Kind; 5] = [
+        Kind::Text,
+        Kind::Secret,
+        Kind::Multiline,
+        Kind::Date,
+        Kind::Codes,
+    ];
+
+    /// Whether this kind's secret box keeps typed newlines.
+    fn keeps_newlines(self) -> bool {
+        matches!(self, Kind::Multiline | Kind::Codes)
+    }
 
     /// The fixed name the picker shows.
     fn name(self) -> &'static str {
@@ -108,6 +126,7 @@ impl Kind {
             Kind::Secret => "Secret",
             Kind::Multiline => "Multiline secret",
             Kind::Date => "Date",
+            Kind::Codes => "Recovery codes",
         }
     }
 
@@ -116,8 +135,8 @@ impl Kind {
         match kind {
             FieldKind::Text => Kind::Text,
             FieldKind::Secret => Kind::Secret,
-            // Presets never use codes; the editor has no codes row yet.
-            FieldKind::MultilineSecret | FieldKind::RecoveryCodes => Kind::Multiline,
+            FieldKind::MultilineSecret => Kind::Multiline,
+            FieldKind::RecoveryCodes => Kind::Codes,
             FieldKind::Date => Kind::Date,
         }
     }
@@ -127,19 +146,33 @@ impl Kind {
         match value {
             FieldValue::Text(_) => Kind::Text,
             FieldValue::Secret(_) => Kind::Secret,
-            FieldValue::MultilineSecret(_) | FieldValue::RecoveryCodes(_) => Kind::Multiline,
+            FieldValue::MultilineSecret(_) => Kind::Multiline,
+            FieldValue::RecoveryCodes(_) => Kind::Codes,
             FieldValue::Date(_) => Kind::Date,
         }
     }
 }
 
-/// A fresh, empty secret buffer for `kind`: multiline keeps newlines.
+/// A fresh, empty secret buffer for `kind`: multiline and codes keep newlines.
 fn secret_buffer(kind: Kind) -> SecretInput {
-    if kind == Kind::Multiline {
+    if kind.keeps_newlines() {
         SecretInput::with_multiline_capacity(MULTILINE_SECRET_CAP)
     } else {
         SecretInput::with_capacity(ITEM_SECRET_CAP)
     }
+}
+
+/// A wiping deep copy of `codes`, used flags included.
+fn copy_codes(codes: &[RecoveryCode]) -> Vec<RecoveryCode> {
+    codes
+        .iter()
+        .map(|code| {
+            RecoveryCode::new(
+                SecretText::new(code.code().expose().to_owned()),
+                code.used(),
+            )
+        })
+        .collect()
 }
 
 /// The ten ASCII bytes of [`format_date`] as text.
@@ -161,6 +194,10 @@ struct DraftRow {
     date: LineBuf,
     /// The optional reminder date, as typed `YYYY-MM-DD`. Empty means none.
     reminder: LineBuf,
+    /// A deep copy of the codes the field held when the draft was made, with their used
+    /// flags. Used when the codes box is left empty. Only set for [`Kind::Codes`]; the
+    /// codes wipe themselves on drop.
+    kept: Option<Vec<RecoveryCode>>,
 }
 
 impl fmt::Debug for DraftRow {
@@ -172,6 +209,7 @@ impl fmt::Debug for DraftRow {
             .field("secret", &self.secret)
             .field("date_len", &self.date.len())
             .field("reminder_len", &self.reminder.len())
+            .field("kept_count", &self.kept.as_ref().map(Vec::len))
             .finish()
     }
 }
@@ -186,15 +224,12 @@ impl DraftRow {
             secret: secret_buffer(kind),
             date: LineBuf::new(),
             reminder: LineBuf::new(),
+            kept: None,
         }
     }
 
     /// A row filled from a stored field, or `None` when a value does not fit its buffer.
     fn from_field(field: &CustomField) -> Option<DraftRow> {
-        // The editor has no codes row yet, so the item stays read-only.
-        if matches!(field.value(), FieldValue::RecoveryCodes(_)) {
-            return None;
-        }
         let kind = Kind::of(field.value());
         let mut row = DraftRow::new(LineBuf::from_text(field.label())?, kind);
         match field.value() {
@@ -209,8 +244,7 @@ impl DraftRow {
             FieldValue::Date(date) => {
                 row.date = LineBuf::from_text(date_text(&format_date(*date)))?;
             }
-            // Returned above.
-            FieldValue::RecoveryCodes(_) => return None,
+            FieldValue::RecoveryCodes(codes) => row.kept = Some(copy_codes(codes)),
         }
         if let Some(expiry) = field.expiry() {
             row.reminder = LineBuf::from_text(date_text(&format_date(expiry)))?;
@@ -227,7 +261,9 @@ impl DraftRow {
         self.text = LineBuf::new();
         self.date = LineBuf::new();
         self.secret.clear();
-        if (kind == Kind::Multiline) != (self.kind == Kind::Multiline) {
+        // Any change leaves the codes kind or enters it, so kept codes never carry over.
+        self.kept = None;
+        if kind.keeps_newlines() != self.kind.keeps_newlines() {
             // The newline rule is fixed per buffer; the old (already wiped) one drops.
             self.secret = secret_buffer(kind);
         }
@@ -251,6 +287,11 @@ impl DraftRow {
             Kind::Text => FieldValue::Text(Text::new(self.text.as_str().to_owned())),
             Kind::Secret => FieldValue::Secret(copy_secret(&self.secret)),
             Kind::Multiline => FieldValue::MultilineSecret(copy_secret(&self.secret)),
+            // An empty box keeps the stored codes; typed text replaces them, all unused.
+            Kind::Codes => FieldValue::RecoveryCodes(match &self.kept {
+                Some(kept) if self.secret.is_empty() => copy_codes(kept),
+                _ => parse_recovery_codes(self.secret.expose_for_paint())?,
+            }),
             Kind::Date => {
                 FieldValue::Date(parse_date(self.date.as_str()).ok_or(FieldError::BadDate)?)
             }
@@ -322,6 +363,24 @@ impl DraftRow {
                     refused,
                 )
                 .changed
+            }
+            Kind::Codes => {
+                let changed = io
+                    .secret_area(
+                        ui,
+                        "custom-codes",
+                        CODES_VALUE_LABEL,
+                        &mut self.secret,
+                        refused,
+                    )
+                    .changed;
+                ui.label(CODES_HINT);
+                if let Some(kept) = &self.kept
+                    && self.secret.is_empty()
+                {
+                    ui.label(messages::codes_kept_line(kept.len()));
+                }
+                changed
             }
         };
         touched |= line_field_hint(ui, io, REMIND_ON, DATE_HINT, &mut self.reminder);
@@ -562,6 +621,7 @@ impl FieldEditor {
 mod tests {
     use super::*;
     use egui::text::CharIndex;
+    use holm_core::fields::codes_left;
 
     fn text_field(label: &str, value: &str) -> CustomField {
         try_field(
@@ -737,5 +797,64 @@ mod tests {
         assert!(editor.add_field());
         assert!(editor.rows[0].apply_suggestion("PIN"));
         assert_eq!(editor.rows[0].label.as_str(), "PIN");
+    }
+
+    fn codes_field(text: &str, used: &[usize]) -> CustomField {
+        let mut codes = parse_recovery_codes(text).expect("valid codes");
+        for &index in used {
+            codes[index].set_used(true);
+        }
+        try_field(
+            Text::new("Codes".to_owned()),
+            FieldValue::RecoveryCodes(codes),
+            None,
+        )
+        .expect("a valid field")
+    }
+
+    #[test]
+    fn existing_codes_are_kept_when_the_box_is_empty() {
+        let field = codes_field("EXAMPLE-1\nEXAMPLE-2", &[1]);
+        let mut editor = FieldEditor::from_fields(&[field]).expect("codes fit the editor");
+        assert_eq!(editor.rows[0].kind, Kind::Codes);
+        let built = editor.build().expect("kept codes build");
+        let FieldValue::RecoveryCodes(codes) = built[0].value() else {
+            panic!("kind changed");
+        };
+        assert_eq!(codes_left(codes), (1, 2), "used flags survive");
+    }
+
+    #[test]
+    fn typed_codes_replace_the_kept_ones() {
+        let field = codes_field("EXAMPLE-1\nEXAMPLE-2", &[0, 1]);
+        let mut editor = FieldEditor::from_fields(&[field]).expect("codes fit the editor");
+        editor.rows[0]
+            .secret
+            .push_str("EXAMPLE-3\nEXAMPLE-4\nEXAMPLE-5");
+        let built = editor.build().expect("typed codes build");
+        let FieldValue::RecoveryCodes(codes) = built[0].value() else {
+            panic!("kind changed");
+        };
+        assert_eq!(codes_left(codes), (3, 3), "a typed list starts all unused");
+    }
+
+    #[test]
+    fn empty_codes_without_kept_are_refused() {
+        let mut editor = FieldEditor::new();
+        assert!(editor.apply_preset(FieldPreset::RecoveryCodes));
+        assert_eq!(editor.rows[0].kind, Kind::Codes);
+        assert!(editor.build().is_err());
+        assert!(editor.error.is_some());
+    }
+
+    #[test]
+    fn leaving_the_codes_kind_drops_the_kept_codes() {
+        let field = codes_field("EXAMPLE-1", &[]);
+        let mut editor = FieldEditor::from_fields(&[field]).expect("codes fit the editor");
+        assert!(editor.rows[0].kept.is_some());
+        editor.rows[0].set_kind(Kind::Text);
+        assert!(editor.rows[0].kept.is_none());
+        let shown = format!("{editor:?}");
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
     }
 }

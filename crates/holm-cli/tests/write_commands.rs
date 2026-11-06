@@ -1057,6 +1057,61 @@ fn add_preset_empty_values() {
 }
 
 #[test]
+fn add_preset_recovery_codes_prompts_hidden() {
+    const CODES: &str = "EXAMPLE-code-1\nEXAMPLE-code-2";
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let mut term = FakeTerminal::new(&[PW, "EXAMPLE-pw-1", "EXAMPLE-pw-1", CODES]);
+    let ran = run(
+        &path,
+        &[
+            "add",
+            "login",
+            "--title",
+            "Mail",
+            "--preset",
+            "recovery-codes",
+        ],
+        &mut term,
+    );
+    let id = added(&ran);
+    assert_eq!(term.kinds(), vec![Kind::Secret; 4]);
+    assert_eq!(term.prompts[3].1, "Field value: ");
+    assert!(!ran.out.contains("EXAMPLE-code") && !ran.err.contains("EXAMPLE-code"));
+    assert!(!ran.out.contains("empty values"), "{}", ran.out);
+    let s = session(&path);
+    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].label(), "Recovery codes");
+    let FieldValue::RecoveryCodes(codes) = fields[0].value() else {
+        panic!("not codes");
+    };
+    let typed: Vec<&str> = codes.iter().map(|code| code.code().expose()).collect();
+    assert_eq!(typed, ["EXAMPLE-code-1", "EXAMPLE-code-2"]);
+    assert!(codes.iter().all(|code| !code.used()));
+    drop(s);
+
+    // Nothing typed skips the field, as an empty preset value would be.
+    let mut term = FakeTerminal::new(&[PW, "EXAMPLE-pw-1", "EXAMPLE-pw-1", ""]);
+    let ran = run(
+        &path,
+        &[
+            "add",
+            "login",
+            "--title",
+            "Bare",
+            "--preset",
+            "recovery-codes",
+        ],
+        &mut term,
+    );
+    let id = added(&ran);
+    assert!(!ran.out.contains("custom fields"), "{}", ran.out);
+    let s = session(&path);
+    assert!(s.item(id_of(&s, &id)).unwrap().fields().is_empty());
+}
+
+#[test]
 fn edit_field_add_prompts_for_secret() {
     const SECRET: &str = "EXAMPLE-prompt-secret";
     let (_dir, path) = vault_dir();

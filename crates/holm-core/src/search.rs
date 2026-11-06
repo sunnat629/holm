@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 
 use crate::category::CategoryId;
 use crate::error::CoreError;
-use crate::fields::{CalendarDate, from_unix_secs, is_expiring, soonest_expiry};
+use crate::fields::{CalendarDate, fewest_codes_left, from_unix_secs, is_expiring, soonest_expiry};
 use crate::item::{Item, ItemData, ItemId, ItemType, Timestamp};
 use crate::rules::EXPIRING_WITHIN_DAYS;
 use crate::session::Session;
@@ -110,6 +110,8 @@ pub struct ItemSummary<'a> {
     pub trashed: Option<Timestamp>,
     /// Soonest custom-field reminder. Absent when no field has one.
     pub soonest_expiry: Option<CalendarDate>,
+    /// Fewest unused recovery codes on the item; a count only.
+    pub codes_left: Option<usize>,
 }
 
 impl fmt::Debug for ItemSummary<'_> {
@@ -125,6 +127,7 @@ impl fmt::Debug for ItemSummary<'_> {
             .field("updated", &self.updated)
             .field("trashed", &self.trashed)
             .field("soonest_expiry", &self.soonest_expiry)
+            .field("codes_left", &self.codes_left)
             .finish()
     }
 }
@@ -252,6 +255,7 @@ impl<S: VaultStore> Session<S> {
                 updated: i.updated(),
                 trashed: i.trashed(),
                 soonest_expiry: soonest_expiry(i.fields()),
+                codes_left: fewest_codes_left(i.fields()),
             })
             .collect())
     }
@@ -262,7 +266,7 @@ mod tests {
     use super::*;
     use crate::category::CategoryId;
     use crate::clock::FakeClock;
-    use crate::fields::{FieldValue, epoch_day, try_field};
+    use crate::fields::{FieldValue, epoch_day, parse_recovery_codes, try_field};
     use crate::item::{ItemData, ItemId, ItemInput};
     use crate::store::MemStore;
     use crate::text::{GatedSecret, SecretText, Text};
@@ -586,6 +590,24 @@ mod tests {
         .unwrap();
         assert_eq!(titles(&s, &q("recovery-email")), ["Kept"]);
         assert!(titles(&s, &q("EXAMPLE-field-secret")).is_empty());
+    }
+
+    #[test]
+    fn summary_counts_codes_without_matching_them() {
+        let (mut s, _) = fresh();
+        let mut codes = parse_recovery_codes("EXAMPLE-code-1\nEXAMPLE-code-2").unwrap();
+        codes[0].set_used(true);
+        s.add_item(custom("backup", FieldValue::RecoveryCodes(codes)))
+            .unwrap();
+        s.add_item(note("Plain")).unwrap();
+        let found = s.search(&q("")).unwrap();
+        assert_eq!(found[0].title, "Kept");
+        assert_eq!(found[0].codes_left, Some(1));
+        assert_eq!(found[1].codes_left, None);
+        assert!(titles(&s, &q("EXAMPLE-code")).is_empty());
+        let shown = format!("{found:?}");
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
+        assert!(shown.contains("codes_left: Some(1)"), "{shown}");
     }
 
     #[test]

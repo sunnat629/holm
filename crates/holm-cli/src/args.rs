@@ -86,7 +86,7 @@ pub const SECRET_ON_COMMAND_LINE: UsageError =
     UsageError("A secret is typed at the prompt, not on the command line.");
 /// `--preset` with an unknown name.
 pub const BAD_PRESET: UsageError = UsageError(
-    "The preset must be email, cloudflare, github, server, database, aws, api-key, wifi, bank-card or custom.",
+    "The preset must be email, cloudflare, github, server, database, aws, api-key, wifi, bank-card, recovery-codes or custom.",
 );
 /// `--kind` with an unknown value.
 pub const BAD_KIND: UsageError =
@@ -796,6 +796,8 @@ fn preset_of(value: &str) -> Result<FieldPreset, UsageError> {
         Ok(FieldPreset::WiFi)
     } else if value.eq_ignore_ascii_case("bank-card") {
         Ok(FieldPreset::BankCard)
+    } else if value.eq_ignore_ascii_case("recovery-codes") {
+        Ok(FieldPreset::RecoveryCodes)
     } else if value.eq_ignore_ascii_case("custom") {
         Ok(FieldPreset::Custom)
     } else {
@@ -1755,6 +1757,20 @@ mod tests {
             parse_strs(&["add", "login", "--title", "T", "--preset", "nope"]).unwrap_err(),
             BAD_PRESET
         );
+        assert!(
+            BAD_PRESET
+                .0
+                .contains("bank-card, recovery-codes or custom.")
+        );
+        for name in ["recovery-codes", "Recovery-Codes"] {
+            let Command::Add(add) = parse_strs(&["add", "login", "--title", "T", "--preset", name])
+                .unwrap()
+                .command
+            else {
+                panic!("not add");
+            };
+            assert_eq!(add.preset, Some(FieldPreset::RecoveryCodes), "{name}");
+        }
         assert_eq!(
             parse_strs(&["edit", "abcdef", "--preset", "server"]).unwrap_err(),
             UNKNOWN_FLAG

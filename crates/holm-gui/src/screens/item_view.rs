@@ -24,6 +24,11 @@
 //! Secret and multiline values take the same secret row as notes, with the fixed Reveal
 //! and Copy labels, and hide after [`REHIDE_PASSWORD_SECS`].
 //!
+//! Recovery codes show a count line, then one row per code: its number, dots (struck
+//! through and weak once used), Copy for an unused code, and Mark used or Mark unused.
+//! A code is never painted or put in a label. Mark returns a [`Job::SetFields`] built
+//! from a copy of the item's fields with that one flag flipped.
+//!
 //! Crypto addresses, recovery phrases and secure notes keep their built-in fields
 //! read-only, but "Edit fields" opens a [`FieldEditor`] for the custom fields alone.
 //! Save sends [`Job::SetFields`]; Cancel drops the editor, which wipes its buffers.
@@ -32,7 +37,7 @@ use std::time::Duration;
 
 use eframe::egui;
 use holm_core::error::CoreError;
-use holm_core::fields::{FieldValue, codes_left, format_date};
+use holm_core::fields::{FieldValue, RecoveryCode, codes_left, format_date};
 use holm_core::item::{Item, ItemData};
 use holm_core::settings::{REHIDE_PASSWORD_SECS, REHIDE_PHRASE_SECS};
 use holm_core::text::SecretText;
@@ -44,7 +49,7 @@ use super::fields::FieldEditor;
 use crate::messages;
 use crate::secret_input::{MASTER_CAP, SecretInput};
 use crate::widgets::secret_field::paint_secret;
-use crate::worker::Job;
+use crate::worker::{Job, copy_field_flipping};
 
 /// Label of the edit button.
 pub(crate) const EDIT_LABEL: &str = "Edit";
@@ -72,6 +77,10 @@ const COPY_PHRASE: &str = "Copy phrase";
 const CANCEL_LABEL: &str = "Cancel";
 /// Label of the custom field editor's save button.
 const SAVE_FIELDS: &str = "Save";
+/// Label of a recovery code's button that marks it used.
+pub(crate) const MARK_USED: &str = "Mark used";
+/// Label of a recovery code's button that marks it unused again.
+pub(crate) const MARK_UNUSED: &str = "Mark unused";
 /// How a hidden field looks.
 pub(crate) const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
@@ -295,8 +304,8 @@ pub(crate) fn show_item(
         if let Some(job) = edit_fields(ui, item, view, io) {
             action = ItemAction::Job(job);
         }
-    } else {
-        custom_rows(ui, item, view, now, io);
+    } else if let Some(job) = custom_rows(ui, item, view, now, io) {
+        action = ItemAction::Job(job);
     }
     if let Some(note) = &view.copy_note {
         ui.label(note.as_str());
@@ -460,18 +469,20 @@ fn secret_row(
 
 /// Every custom field of `item`, in order. Text and dates are plain labels; secret and
 /// multiline values take the secret row (dots, Reveal, Copy, painted while shown). The
-/// user's label is always its own `ui.label`, never part of a button.
+/// user's label is always its own `ui.label`, never part of a button. Returns the save
+/// job when a recovery code was marked used or unused.
 fn custom_rows(
     ui: &mut egui::Ui,
     item: &Item,
     view: &mut ItemView,
     now: Duration,
     io: &mut FieldIo<'_>,
-) {
+) -> Option<Job> {
     let fields = item.fields();
     if fields.is_empty() {
-        return;
+        return None;
     }
+    let mut job = None;
     ui.add_space(4.0);
     for (index, field) in fields.iter().enumerate() {
         // Core caps an item at MAX_CUSTOM_FIELDS (10), so every index fits in a u8.
@@ -498,6 +509,9 @@ fn custom_rows(
                     ui.label(field.label());
                     ui.label(egui::RichText::new(format!("{left} of {total} left")).weak());
                 });
+                if let Some(save) = code_rows(ui, item, view, io, index, position, codes) {
+                    job = Some(save);
+                }
             }
             FieldValue::Secret(value) | FieldValue::MultilineSecret(value) => {
                 let row = Row {
@@ -517,6 +531,52 @@ fn custom_rows(
             });
         }
     }
+    job
+}
+
+/// One row per recovery code of the field at `index` (0-based position `position`): its
+/// number, dots (struck through and weak when used), Copy for an unused code, and the
+/// mark button. The code itself is never in a label. Returns the save job for a mark:
+/// every field copied, with that one code's flag flipped.
+fn code_rows(
+    ui: &mut egui::Ui,
+    item: &Item,
+    view: &mut ItemView,
+    io: &mut FieldIo<'_>,
+    index: usize,
+    position: u8,
+    codes: &[RecoveryCode],
+) -> Option<Job> {
+    let mut flip = None;
+    for (i, code) in codes.iter().enumerate() {
+        ui.push_id((position, i), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("{}.", i + 1));
+                let dots = egui::RichText::new(DOTS);
+                if code.used() {
+                    ui.label(dots.strikethrough().weak());
+                } else {
+                    ui.label(dots);
+                    if ui.button(COPY_LABEL).clicked() {
+                        copy(io, code.code().expose(), &mut view.copy_note);
+                    }
+                }
+                let mark = if code.used() { MARK_UNUSED } else { MARK_USED };
+                if ui.button(mark).clicked() {
+                    flip = Some(i);
+                }
+            });
+        });
+    }
+    let code_index = flip?;
+    let fields = item
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(n, field)| copy_field_flipping(field, (n == index).then_some(code_index)))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    Some(Job::SetFields(item.id(), fields))
 }
 
 /// The ten ASCII bytes of [`format_date`] as text.

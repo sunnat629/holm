@@ -141,11 +141,6 @@ pub(crate) fn add_to(
         None => None,
         Some(name) => Some(category_named(session, name)?),
     };
-    let fields = match args.preset {
-        Some(preset) => fields_from_preset(preset)?,
-        None => Vec::new(),
-    };
-    let custom_count = fields.len();
     let notes = |term: &mut dyn Terminal, ask: bool| -> Result<SecretText, CliError> {
         if ask {
             hidden(term, "Notes: ", MAX_NOTE_BYTES)
@@ -191,6 +186,11 @@ pub(crate) fn add_to(
             body: hidden(term, "Note: ", MAX_NOTE_BYTES)?,
         },
     };
+    // Preset rows come after the item's own secrets, so a codes prompt is last.
+    let (fields, empty_count) = match args.preset {
+        Some(preset) => fields_from_preset(preset, term)?,
+        None => (Vec::new(), 0),
+    };
     let input = ItemInput {
         fields,
         title: text_of(args.title),
@@ -199,8 +199,8 @@ pub(crate) fn add_to(
         data,
     };
     let id = session.add_item(input).map_err(|e| write_error(&e))?;
-    if custom_count > 0 {
-        writeln!(out, "Added {custom_count} custom fields with empty values.")?;
+    if empty_count > 0 {
+        writeln!(out, "Added {empty_count} custom fields with empty values.")?;
     }
     writeln!(out, "Added {}.", short(id))?;
     Ok(())
@@ -611,12 +611,8 @@ fn read_value(
                 *field_value = None;
                 return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
             }
-            let typed = term.secret(
-                FIELD_PROMPT,
-                MAX_RECOVERY_CODES * (MAX_RECOVERY_CODE_BYTES + 1),
-            )?;
-            let codes = parse_recovery_codes(&typed).map_err(CliError::Field)?;
-            Ok(FieldValue::RecoveryCodes(codes))
+            let typed = type_codes(term)?;
+            codes_value(&typed)
         }
         FieldKind::Text => {
             let typed = field_value.take().ok_or(CliError::Usage(MISSING_VALUE))?;
@@ -629,6 +625,20 @@ fn read_value(
             Ok(FieldValue::Date(date))
         }
     }
+}
+
+/// The hidden prompt for a recovery codes list, one code per line.
+fn type_codes(term: &mut dyn Terminal) -> Result<Zeroizing<String>, CliError> {
+    Ok(term.secret(
+        FIELD_PROMPT,
+        MAX_RECOVERY_CODES * (MAX_RECOVERY_CODE_BYTES + 1),
+    )?)
+}
+
+/// Typed codes as a field value. An error names the rule only, never a code.
+fn codes_value(typed: &str) -> Result<FieldValue, CliError> {
+    let codes = parse_recovery_codes(typed).map_err(CliError::Field)?;
+    Ok(FieldValue::RecoveryCodes(codes))
 }
 
 fn position_index(position: u8) -> Result<usize, CliError> {
@@ -669,8 +679,16 @@ fn copy_field(field: &CustomField) -> Result<CustomField, CliError> {
     try_field(Text::new(field.label().to_owned()), value, field.expiry()).map_err(CliError::Field)
 }
 
-fn fields_from_preset(preset: FieldPreset) -> Result<Vec<CustomField>, CliError> {
+/// The preset's rows, and how many of them were stored with an empty value.
+///
+/// A codes list cannot be empty, so it is asked for at the hidden prompt; nothing
+/// typed skips the row. A date row has no empty value and is skipped.
+fn fields_from_preset(
+    preset: FieldPreset,
+    term: &mut dyn Terminal,
+) -> Result<(Vec<CustomField>, usize), CliError> {
     let mut fields = Vec::new();
+    let mut empty = 0;
     for row in preset_fields(preset) {
         let value = match row.kind {
             FieldKind::Text => FieldValue::Text(Text::new(String::new())),
@@ -678,14 +696,23 @@ fn fields_from_preset(preset: FieldPreset) -> Result<Vec<CustomField>, CliError>
             FieldKind::MultilineSecret => {
                 FieldValue::MultilineSecret(SecretText::new(String::new()))
             }
-            // A date row has no empty value, and a codes list cannot be empty.
-            FieldKind::Date | FieldKind::RecoveryCodes => continue,
+            FieldKind::RecoveryCodes => {
+                let typed = type_codes(term)?;
+                if typed.trim().is_empty() {
+                    continue;
+                }
+                codes_value(&typed)?
+            }
+            FieldKind::Date => continue,
         };
+        if !matches!(value, FieldValue::RecoveryCodes(_)) {
+            empty += 1;
+        }
         fields.push(
             try_field(Text::new(row.label.to_owned()), value, None).map_err(CliError::Field)?,
         );
     }
-    Ok(fields)
+    Ok((fields, empty))
 }
 
 fn keep_text_str(s: &str) -> Text {

@@ -17,6 +17,9 @@ pub const PHRASE_SUBTITLE: &str = "Recovery phrase";
 /// The subtitle of every secure note.
 pub const NOTE_SUBTITLE: &str = "Secure note";
 
+/// A row shows the low-codes badge when its fewest unused recovery codes is at most this.
+const CODES_LOW_AT: usize = 2;
+
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
@@ -57,6 +60,9 @@ pub struct ItemRow {
     pub category_slot: Option<usize>,
     /// The soonest custom-field reminder as a badge. `None` when no field has one.
     pub expiry_badge: Option<ExpiryBadge>,
+    /// The fewest unused recovery codes on the item, when that is [`CODES_LOW_AT`] or
+    /// fewer. A count only, never a code.
+    pub codes_low: Option<usize>,
     /// When the item last changed, for the card's right edge. Never a secret.
     pub updated: String,
 }
@@ -74,6 +80,7 @@ impl fmt::Debug for ItemRow {
             )
             .field("category_slot", &self.category_slot)
             .field("expiry_badge", &self.expiry_badge)
+            .field("codes_low", &self.codes_low)
             .field("updated", &self.updated)
             .finish()
     }
@@ -111,6 +118,7 @@ pub fn build_rows(
                 expiry_badge: s
                     .soonest_expiry
                     .map(|expiry| ExpiryBadge::from(expiry_status(expiry, today))),
+                codes_low: s.codes_left.filter(|left| *left <= CODES_LOW_AT),
                 updated: updated_label(s.updated, now, utc_offset_secs),
             }
         })
@@ -189,7 +197,8 @@ mod tests {
     use super::*;
     use holm_core::clock::SystemClock;
     use holm_core::fields::{
-        CustomField, FieldValue, epoch_day, from_unix_secs, parse_date, try_field,
+        CustomField, FieldValue, epoch_day, from_unix_secs, parse_date, parse_recovery_codes,
+        try_field,
     };
     use holm_core::item::{ItemData, ItemInput};
     use holm_core::search::Query;
@@ -390,6 +399,41 @@ mod tests {
         let shown = format!("{:?}", rows[0]);
         assert!(!shown.contains("EXAMPLE-field-secret"), "{shown}");
         assert!(!shown.contains("remind"), "{shown}");
+    }
+
+    /// A login titled `title` with three codes, the first `used` of them marked used.
+    fn with_codes(title: &str, used: usize) -> ItemInput {
+        let mut codes = parse_recovery_codes("EXAMPLE-1\nEXAMPLE-2\nEXAMPLE-3").unwrap();
+        for code in codes.iter_mut().take(used) {
+            code.set_used(true);
+        }
+        let mut item = input(title, "", &[]);
+        item.fields = vec![
+            try_field(
+                Text::new("codes".to_owned()),
+                FieldValue::RecoveryCodes(codes),
+                None,
+            )
+            .unwrap(),
+        ];
+        item
+    }
+
+    #[test]
+    fn codes_badge_shows_at_two_or_fewer() {
+        let rows = rows_for(vec![
+            with_codes("a", 0),
+            with_codes("b", 1),
+            with_codes("c", 3),
+            input("d", "", &[]),
+        ]);
+        assert_eq!(rows[0].codes_low, None, "three left is not low");
+        assert_eq!(rows[1].codes_low, Some(2), "two left is the edge");
+        assert_eq!(rows[2].codes_low, Some(0), "none left still shows");
+        assert_eq!(rows[3].codes_low, None, "no codes, no badge");
+        let shown = format!("{:?}", rows[1]);
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
+        assert!(shown.contains("codes_low"), "{shown}");
     }
 
     #[test]

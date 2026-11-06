@@ -273,6 +273,21 @@ pub fn codes_left(codes: &[RecoveryCode]) -> (usize, usize) {
     (codes.iter().filter(|code| !code.used).count(), codes.len())
 }
 
+/// The smallest count of unused codes over every recovery codes field in `fields`.
+///
+/// `None` when no field holds recovery codes. This reads only each code's `used` flag;
+/// it never reads a code's text.
+#[must_use]
+pub fn fewest_codes_left(fields: &[CustomField]) -> Option<usize> {
+    fields
+        .iter()
+        .filter_map(|field| match field.value() {
+            FieldValue::RecoveryCodes(codes) => Some(codes_left(codes).0),
+            _ => None,
+        })
+        .min()
+}
+
 /// A custom value. Secret variants own wiping text; no variant implements `Clone`.
 pub enum FieldValue {
     /// One display line, never searched.
@@ -550,6 +565,8 @@ pub enum FieldPreset {
     WiFi,
     /// Cardholder, number, expiry and CVV.
     BankCard,
+    /// One recovery codes list.
+    RecoveryCodes,
     /// No rows.
     Custom,
 }
@@ -626,6 +643,8 @@ const BANK_CARD: &[PresetField] = &[
     preset_row("CVV", FieldKind::Secret),
 ];
 
+const RECOVERY_CODES: &[PresetField] = &[preset_row("Recovery codes", FieldKind::RecoveryCodes)];
+
 /// Labels and kinds for `preset`. [`FieldPreset::Custom`] is an empty slice.
 ///
 /// The rows have no values. A caller that stores them starts from empty values.
@@ -641,6 +660,7 @@ pub fn preset_fields(preset: FieldPreset) -> &'static [PresetField] {
         FieldPreset::ApiKey => API_KEY,
         FieldPreset::WiFi => WIFI,
         FieldPreset::BankCard => BANK_CARD,
+        FieldPreset::RecoveryCodes => RECOVERY_CODES,
         FieldPreset::Custom => &[],
     }
 }
@@ -995,10 +1015,68 @@ mod tests {
             FieldPreset::ApiKey,
             FieldPreset::WiFi,
             FieldPreset::BankCard,
+            FieldPreset::RecoveryCodes,
             FieldPreset::Custom,
         ] {
             assert!(preset_fields(preset).len() <= MAX_CUSTOM_FIELDS);
         }
+    }
+
+    #[test]
+    fn preset_recovery_codes_is_one_codes_row() {
+        let rows = preset_fields(FieldPreset::RecoveryCodes);
+        assert_eq!(
+            rows,
+            [PresetField {
+                label: "Recovery codes",
+                kind: FieldKind::RecoveryCodes,
+            }]
+            .as_slice()
+        );
+    }
+
+    fn codes_field(text: &str, used: &[usize]) -> CustomField {
+        let mut codes = parse_recovery_codes(text).unwrap();
+        for &index in used {
+            codes[index].set_used(true);
+        }
+        try_field(
+            Text::new("codes".to_owned()),
+            FieldValue::RecoveryCodes(codes),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn fewest_codes_left_without_codes_is_none() {
+        assert_eq!(fewest_codes_left(&[]), None);
+        assert_eq!(fewest_codes_left(&[field("plain", "", None)]), None);
+    }
+
+    #[test]
+    fn fewest_codes_left_one_list() {
+        let fields = [
+            field("plain", "", None),
+            codes_field("EXAMPLE-1\nEXAMPLE-2\nEXAMPLE-3", &[1]),
+        ];
+        assert_eq!(fewest_codes_left(&fields), Some(2));
+    }
+
+    #[test]
+    fn fewest_codes_left_picks_the_smaller_list() {
+        let fields = [
+            codes_field("EXAMPLE-1\nEXAMPLE-2\nEXAMPLE-3", &[]),
+            field("plain", "", None),
+            codes_field("EXAMPLE-4\nEXAMPLE-5", &[0]),
+        ];
+        assert_eq!(fewest_codes_left(&fields), Some(1));
+    }
+
+    #[test]
+    fn fewest_codes_left_all_used_is_zero() {
+        let fields = [codes_field("EXAMPLE-1\nEXAMPLE-2", &[0, 1])];
+        assert_eq!(fewest_codes_left(&fields), Some(0));
     }
 
     #[test]

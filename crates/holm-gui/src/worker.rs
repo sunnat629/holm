@@ -370,6 +370,15 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
 /// A wiping copy of one custom field. `CustomField` has no `Clone`, so the copy is
 /// rebuilt through `try_field`; a secret goes straight into a new `SecretText`.
 fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
+    copy_field_flipping(field, None)
+}
+
+/// [`copy_field`], with the `used` flag of the recovery code at `flip` inverted. `None`,
+/// or a field that holds no such code, gives an exact copy.
+pub(crate) fn copy_field_flipping(
+    field: &CustomField,
+    flip: Option<usize>,
+) -> Result<CustomField, FieldError> {
     let value = match field.value() {
         FieldValue::Text(text) => FieldValue::Text(text.clone()),
         FieldValue::Secret(secret) => {
@@ -382,10 +391,11 @@ fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
         FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
             codes
                 .iter()
-                .map(|code| {
+                .enumerate()
+                .map(|(i, code)| {
                     RecoveryCode::new(
                         SecretText::new(code.code().expose().to_owned()),
-                        code.used(),
+                        code.used() ^ (flip == Some(i)),
                     )
                 })
                 .collect(),
