@@ -22,7 +22,7 @@ use crate::rows::ExpiryBadge;
 /// The label of the capture protection toggle.
 pub const HIDE_FROM_CAPTURE_LABEL: &str = "Hide window from screenshots and screen sharing";
 /// The toggle's hint. Honest about what it does not stop.
-pub const HIDE_FROM_CAPTURE_HINT: &str = "Hides Holm from most screenshots and screen sharing. Some capture tools and cameras can still see it.";
+pub const HIDE_FROM_CAPTURE_HINT: &str = "May hide Holm from some screenshots and screen sharing. Many capture tools, screen recorders and cameras can still see it.";
 /// Shown when the OS refused the change, so the user does not trust a hidden window.
 pub const HIDE_FROM_CAPTURE_FAILED: &str = "Holm could not hide its window from captures.";
 /// Shown when the preference could not be written; it then lasts until Holm closes.

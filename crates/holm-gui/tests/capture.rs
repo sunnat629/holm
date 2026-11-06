@@ -116,3 +116,43 @@ fn an_unsupported_platform_shows_no_toggle() {
     harness.run();
     assert!(harness.query_by_label(HIDE_FROM_CAPTURE_LABEL).is_none());
 }
+
+#[test]
+fn a_failed_apply_at_startup_with_the_setting_on_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    holm_platform::prefs::save(
+        &vault_path(dir.path()),
+        holm_platform::prefs::Prefs {
+            hide_from_capture: true,
+        },
+    )
+    .unwrap();
+    let fake = FakeCapture {
+        fail: true,
+        ..FakeCapture::default()
+    };
+    let (app, _clock) = test_app_with_capture(dir.path(), Box::new(fake.clone()));
+    // The startup apply was tried (and failed) before the first frame.
+    assert_eq!(fake.calls.borrow().first(), Some(&true));
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_label(holm_gui::messages::HIDE_FROM_CAPTURE_FAILED);
+}
+
+#[test]
+fn a_prefs_file_that_cannot_be_written_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    make_vault(dir.path(), PASSWORD);
+    // A directory where the prefs file belongs makes the final rename fail.
+    std::fs::create_dir(holm_platform::prefs::prefs_path(&vault_path(dir.path()))).unwrap();
+    let fake = FakeCapture::default();
+    let (app, _clock) = test_app_with_capture(dir.path(), Box::new(fake));
+    let mut harness = harness(app);
+    harness.run();
+    harness.get_by_label(HIDE_FROM_CAPTURE_LABEL).click();
+    harness.run();
+    // Applied for this run, but the user is told it will not last.
+    assert!(harness.state().hide_from_capture());
+    harness.get_by_label(holm_gui::messages::PREFS_NOT_SAVED);
+}

@@ -22,8 +22,8 @@ needed none at all.
 ## The rule: unsafe lives in one place
 
 `holm-gui` has `#![forbid(unsafe_code)]`. `holm-platform` has `unsafe_code = "deny"`, and the one
-file that needs it (`window.rs`) opts in with `#[allow(unsafe_code)]`. The two new files here
-say `#![forbid(unsafe_code)]` again. If someone later pastes an `unsafe` block into them, the
+file that needs it (`window.rs`) opts in with an inner attribute at the top of the file,
+`#![allow(unsafe_code, reason = "...")]`. The two new files here say `#![forbid(unsafe_code)]` again. If someone later pastes an `unsafe` block into them, the
 compiler refuses. `forbid` cannot be switched off further down the tree, `deny` can.
 
 ## The best unsafe is none
@@ -37,15 +37,14 @@ with its safety rules. `NSWindow::setSharingType` is marked safe, and `NSApplica
 is safe too, as long as you can prove you are on the main thread. You prove it with a value:
 
 ```rust
-let Some(mtm) = MainThreadMarker::new() else {
-    return Err(CaptureError::NotMainThread);
-};
+let mtm = MainThreadMarker::new().ok_or(CaptureError::NotMainThread)?;
 let app = NSApplication::sharedApplication(mtm);
 ```
 
 `MainThreadMarker::new()` returns `None` off the main thread. Only code that holds the marker can
-call the main-thread-only methods, so "forgot which thread" becomes a compile error, not a
-crash. Enabling the call took one Cargo feature (`NSApplication`) on a crate already in
+call the main-thread-only methods, so leaving the marker out is a compile error. The check
+that you really are on the main thread still happens at run time, inside `MainThreadMarker::new()`.
+The type forces the check to be written; it cannot run it for you. Enabling the call took one Cargo feature (`NSApplication`) on a crate already in
 `Cargo.lock`. No new crate came in.
 
 If a block of `unsafe` ever is needed, write what makes it sound right above it:
@@ -78,11 +77,11 @@ The GUI tests cannot read what the Mac compositor shows. So `HolmApp` takes a `B
 CaptureControl>`. Tests pass a `FakeCapture` that records every `apply(bool)` call, and check:
 the default is off and nothing is applied, a toggle applies at once and survives a restart, a
 failing apply shows the message, and an unsupported platform shows no toggle. The real check is by
-hand: run with the setting on, take `screencapture -x`, and look.
+hand: run with the setting on, then capture with QuickTime screen recording and a Zoom screen share and look. On macOS 15 and later `screencapture -x` may still show Holm, so do not trust it alone.
 
 ## Rust angle
 
-- `let ... else` for an early return on `None`.
+- `Option::ok_or` plus `?` to turn `None` into an error and return early.
 - `cfg!(all(feature = "gui-window", target_os = "macos"))` in a `const fn`.
 - A hand-written `Display` and `Error` for a two-variant enum when a derive crate is not worth a
   new dependency.
@@ -99,7 +98,7 @@ marker type to check the thread. In Rust the marker moves that check to compile 
 
 1. Delete the `MainThreadMarker` line and pass nothing. Read the compiler error.
 2. Add `unsafe { }` to `capture.rs`. What does `forbid(unsafe_code)` say?
-3. Turn the setting on, run `screencapture -x /tmp/a.png`, open it, and delete it. Is Holm there?
+3. Turn the setting on and record the screen with QuickTime, then share it in Zoom. Is Holm there? Try `screencapture -x` too; on macOS 15 and later it may still show Holm.
 
 ## Read next
 
