@@ -13,10 +13,12 @@ use std::thread;
 
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::fields::{CustomField, FieldValue, try_field};
 use holm_core::import::{ImportBatch, ImportPreview, ImportReport};
 use holm_core::item::{ItemData, ItemId, ItemInput};
+use holm_core::rules::FieldError;
 use holm_core::session::Session;
-use holm_core::text::SecretText;
+use holm_core::text::{SecretText, Text};
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
@@ -30,8 +32,11 @@ pub enum Job {
     Unlock(MasterPassword),
     /// Add this item and save. The input moves in and is wiped on the worker.
     Add(ItemInput),
-    /// Replace this item's fields and save.
+    /// Replace this item's fields, custom fields included, and save.
     Update(ItemId, ItemInput),
+    /// Replace only this item's custom fields, and save. The fields move in and are
+    /// wiped on the worker.
+    SetFields(ItemId, Vec<CustomField>),
     /// Write the unsaved changes to disk.
     Save,
     /// Read and parse the import file at this path, and preview it. Nothing is added.
@@ -67,7 +72,7 @@ impl Job {
             Job::Create(..) => JobKind::Create,
             Job::Unlock(_) => JobKind::Unlock,
             Job::Add(_) => JobKind::Add,
-            Job::Update(..) => JobKind::Update,
+            Job::Update(..) | Job::SetFields(..) => JobKind::Update,
             Job::Save => JobKind::Save,
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
@@ -85,6 +90,7 @@ impl fmt::Debug for Job {
                 write!(f, "Job::{:?}(<password hidden>)", self.kind())
             }
             Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
+            Job::SetFields(..) => write!(f, "Job::SetFields(<item hidden>)"),
             Job::Save => write!(f, "Job::Save"),
             Job::PreviewImport(_) | Job::Import(_) => {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
@@ -235,11 +241,30 @@ pub fn spawn(
                     keep_on_too_large(&result, backup, &mut returned);
                     result
                 }
-                Job::Update(id, input) => {
+                Job::Update(id, mut input) => {
+                    // The backup is taken first, so it holds the custom fields too.
                     let backup = backup_login(&input);
-                    let result = session.update_item(id, input);
+                    // `update_item` ignores `input.fields`: they are set afterwards.
+                    let fields = core::mem::take(&mut input.fields);
+                    let result = session.update_item(id, input).and_then(|()| {
+                        session.set_custom_fields(id, fields)?;
+                        if session.is_dirty() {
+                            session.save()
+                        } else {
+                            Ok(())
+                        }
+                    });
                     keep_on_too_large(&result, backup, &mut returned);
                     result
+                }
+                Job::SetFields(id, fields) => {
+                    session.set_custom_fields(id, fields).and_then(|()| {
+                        if session.is_dirty() {
+                            session.save()
+                        } else {
+                            Ok(())
+                        }
+                    })
                 }
                 Job::Save => session.save(),
                 Job::PreviewImport(path) => {
@@ -308,8 +333,10 @@ fn preview_file(session: &Session<FsStore>, path: &std::path::Path) -> TransferR
     }
 }
 
-/// A zeroizing copy of a login input, so it survives core consuming the original.
-/// `None` for other item kinds (the GUI only builds logins).
+/// A zeroizing copy of a login input, custom fields included, so it survives core
+/// consuming the original. `None` for other item kinds (the GUI only builds logins), and
+/// when a custom field breaks a field rule (core then refuses the input before any
+/// `TooLargeToSave`, so the backup would never be handed back).
 fn backup_login(input: &ItemInput) -> Option<ItemInput> {
     let ItemData::Login {
         username,
@@ -320,8 +347,14 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
     else {
         return None;
     };
+    let fields = input
+        .fields
+        .iter()
+        .map(copy_field)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
     Some(ItemInput {
-        fields: Vec::new(),
+        fields,
         title: input.title.clone(),
         category: input.category,
         favourite: input.favourite,
@@ -332,6 +365,22 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
             notes: SecretText::new(notes.expose().to_owned()),
         },
     })
+}
+
+/// A wiping copy of one custom field. `CustomField` has no `Clone`, so the copy is
+/// rebuilt through `try_field`; a secret goes straight into a new `SecretText`.
+fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
+    let value = match field.value() {
+        FieldValue::Text(text) => FieldValue::Text(text.clone()),
+        FieldValue::Secret(secret) => {
+            FieldValue::Secret(SecretText::new(secret.expose().to_owned()))
+        }
+        FieldValue::MultilineSecret(secret) => {
+            FieldValue::MultilineSecret(SecretText::new(secret.expose().to_owned()))
+        }
+        FieldValue::Date(date) => FieldValue::Date(*date),
+    };
+    try_field(Text::new(field.label().to_owned()), value, field.expiry())
 }
 
 /// Hands the backup back only when the change was undone for being too large. In every
@@ -379,6 +428,9 @@ mod tests {
         };
         assert_eq!(format!("{job:?}"), "Job::RevealPhrase(<password hidden>)");
         assert!(!job.kind().is_transfer());
+        let job = Job::SetFields(ItemId::random().unwrap(), Vec::new());
+        assert_eq!(format!("{job:?}"), "Job::SetFields(<item hidden>)");
+        assert_eq!(job.kind(), JobKind::Update);
     }
 
     #[test]
@@ -427,6 +479,61 @@ mod tests {
         }
     }
 
+    #[test]
+    fn backup_login_keeps_custom_fields() {
+        use holm_core::fields::{FieldValue, parse_date, try_field};
+        use holm_core::text::{SecretText, Text};
+
+        let mut input = login("With fields");
+        input.fields = vec![
+            try_field(
+                Text::new("PIN".to_owned()),
+                FieldValue::Secret(SecretText::new("EXAMPLE-field-secret".to_owned())),
+                parse_date("2026-11-05"),
+            )
+            .unwrap(),
+            try_field(
+                Text::new("SSH private key".to_owned()),
+                FieldValue::MultilineSecret(SecretText::new(
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nEXAMPLE\n".to_owned(),
+                )),
+                None,
+            )
+            .unwrap(),
+            try_field(
+                Text::new("Account".to_owned()),
+                FieldValue::Text(Text::new("public-note-EXAMPLE".to_owned())),
+                None,
+            )
+            .unwrap(),
+            try_field(
+                Text::new("Expiry".to_owned()),
+                FieldValue::Date(parse_date("2027-01-31").unwrap()),
+                None,
+            )
+            .unwrap(),
+        ];
+
+        let backup = backup_login(&input).expect("a login has a backup");
+        assert_eq!(backup.fields.len(), input.fields.len());
+        for (copy, original) in backup.fields.iter().zip(&input.fields) {
+            assert_eq!(copy.label(), original.label());
+            assert_eq!(copy.kind(), original.kind());
+            assert_eq!(copy.expiry(), original.expiry());
+            let same = match (copy.value(), original.value()) {
+                (FieldValue::Text(a), FieldValue::Text(b)) => a.as_str() == b.as_str(),
+                (FieldValue::Secret(a), FieldValue::Secret(b))
+                | (FieldValue::MultilineSecret(a), FieldValue::MultilineSecret(b)) => {
+                    a.expose() == b.expose()
+                }
+                (FieldValue::Date(a), FieldValue::Date(b)) => a == b,
+                _ => false,
+            };
+            assert!(same, "field {} changed", copy.label());
+        }
+        assert!(!format!("{:?}", backup.fields).contains("EXAMPLE"));
+    }
+
     fn run(session: Session<FsStore>, job: Job) -> WorkDone {
         spawn(session, job, || {}).recv().unwrap()
     }
@@ -459,5 +566,65 @@ mod tests {
             format!("{:?}", Job::Add(login("Secret title"))),
             "Job::Add(<item hidden>)"
         );
+    }
+
+    #[test]
+    fn update_job_keeps_and_sets_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Holm").join("holm.vault");
+        holm_platform::paths::ensure_vault_dir(&path).unwrap();
+        let mut session = Session::new(FsStore::new(path), Box::new(SystemClock::new()));
+        let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
+        session.create(&password, &KdfParams::FLOOR).unwrap();
+
+        let done = run(session, Job::Add(login("Server")));
+        let id = done.added.expect("an add returns the new id");
+
+        // An update sets new custom fields.
+        let mut input = login("Server");
+        input.fields = vec![
+            try_field(
+                Text::new("PIN".to_owned()),
+                FieldValue::Secret(SecretText::new("EXAMPLE-field-secret".to_owned())),
+                None,
+            )
+            .unwrap(),
+        ];
+        let done = run(done.session, Job::Update(id, input));
+        assert_eq!(done.kind, JobKind::Update);
+        assert_eq!(done.result, Ok(()));
+        assert!(done.returned.is_none());
+        assert!(!done.session.is_dirty(), "the fields are saved");
+        {
+            let item = done.session.item(id).unwrap();
+            assert_eq!(item.fields().len(), 1);
+            assert_eq!(item.fields()[0].label(), "PIN");
+            assert!(matches!(
+                item.fields()[0].value(),
+                FieldValue::Secret(s) if s.expose() == "EXAMPLE-field-secret"
+            ));
+        }
+
+        // An edit that sends the stored fields back keeps them.
+        let kept = done
+            .session
+            .item(id)
+            .unwrap()
+            .fields()
+            .iter()
+            .map(|f| copy_field(f).unwrap())
+            .collect::<Vec<_>>();
+        let mut input = login("Renamed");
+        input.fields = kept;
+        let done = run(done.session, Job::Update(id, input));
+        assert_eq!(done.result, Ok(()));
+        assert!(!done.session.is_dirty());
+        let item = done.session.item(id).unwrap();
+        assert_eq!(item.title(), "Renamed");
+        assert_eq!(item.fields().len(), 1, "an edit never drops a stored field");
+        assert!(matches!(
+            item.fields()[0].value(),
+            FieldValue::Secret(s) if s.expose() == "EXAMPLE-field-secret"
+        ));
     }
 }

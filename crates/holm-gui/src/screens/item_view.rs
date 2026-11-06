@@ -17,11 +17,22 @@
 //!
 //! Every Copy goes through Holm's clipboard and `io.copied`, so the app schedules its
 //! clear the same way for every field.
+//!
+//! Custom fields follow the built-in ones on every item type. The user's label is its
+//! own plain label, never a button name. A text value is a plain label. A date is shown
+//! as `YYYY-MM-DD`. A reminder sits on its own line under [`messages::REMIND_ON`].
+//! Secret and multiline values take the same secret row as notes, with the fixed Reveal
+//! and Copy labels, and hide after [`REHIDE_PASSWORD_SECS`].
+//!
+//! Crypto addresses, recovery phrases and secure notes keep their built-in fields
+//! read-only, but "Edit fields" opens a [`FieldEditor`] for the custom fields alone.
+//! Save sends [`Job::SetFields`]; Cancel drops the editor, which wipes its buffers.
 
 use std::time::Duration;
 
 use eframe::egui;
 use holm_core::error::CoreError;
+use holm_core::fields::{FieldValue, format_date};
 use holm_core::item::{Item, ItemData};
 use holm_core::settings::{REHIDE_PASSWORD_SECS, REHIDE_PHRASE_SECS};
 use holm_core::text::SecretText;
@@ -29,8 +40,10 @@ use holm_core::throttle::ThrottleStatus;
 use zeroize::Zeroizing;
 
 use super::FieldIo;
+use super::fields::FieldEditor;
 use crate::messages;
 use crate::secret_input::{MASTER_CAP, SecretInput};
+use crate::widgets::secret_field::paint_secret;
 use crate::worker::Job;
 
 /// Label of the edit button.
@@ -57,6 +70,8 @@ const REVEAL_PHRASE: &str = "Reveal\u{2026}";
 const SHOW_PHRASE: &str = "Show phrase";
 const COPY_PHRASE: &str = "Copy phrase";
 const CANCEL_LABEL: &str = "Cancel";
+/// Label of the custom field editor's save button.
+const SAVE_FIELDS: &str = "Save";
 /// How a hidden field looks.
 pub(crate) const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
@@ -75,6 +90,8 @@ pub(crate) enum RevealField {
     Body,
     /// A recovery phrase, after the password check.
     Phrase,
+    /// A custom secret or multiline field, by its 0-based position on the item.
+    Custom(u8),
 }
 
 impl RevealField {
@@ -82,7 +99,12 @@ impl RevealField {
     fn shows_for(self) -> Duration {
         let secs = match self {
             RevealField::Phrase => REHIDE_PHRASE_SECS,
-            _ => REHIDE_PASSWORD_SECS,
+            RevealField::Password
+            | RevealField::Notes
+            | RevealField::Address
+            | RevealField::Memo
+            | RevealField::Body
+            | RevealField::Custom(_) => REHIDE_PASSWORD_SECS,
         };
         Duration::from_secs(u64::from(secs))
     }
@@ -111,6 +133,8 @@ pub(crate) struct ItemView {
     gate_error: Option<&'static str>,
     /// The line after a Copy, or from the app's clipboard clear.
     copy_note: Option<String>,
+    /// The open custom field editor of a non-login item. Wipes itself on drop.
+    fields: Option<FieldEditor>,
 }
 
 impl ItemView {
@@ -122,6 +146,7 @@ impl ItemView {
             phrase: None,
             gate_error: None,
             copy_note: None,
+            fields: None,
         }
     }
 
@@ -156,12 +181,18 @@ impl ItemView {
 
     /// Whether the gate's field is empty and no phrase is held.
     pub(crate) fn buffers_empty(&self) -> bool {
-        self.phrase.is_none() && self.phrase_gate.as_ref().is_none_or(SecretInput::is_empty)
+        self.phrase.is_none()
+            && self.phrase_gate.as_ref().is_none_or(SecretInput::is_empty)
+            && self.fields.is_none()
     }
 
-    /// Characters typed into the gate's field.
+    /// Characters typed into the gate's field and the field editor's secret buffers.
     pub(crate) fn secret_char_count(&self) -> usize {
         self.phrase_gate.as_ref().map_or(0, SecretInput::char_count)
+            + self
+                .fields
+                .as_ref()
+                .map_or(0, FieldEditor::secret_char_count)
     }
 
     /// Sets or clears the line under the Copy buttons.
@@ -260,6 +291,13 @@ pub(crate) fn show_item(
             secret_row(ui, view, now, io, Row::BODY, body);
         }
     }
+    if view.fields.is_some() {
+        if let Some(job) = edit_fields(ui, item, view, io) {
+            action = ItemAction::Job(job);
+        }
+    } else {
+        custom_rows(ui, item, view, now, io);
+    }
     if let Some(note) = &view.copy_note {
         ui.label(note.as_str());
     }
@@ -270,8 +308,44 @@ pub(crate) fn show_item(
         }
     } else {
         ui.label(messages::EDIT_IN_CLI);
+        if view.fields.is_none()
+            && ui.button(messages::EDIT_FIELDS).clicked()
+            && let Some(editor) = FieldEditor::from_fields(item.fields())
+        {
+            // Nothing stays revealed under the editor.
+            view.hide();
+            view.fields = Some(editor);
+        }
     }
     action
+}
+
+/// The open custom field editor with Save and Cancel. Returns the save job when the
+/// draft builds; the editor then closes. A broken rule keeps the draft and its line.
+fn edit_fields(
+    ui: &mut egui::Ui,
+    item: &Item,
+    view: &mut ItemView,
+    io: &mut FieldIo<'_>,
+) -> Option<Job> {
+    let editor = view.fields.as_mut()?;
+    ui.add_space(4.0);
+    editor.show(ui, io);
+    let mut save = false;
+    let mut cancel = false;
+    ui.horizontal(|ui| {
+        save = ui.button(SAVE_FIELDS).clicked();
+        cancel = ui.button(CANCEL_LABEL).clicked();
+    });
+    if cancel {
+        view.fields = None;
+        return None;
+    }
+    if save && let Ok(fields) = editor.build() {
+        view.fields = None;
+        return Some(Job::SetFields(item.id(), fields));
+    }
+    None
 }
 
 /// A login's password row: its name, dots and Reveal (or the countdown and Hide), and
@@ -311,34 +385,35 @@ fn password_row(
     }
 }
 
-/// The words and buttons of one secret row other than a login's password.
-struct Row {
+/// The words and buttons of one secret row other than a login's password. `name` is a
+/// fixed name or a custom field's label; the button labels are always fixed.
+struct Row<'a> {
     field: RevealField,
-    name: &'static str,
+    name: &'a str,
     reveal: &'static str,
     copy: &'static str,
 }
 
-impl Row {
-    const NOTES: Row = Row {
+impl Row<'static> {
+    const NOTES: Row<'static> = Row {
         field: RevealField::Notes,
         name: "Notes:",
         reveal: REVEAL_NOTES,
         copy: COPY_NOTES,
     };
-    const ADDRESS: Row = Row {
+    const ADDRESS: Row<'static> = Row {
         field: RevealField::Address,
         name: "Address:",
         reveal: REVEAL_ADDRESS,
         copy: COPY_ADDRESS,
     };
-    const MEMO: Row = Row {
+    const MEMO: Row<'static> = Row {
         field: RevealField::Memo,
         name: "Memo:",
         reveal: REVEAL_MEMO,
         copy: COPY_MEMO,
     };
-    const BODY: Row = Row {
+    const BODY: Row<'static> = Row {
         field: RevealField::Body,
         name: "Note:",
         reveal: REVEAL_NOTE,
@@ -353,7 +428,7 @@ fn secret_row(
     view: &mut ItemView,
     now: Duration,
     io: &mut FieldIo<'_>,
-    row: Row,
+    row: Row<'_>,
     value: &SecretText,
 ) {
     let until = view.until(row.field);
@@ -381,6 +456,65 @@ fn secret_row(
     if until.is_some() && view.until(row.field).is_some() {
         paint_secret(ui, value.expose());
     }
+}
+
+/// Every custom field of `item`, in order. Text and dates are plain labels; secret and
+/// multiline values take the secret row (dots, Reveal, Copy, painted while shown). The
+/// user's label is always its own `ui.label`, never part of a button.
+fn custom_rows(
+    ui: &mut egui::Ui,
+    item: &Item,
+    view: &mut ItemView,
+    now: Duration,
+    io: &mut FieldIo<'_>,
+) {
+    let fields = item.fields();
+    if fields.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    for (index, field) in fields.iter().enumerate() {
+        // Core caps an item at MAX_CUSTOM_FIELDS (10), so every index fits in a u8.
+        let Ok(position) = u8::try_from(index) else {
+            break;
+        };
+        match field.value() {
+            FieldValue::Text(text) => {
+                ui.horizontal(|ui| {
+                    ui.label(field.label());
+                    ui.label(text.as_str());
+                });
+            }
+            FieldValue::Date(date) => {
+                let bytes = format_date(*date);
+                ui.horizontal(|ui| {
+                    ui.label(field.label());
+                    ui.label(date_text(&bytes));
+                });
+            }
+            FieldValue::Secret(value) | FieldValue::MultilineSecret(value) => {
+                let row = Row {
+                    field: RevealField::Custom(position),
+                    name: field.label(),
+                    reveal: REVEAL_LABEL,
+                    copy: COPY_LABEL,
+                };
+                secret_row(ui, view, now, io, row, value);
+            }
+        }
+        if let Some(expiry) = field.expiry() {
+            let bytes = format_date(expiry);
+            ui.horizontal(|ui| {
+                ui.label(messages::REMIND_ON);
+                ui.label(date_text(&bytes));
+            });
+        }
+    }
+}
+
+/// The ten ASCII bytes of [`format_date`] as text.
+fn date_text(bytes: &[u8; 10]) -> &str {
+    core::str::from_utf8(bytes).unwrap_or("")
 }
 
 /// The phrase row and, while open, its password gate. Returns the check job when the
@@ -473,18 +607,6 @@ fn countdown(ui: &mut egui::Ui, until: Duration, now: Duration) {
     ui.label(format!("Visible \u{b7} hides in {secs} s"));
 }
 
-/// Paints `text` read-only in monospace, wrapped to the panel, on as many lines as it
-/// has. Painted, not a widget: no text edit, no selection, no accessibility value.
-fn paint_secret(ui: &mut egui::Ui, text: &str) {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let color = ui.visuals().strong_text_color();
-    let galley = ui
-        .painter()
-        .layout(text.to_owned(), font, color, ui.available_width());
-    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-    ui.painter().galley(rect.min, galley, color);
-}
-
 /// Copies `text` through Holm's clipboard (concealed, never egui's `copy_text`) and
 /// hands a wiping copy to the app, which schedules the clear. Sets the line after it.
 fn copy(io: &mut FieldIo<'_>, text: &str, note: &mut Option<String>) {
@@ -555,6 +677,44 @@ mod tests {
         assert!(view.phrase_gate.is_some());
         assert_eq!(view.gate_error, Some(messages::PHRASE_WRONG_PASSWORD));
         assert!(!view.is_revealed());
+    }
+
+    #[test]
+    fn custom_field_hides_after_thirty_seconds() {
+        let mut view = ItemView::new();
+        view.reveal(RevealField::Custom(3), secs(0));
+        assert_eq!(
+            view.until(RevealField::Custom(3)),
+            Some(secs(u64::from(REHIDE_PASSWORD_SECS)))
+        );
+        assert_eq!(view.until(RevealField::Custom(2)), None);
+        view.tick(secs(29), true);
+        assert!(view.is_revealed());
+        view.tick(secs(30), true);
+        assert!(!view.is_revealed());
+    }
+
+    #[test]
+    fn one_custom_field_shows_at_a_time() {
+        let mut view = with_phrase(secs(0));
+        view.reveal(RevealField::Custom(0), secs(1));
+        assert!(view.phrase.is_none(), "a custom reveal wipes the phrase");
+        view.reveal(RevealField::Custom(1), secs(2));
+        assert_eq!(view.until(RevealField::Custom(0)), None);
+        assert!(view.until(RevealField::Custom(1)).is_some());
+        view.tick(secs(3), false);
+        assert!(!view.is_revealed(), "blur hides it");
+    }
+
+    #[test]
+    fn field_editor_counts_and_drops() {
+        let mut view = ItemView::new();
+        assert!(view.buffers_empty());
+        view.fields = Some(FieldEditor::new());
+        assert!(!view.buffers_empty());
+        assert_eq!(view.secret_char_count(), 0);
+        view.fields = None;
+        assert!(view.buffers_empty());
     }
 
     #[test]

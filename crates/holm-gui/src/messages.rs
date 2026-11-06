@@ -201,9 +201,39 @@ pub fn expiry_badge_line(badge: ExpiryBadge) -> String {
     }
 }
 
+/// Button that adds a custom field. A label, so it has no closing period.
+pub const ADD_FIELD: &str = "Add field";
+/// Button that removes one custom field.
+pub const REMOVE_FIELD: &str = "Remove";
+/// Button that moves a custom field one place up.
+pub const MOVE_UP: &str = "Move up";
+/// Button that moves a custom field one place down.
+pub const MOVE_DOWN: &str = "Move down";
+/// Label of the preset picker for an item with no custom fields yet.
+pub const PRESET_LABEL: &str = "Preset";
+/// Name of a custom field's optional reminder date, kept apart from a `Date` value.
+pub const REMIND_ON: &str = "Remind on";
+/// Button that opens the custom field editor on an item whose built-in fields are
+/// edited with the holm command.
+pub const EDIT_FIELDS: &str = "Edit fields";
+
+/// The labels in `ALL`: plain text, but names rather than sentences, so they have no
+/// closing period.
+#[cfg(test)]
+const LABELS: [&str; 8] = [
+    CHIP_EXPIRING,
+    ADD_FIELD,
+    REMOVE_FIELD,
+    MOVE_UP,
+    MOVE_DOWN,
+    PRESET_LABEL,
+    REMIND_ON,
+    EDIT_FIELDS,
+];
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 61] = [
+const ALL: [&str; 68] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -265,6 +295,13 @@ const ALL: [&str; 61] = [
     PHRASE_WRONG_PASSWORD,
     LOCKED_SLEEP,
     CHIP_EXPIRING,
+    ADD_FIELD,
+    REMOVE_FIELD,
+    MOVE_UP,
+    MOVE_DOWN,
+    PRESET_LABEL,
+    REMIND_ON,
+    EDIT_FIELDS,
 ];
 
 /// Why the vault locked.
@@ -675,9 +712,6 @@ mod tests {
         assert!(!EYE_LABEL.is_empty());
         assert!(!EYE_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
     }
-
-    /// Constants in `ALL` that are labels, not sentences, so they have no full stop.
-    const LABELS: [&str; 1] = [CHIP_EXPIRING];
 
     #[test]
     fn expiry_badge_lines() {

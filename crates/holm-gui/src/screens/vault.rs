@@ -256,7 +256,7 @@ impl VaultView {
     /// Characters held by the form's secret buffer (0 when no form is open).
     pub(crate) fn secret_char_count(&self) -> usize {
         let form = match &self.mode {
-            DetailMode::Edit(form) => form.password.char_count(),
+            DetailMode::Edit(form) => form.secret_char_count(),
             DetailMode::Empty | DetailMode::View => 0,
         };
         form + self.item.secret_char_count()
@@ -741,7 +741,15 @@ impl VaultView {
                 _ => None,
             })
             .unwrap_or_else(|| (SecretText::new(String::new()), Vec::new()));
-        let input = form.take_input(notes, urls);
+        let input = match form.take_input(notes, urls) {
+            Ok(input) => input,
+            Err(_) => {
+                // A custom field broke a rule: the form keeps its draft and the field
+                // editor shows the rule's line. `notes` and `urls` dropped (wiped).
+                self.mode = DetailMode::Edit(form);
+                return None;
+            }
+        };
         drop(form);
         match input.validate() {
             Ok(()) => Some(match id {

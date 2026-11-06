@@ -4,6 +4,11 @@
 //! themselves on drop.
 
 pub(crate) mod create;
+#[allow(
+    dead_code,
+    reason = "LoginForm and the vault view use it from part B1b"
+)]
+pub(crate) mod fields;
 pub(crate) mod item_view;
 pub(crate) mod login_form;
 pub(crate) mod transfer;
@@ -18,7 +23,7 @@ use zeroize::Zeroizing;
 use crate::clipboard::{Paste, SecretClipboard, paste_into};
 use crate::messages;
 use crate::secret_input::SecretInput;
-use crate::widgets::secret_field::{SecretFieldOutput, secret_field};
+use crate::widgets::secret_field::{SecretFieldOutput, secret_area, secret_field};
 use crate::worker::{JobKind, WorkDone};
 use create::CreateForm;
 use unlock::UnlockForm;
@@ -62,7 +67,34 @@ impl FieldIo<'_> {
         buf: &mut SecretInput,
         error: &mut Option<&'static str>,
     ) -> SecretFieldOutput {
-        let mut out = secret_field(ui, id_salt, label, buf);
+        let out = secret_field(ui, id_salt, label, buf);
+        self.after_secret(ui, buf, out, error)
+    }
+
+    /// Draws a multiline [`secret_area`], with the same paste rules as
+    /// [`FieldIo::secret_field`]. A pasted text keeps its newlines when `buf` is
+    /// multiline.
+    #[allow(dead_code, reason = "the field editor's rows use it from part B1b")]
+    pub(crate) fn secret_area(
+        &mut self,
+        ui: &mut egui::Ui,
+        id_salt: &str,
+        label: &'static str,
+        buf: &mut SecretInput,
+        error: &mut Option<&'static str>,
+    ) -> SecretFieldOutput {
+        let out = secret_area(ui, id_salt, label, buf);
+        self.after_secret(ui, buf, out, error)
+    }
+
+    /// Notes the focus and runs a requested paste for a secret field drawn this frame.
+    fn after_secret(
+        &mut self,
+        ui: &egui::Ui,
+        buf: &mut SecretInput,
+        mut out: SecretFieldOutput,
+        error: &mut Option<&'static str>,
+    ) -> SecretFieldOutput {
         if out.has_focus {
             self.focus = FieldFocus::Secret;
         }
