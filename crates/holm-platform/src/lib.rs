@@ -12,6 +12,9 @@
 //! feature (holm-cli, holm-gui) adds [`clipboard`]: the macOS pasteboard, with every copy marked
 //! concealed, through arboard's safe API. [`clip_clear`] is the one clear rule shared by
 //! the CLI, the shell and the GUI, behind a small `Clip` trait so tests use a fake.
+//! [`prefs`] keeps device preferences that are not part of a vault, and [`capture`] hides
+//! the app's windows from screenshots and screen sharing (macOS with `gui-window`; elsewhere it
+//! reports `Unsupported`).
 
 // No `unsafe` in the default build: everything there uses safe std APIs, and `unsafe`
 // stays forbidden. The `gui-window` feature on macOS lowers this to `deny` so that the
@@ -23,12 +26,14 @@
 #![cfg_attr(all(feature = "gui-window", target_os = "macos"), deny(unsafe_code))]
 #![deny(missing_docs)]
 
+pub mod capture;
 pub mod clip_clear;
 #[cfg(feature = "clipboard")]
 pub mod clipboard;
 pub mod fs_store;
 pub mod lock;
 pub mod paths;
+pub mod prefs;
 pub mod private_file;
 pub mod transfer;
 #[cfg(feature = "tty")]

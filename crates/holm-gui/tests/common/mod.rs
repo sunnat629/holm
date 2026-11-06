@@ -187,6 +187,28 @@ fn build_app(
     clipboard: Box<dyn SecretClipboard>,
     make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
 ) -> (HolmApp, TestClock) {
+    build_app_with_capture(dir, clipboard, make, Box::new(holm_gui::capture::NoCapture))
+}
+
+/// [`test_app`] with `capture` as the window capture control.
+pub fn test_app_with_capture(
+    dir: &Path,
+    capture: Box<dyn holm_gui::capture::CaptureControl>,
+) -> (HolmApp, TestClock) {
+    build_app_with_capture(
+        dir,
+        Box::new(NoClipboard),
+        |_| Box::new(NoDialog::default()),
+        capture,
+    )
+}
+
+fn build_app_with_capture(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+    capture: Box<dyn holm_gui::capture::CaptureControl>,
+) -> (HolmApp, TestClock) {
     let clock = TestClock::new();
     let file_dialog = make(&clock);
     let app = HolmApp::new(AppConfig {
@@ -197,6 +219,7 @@ fn build_app(
         clipboard,
         file_dialog,
         lock_events: None,
+        capture,
     });
     (app, clock)
 }

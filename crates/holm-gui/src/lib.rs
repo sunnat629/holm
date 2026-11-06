@@ -15,6 +15,8 @@ compile_error!("the dev-unlock feature is for debug builds only");
 #[cfg(target_os = "macos")]
 pub mod app;
 #[cfg(target_os = "macos")]
+pub mod capture;
+#[cfg(target_os = "macos")]
 pub mod clipboard;
 #[cfg(all(feature = "dev-unlock", debug_assertions))]
 /// Debug-only unlock of an existing vault from an environment variable.
