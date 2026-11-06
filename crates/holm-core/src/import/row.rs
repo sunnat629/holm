@@ -10,7 +10,9 @@
 //! Kind and date cells are trimmed, then checked. A text or secret value is moved
 //! out of its cell with no second copy.
 
-use crate::fields::{CalendarDate, CustomField, FieldKind, FieldValue, parse_date, try_field};
+use crate::fields::{
+    CalendarDate, CustomField, FieldKind, FieldValue, codes_from_cell, parse_date, try_field,
+};
 use crate::item::{ItemData, ItemInput, Timestamp};
 use crate::plain::Cell;
 use crate::rules::{MAX_CUSTOM_FIELDS, MAX_URLS};
@@ -352,13 +354,15 @@ const FIELD_PARTS: [Col; MAX_CUSTOM_FIELDS * 4] = [
     Col::Field10Expiry,
 ];
 
-/// `text`, `secret`, `multiline` or `date`, any ASCII case. Anything else is absent.
+/// `text`, `secret`, `multiline`, `date` or `codes`, any ASCII case. Anything else is
+/// absent.
 fn field_kind(cell: &str) -> Option<FieldKind> {
-    const KINDS: [(&str, FieldKind); 4] = [
+    const KINDS: [(&str, FieldKind); 5] = [
         ("text", FieldKind::Text),
         ("secret", FieldKind::Secret),
         ("multiline", FieldKind::MultilineSecret),
         ("date", FieldKind::Date),
+        ("codes", FieldKind::RecoveryCodes),
     ];
     let cell = cell.trim();
     KINDS
@@ -414,6 +418,10 @@ fn field_slots(raw: &mut RawRow) -> Result<Vec<CustomField>, RowProblem> {
             FieldKind::Text => FieldValue::Text(raw.text(value_col)),
             FieldKind::Secret => FieldValue::Secret(raw.secret(value_col)),
             FieldKind::MultilineSecret => FieldValue::MultilineSecret(raw.secret(value_col)),
+            // Each code moves into its own `SecretText`. The raw cell is wiped on drop.
+            FieldKind::RecoveryCodes => FieldValue::RecoveryCodes(
+                codes_from_cell(raw.get(value_col)).map_err(RowProblem::Field)?,
+            ),
         };
         let label = raw.text(label_col);
         out.push(try_field(label, value, expiry).map_err(RowProblem::Field)?);

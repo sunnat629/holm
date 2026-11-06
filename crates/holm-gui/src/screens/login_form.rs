@@ -108,6 +108,10 @@ impl Fields {
                     FieldValue::Secret(s) | FieldValue::MultilineSecret(s) => {
                         s.expose().chars().count()
                     }
+                    FieldValue::RecoveryCodes(codes) => codes
+                        .iter()
+                        .map(|code| code.code().expose().chars().count())
+                        .sum(),
                     FieldValue::Text(_) | FieldValue::Date(_) => 0,
                 })
                 .sum(),

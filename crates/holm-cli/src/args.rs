@@ -89,7 +89,8 @@ pub const BAD_PRESET: UsageError = UsageError(
     "The preset must be email, cloudflare, github, server, database, aws, api-key, wifi, bank-card or custom.",
 );
 /// `--kind` with an unknown value.
-pub const BAD_KIND: UsageError = UsageError("The kind must be text, secret, multiline or date.");
+pub const BAD_KIND: UsageError =
+    UsageError("The kind must be text, secret, multiline, date or codes.");
 /// A date that is not `YYYY-MM-DD`.
 pub const BAD_DATE: UsageError = UsageError("The date must be YYYY-MM-DD.");
 /// A custom-field position that is not 1 through 10.
@@ -762,13 +763,18 @@ fn kind_of(value: &str) -> Result<FieldKind, UsageError> {
         Ok(FieldKind::MultilineSecret)
     } else if value.eq_ignore_ascii_case("date") {
         Ok(FieldKind::Date)
+    } else if value.eq_ignore_ascii_case("codes") {
+        Ok(FieldKind::RecoveryCodes)
     } else {
         Err(BAD_KIND)
     }
 }
 
 fn secret_kind(kind: FieldKind) -> bool {
-    matches!(kind, FieldKind::Secret | FieldKind::MultilineSecret)
+    matches!(
+        kind,
+        FieldKind::Secret | FieldKind::MultilineSecret | FieldKind::RecoveryCodes
+    )
 }
 
 fn preset_of(value: &str) -> Result<FieldPreset, UsageError> {

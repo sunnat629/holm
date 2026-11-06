@@ -116,7 +116,8 @@ impl Kind {
         match kind {
             FieldKind::Text => Kind::Text,
             FieldKind::Secret => Kind::Secret,
-            FieldKind::MultilineSecret => Kind::Multiline,
+            // Presets never use codes; the editor has no codes row yet.
+            FieldKind::MultilineSecret | FieldKind::RecoveryCodes => Kind::Multiline,
             FieldKind::Date => Kind::Date,
         }
     }
@@ -126,7 +127,7 @@ impl Kind {
         match value {
             FieldValue::Text(_) => Kind::Text,
             FieldValue::Secret(_) => Kind::Secret,
-            FieldValue::MultilineSecret(_) => Kind::Multiline,
+            FieldValue::MultilineSecret(_) | FieldValue::RecoveryCodes(_) => Kind::Multiline,
             FieldValue::Date(_) => Kind::Date,
         }
     }
@@ -190,6 +191,10 @@ impl DraftRow {
 
     /// A row filled from a stored field, or `None` when a value does not fit its buffer.
     fn from_field(field: &CustomField) -> Option<DraftRow> {
+        // The editor has no codes row yet, so the item stays read-only.
+        if matches!(field.value(), FieldValue::RecoveryCodes(_)) {
+            return None;
+        }
         let kind = Kind::of(field.value());
         let mut row = DraftRow::new(LineBuf::from_text(field.label())?, kind);
         match field.value() {
@@ -204,6 +209,8 @@ impl DraftRow {
             FieldValue::Date(date) => {
                 row.date = LineBuf::from_text(date_text(&format_date(*date)))?;
             }
+            // Returned above.
+            FieldValue::RecoveryCodes(_) => return None,
         }
         if let Some(expiry) = field.expiry() {
             row.reminder = LineBuf::from_text(date_text(&format_date(expiry)))?;

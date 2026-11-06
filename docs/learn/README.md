@@ -65,6 +65,7 @@ security, three exercises, and what to read next in
 | 58 | [The chapter and the bytes](58-the-chapter-and-the-bytes.md): the format page and `default_body_golden` quote the same 51 bytes, and the sealed golden vault stays schema 1. Kotlin: a format note checked against a fixture, not against memory. |
 | 59 | [Scroll, cards and clocks](59-scroll-cards-and-clocks.md): `Cow` to borrow unless a hyphen is mapped, a pure `updated_label` with the UTC offset passed in, `saturating_add` and `rem_euclid`, and a named `ScrollArea` whose state lock forgets. Kotlin: pass a `Clock` and `ZoneOffset` in, and clear `rememberSaveable` state on purpose. |
 | 60 | [Colour by category](60-colour-by-category.md): a newtype with one public accessor, `usize::try_from(..).unwrap_or`, WCAG contrast as a pure tested `f32` function, and a closure over `Option<Color32>` that captures `pick` mutably. Kotlin: a `value class` id, and a unit test over theme colours. |
+| 61 | [Recovery codes and schema 3](61-recovery-codes-and-schema-3.md): appending an enum variant so old postcard bytes still read, `BoundedVec` and `.take(MAX + 1)` to cap a count before allocating, a hand-written `Debug` that hides the code, and a `Zeroizing<String>` export cell. Kotlin: a new `sealed` subclass, and why a protobuf `oneof` is different. |
 | 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks

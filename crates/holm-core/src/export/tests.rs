@@ -1,10 +1,13 @@
 use super::*;
 use crate::category::CategoryId;
 use crate::clock::FakeClock;
-use crate::fields::{FieldKind, FieldValue, format_date, parse_date, try_field};
-use crate::import::{ImportFormat, parse};
+use crate::fields::{
+    FieldKind, FieldValue, format_date, parse_date, parse_recovery_codes, try_field,
+};
+use crate::import::{ImportFormat, RowIssue, RowProblem, parse};
 use crate::item::{Item, ItemData, ItemId, ItemInput, ItemType, Timestamp};
 use crate::plain::{Cell, CsvReader, ROW_END, quoted_len};
+use crate::rules::{FieldError, MAX_RECOVERY_CODES};
 use crate::store::MemStore;
 use crate::text::{GatedSecret, SecretText, Text};
 use crate::throttle::FREE_FAILURES;
@@ -621,6 +624,84 @@ fn formula_still_unescaped() {
             _ => panic!("secret"),
         }
     }
+}
+
+fn codes_field() -> crate::fields::CustomField {
+    let mut codes = parse_recovery_codes("EXAMPLE-c1\nEXAMPLE-c2\nEXAMPLE-c3").unwrap();
+    codes[1].set_used(true);
+    try_field(t("Backup"), FieldValue::RecoveryCodes(codes), None).unwrap()
+}
+
+fn assert_codes(item: &Item) {
+    let fields = item.fields();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].label(), "Backup");
+    assert_eq!(fields[0].kind(), FieldKind::RecoveryCodes);
+    let FieldValue::RecoveryCodes(codes) = fields[0].value() else {
+        panic!("codes");
+    };
+    let got: Vec<(&str, bool)> = codes
+        .iter()
+        .map(|c| (c.code().expose(), c.used()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("EXAMPLE-c1", false),
+            ("EXAMPLE-c2", true),
+            ("EXAMPLE-c3", false)
+        ]
+    );
+}
+
+#[test]
+fn recovery_codes_roundtrip_csv_and_json() {
+    let mut s = fresh();
+    let id = s.add_item(login("Codes", "EXAMPLE-pw")).unwrap();
+    s.set_custom_fields(id, vec![codes_field()]).unwrap();
+    let rows = records(&export_text(&mut s));
+    assert_eq!(
+        rows[1][14..18],
+        ["Backup", "codes", "EXAMPLE-c1\n*EXAMPLE-c2\nEXAMPLE-c3", ""]
+    );
+
+    for format in [ImportFormat::Csv, ImportFormat::Json] {
+        let buf = match format {
+            ImportFormat::Csv => s.export_csv(&pw(PW)),
+            ImportFormat::Json => s.export_json(&pw(PW)),
+        }
+        .unwrap();
+        let batch = parse(buf.expose(), format).unwrap();
+        assert!(batch.issues().is_empty(), "{:?}", batch.issues());
+        let (mut other, _) = fresh_at(NOW + 1_000);
+        other.import(batch).unwrap();
+        assert_codes(by_title(&other, "Codes"));
+
+        let again = parse(buf.expose(), format).unwrap();
+        let report = other.import(again).unwrap();
+        assert_eq!(report.imported, 0, "{format:?}");
+        assert_eq!(report.duplicates, 1, "{format:?}");
+    }
+}
+
+#[test]
+fn too_many_codes_refused() {
+    let codes: Vec<String> = (0..=MAX_RECOVERY_CODES)
+        .map(|i| format!("EXAMPLE-{i}"))
+        .collect();
+    let src = format!(
+        "title,password,field1_label,field1_kind,field1_value\r\nCodes,EXAMPLE-pw,Backup,codes,\"{}\"\r\n",
+        codes.join("\n")
+    );
+    let batch = parse(src.as_bytes(), ImportFormat::Csv).unwrap();
+    assert_eq!(batch.ready(), 0);
+    assert_eq!(
+        batch.issues(),
+        [RowIssue {
+            row: 1,
+            problem: RowProblem::Field(FieldError::BadCodeCount),
+        }]
+    );
 }
 
 #[test]

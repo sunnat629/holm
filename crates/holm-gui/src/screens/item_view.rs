@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use eframe::egui;
 use holm_core::error::CoreError;
-use holm_core::fields::{FieldValue, format_date};
+use holm_core::fields::{FieldValue, codes_left, format_date};
 use holm_core::item::{Item, ItemData};
 use holm_core::settings::{REHIDE_PASSWORD_SECS, REHIDE_PHRASE_SECS};
 use holm_core::text::SecretText;
@@ -490,6 +490,13 @@ fn custom_rows(
                 ui.horizontal(|ui| {
                     ui.label(field.label());
                     ui.label(date_text(&bytes));
+                });
+            }
+            FieldValue::RecoveryCodes(codes) => {
+                let (left, total) = codes_left(codes);
+                ui.horizontal(|ui| {
+                    ui.label(field.label());
+                    ui.label(egui::RichText::new(format!("{left} of {total} left")).weak());
                 });
             }
             FieldValue::Secret(value) | FieldValue::MultilineSecret(value) => {

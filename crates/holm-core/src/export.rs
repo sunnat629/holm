@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 
 use crate::category::Category;
 use crate::error::CoreError;
-use crate::fields::{FieldKind, FieldValue, format_date};
+use crate::fields::{FieldKind, FieldValue, codes_to_cell, format_date};
 use crate::item::{Item, ItemData};
 use crate::plain::{ROW_END, json_string_len, push_json_string, push_quoted, quoted_len};
 use crate::rules::MAX_CUSTOM_FIELDS;
@@ -257,8 +257,9 @@ const COLUMNS: usize = EXPORT_COLUMNS.len();
 const SEPARATORS: usize = COLUMNS - 1 + ROW_END.len();
 
 /// Calls `f` with the cells of `item`'s row, in [`EXPORT_COLUMNS`] order. The few
-/// cells built here (the joined URLs, the numbers, and the date text) are wiped
-/// when `f` returns. Secret values are borrowed, not copied.
+/// cells built here (the joined URLs, the numbers, the date text and the recovery
+/// codes cells) are wiped when `f` returns. Other secret values are borrowed, not
+/// copied.
 fn with_cells<R>(item: &Item, categories: &[Category], f: impl FnOnce(&[&str; COLUMNS]) -> R) -> R {
     let category = item
         .category
@@ -316,10 +317,13 @@ fn with_cells<R>(item: &Item, categories: &[Category], f: impl FnOnce(&[&str; CO
     };
     let fields = item.fields();
     let mut value_dates: [Zeroizing<String>; MAX_CUSTOM_FIELDS] = Default::default();
+    let mut value_codes: [Zeroizing<String>; MAX_CUSTOM_FIELDS] = Default::default();
     let mut expiry_dates: [Zeroizing<String>; MAX_CUSTOM_FIELDS] = Default::default();
     for (i, field) in fields.iter().enumerate() {
-        if let FieldValue::Date(date) = field.value() {
-            value_dates[i] = write_date(*date);
+        match field.value() {
+            FieldValue::Date(date) => value_dates[i] = write_date(*date),
+            FieldValue::RecoveryCodes(codes) => value_codes[i] = codes_to_cell(codes),
+            _ => {}
         }
         if let Some(date) = field.expiry() {
             expiry_dates[i] = write_date(date);
@@ -348,6 +352,7 @@ fn with_cells<R>(item: &Item, categories: &[Category], f: impl FnOnce(&[&str; CO
             FieldValue::Text(text) => text.as_str(),
             FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => text.expose(),
             FieldValue::Date(_) => value_dates[i].as_str(),
+            FieldValue::RecoveryCodes(_) => value_codes[i].as_str(),
         };
         if field.expiry().is_some() {
             cells[base + 3] = expiry_dates[i].as_str();
@@ -356,13 +361,14 @@ fn with_cells<R>(item: &Item, categories: &[Category], f: impl FnOnce(&[&str; CO
     f(&cells)
 }
 
-/// Lower-case kind cell. Import accepts any ASCII case of these four words.
+/// Lower-case kind cell. Import accepts any ASCII case of these five words.
 fn kind_label(kind: FieldKind) -> &'static str {
     match kind {
         FieldKind::Text => "text",
         FieldKind::Secret => "secret",
         FieldKind::MultilineSecret => "multiline",
         FieldKind::Date => "date",
+        FieldKind::RecoveryCodes => "codes",
     }
 }
 

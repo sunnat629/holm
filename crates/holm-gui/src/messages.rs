@@ -372,6 +372,7 @@ pub fn field_error(e: &FieldError) -> &'static str {
         FieldError::BadDate => "That date is not a real calendar day",
         FieldError::TooManyFields => "An item can have at most 10 custom fields",
         FieldError::NoSuchIndex => "That field is not on the item",
+        FieldError::BadCodeCount => "A recovery code list holds 1 to 20 codes",
         FieldError::Empty(Field::Title) => TITLE_EMPTY,
         FieldError::Empty(_) => FIELD_EMPTY,
         FieldError::TooLong(_) => FIELD_TOO_LONG,

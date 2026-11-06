@@ -13,10 +13,14 @@
 //! it.
 
 use crate::category::{Category, CategoryId, MAX_CATEGORIES, validate_category_name};
-use crate::fields::{CalendarDate, CustomField, FieldValue, try_field, validate_fields};
+use crate::fields::{
+    CalendarDate, CustomField, FieldValue, RecoveryCode, try_field, validate_fields,
+};
 use crate::generator::{PassphraseSpec, PasswordSpec, UsernameSpec};
 use crate::item::{Item, ItemData, ItemId, PhraseRule, Timestamp, validate_item};
-use crate::rules::{FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_NOTE_BYTES, MAX_URLS};
+use crate::rules::{
+    FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_NOTE_BYTES, MAX_RECOVERY_CODES, MAX_URLS,
+};
 use crate::settings::Settings;
 use crate::text::{GatedSecret, SecretText, Text};
 use core::fmt;
@@ -83,6 +87,10 @@ pub(crate) struct BoundedVec<T, const MAX: usize>(Vec<T>);
 impl<T, const MAX: usize> BoundedVec<T, MAX> {
     pub(crate) fn into_inner(self) -> Vec<T> {
         self.0
+    }
+
+    pub(crate) fn iter(&self) -> core::slice::Iter<'_, T> {
+        self.0.iter()
     }
 }
 
@@ -456,6 +464,13 @@ impl DataIn {
 }
 
 impl ItemIn {
+    /// True when any custom field holds recovery codes, which schema 2 cannot hold.
+    pub(crate) fn has_recovery_codes(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field.value, CustomValueIn::RecoveryCodes(_)))
+    }
+
     /// Builds the item and runs every field rule on it.
     ///
     /// # Errors
@@ -488,7 +503,7 @@ impl ItemIn {
     }
 }
 
-/// The date wire order is part of schema 2: year, month, day.
+/// The date wire order is part of schemas 2 and 3: year, month, day.
 #[derive(Serialize, Deserialize)]
 struct DateWire {
     year: u16,
@@ -508,11 +523,25 @@ impl DateWire {
 }
 
 #[derive(Serialize)]
+struct RecoveryCodeOut<'a> {
+    code: &'a str,
+    used: bool,
+}
+
+#[derive(Deserialize)]
+struct RecoveryCodeIn {
+    code: WireStr,
+    used: bool,
+}
+
+/// Variant order is the postcard index. Index 4, `RecoveryCodes`, is new in schema 3.
+#[derive(Serialize)]
 enum CustomValueOut<'a> {
     Text(&'a str),
     Secret(&'a str),
     MultilineSecret(&'a str),
     Date(DateWire),
+    RecoveryCodes(Vec<RecoveryCodeOut<'a>>),
 }
 
 #[derive(Serialize)]
@@ -530,6 +559,15 @@ impl<'a> CustomFieldOut<'a> {
             FieldValue::Secret(value) => CustomValueOut::Secret(value.expose()),
             FieldValue::MultilineSecret(value) => CustomValueOut::MultilineSecret(value.expose()),
             FieldValue::Date(date) => CustomValueOut::Date(DateWire::new(*date)),
+            FieldValue::RecoveryCodes(codes) => CustomValueOut::RecoveryCodes(
+                codes
+                    .iter()
+                    .map(|code| RecoveryCodeOut {
+                        code: code.code().expose(),
+                        used: code.used(),
+                    })
+                    .collect(),
+            ),
         };
         Self {
             position,
@@ -540,12 +578,14 @@ impl<'a> CustomFieldOut<'a> {
     }
 }
 
+/// Variant order is the postcard index. Index 4, `RecoveryCodes`, is new in schema 3.
 #[derive(Deserialize)]
 enum CustomValueIn {
     Text(WireStr),
     Secret(WireStr),
     MultilineSecret(WireStr),
     Date(DateWire),
+    RecoveryCodes(BoundedVec<RecoveryCodeIn, MAX_RECOVERY_CODES>),
 }
 
 #[derive(Deserialize)]
@@ -563,6 +603,13 @@ impl CustomFieldIn {
             CustomValueIn::Secret(value) => FieldValue::Secret(value.secret()),
             CustomValueIn::MultilineSecret(value) => FieldValue::MultilineSecret(value.secret()),
             CustomValueIn::Date(date) => FieldValue::Date(date.into_date()?),
+            CustomValueIn::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+                codes
+                    .into_inner()
+                    .into_iter()
+                    .map(|code| RecoveryCode::new(code.code.secret(), code.used))
+                    .collect(),
+            ),
         };
         try_field(
             self.label.text(),

@@ -11,14 +11,14 @@ use std::path::Path;
 use holm_core::category::{CategoryId, name_key};
 use holm_core::error::CoreError;
 use holm_core::fields::{
-    CalendarDate, CustomField, FieldKind, FieldPreset, FieldValue, insert_field, move_field,
-    parse_date, preset_fields, remove_field, try_field,
+    CalendarDate, CustomField, FieldKind, FieldPreset, FieldValue, RecoveryCode, insert_field,
+    move_field, parse_date, parse_recovery_codes, preset_fields, remove_field, try_field,
 };
 use holm_core::generator::generate_password;
 use holm_core::item::{Item, ItemData, ItemId, ItemInput, ItemType};
 use holm_core::rules::{
     FieldError, MAX_CUSTOM_FIELDS, MAX_LINE_BYTES, MAX_MULTILINE_SECRET_BYTES, MAX_NOTE_BYTES,
-    MAX_SECRET_BYTES,
+    MAX_RECOVERY_CODE_BYTES, MAX_RECOVERY_CODES, MAX_SECRET_BYTES,
 };
 use holm_core::search::{Query, View};
 use holm_core::session::Session;
@@ -426,7 +426,10 @@ fn reject_command_line_secret(args: &EditArgs, item: &Item) -> Result<(), CliErr
 }
 
 fn secret_kind(kind: FieldKind) -> bool {
-    matches!(kind, FieldKind::Secret | FieldKind::MultilineSecret)
+    matches!(
+        kind,
+        FieldKind::Secret | FieldKind::MultilineSecret | FieldKind::RecoveryCodes
+    )
 }
 
 fn prepare_fields(
@@ -603,6 +606,18 @@ fn read_value(
                 term.secret(FIELD_PROMPT, MAX_MULTILINE_SECRET_BYTES)?,
             )))
         }
+        FieldKind::RecoveryCodes => {
+            if field_value.is_some() {
+                *field_value = None;
+                return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
+            }
+            let typed = term.secret(
+                FIELD_PROMPT,
+                MAX_RECOVERY_CODES * (MAX_RECOVERY_CODE_BYTES + 1),
+            )?;
+            let codes = parse_recovery_codes(&typed).map_err(CliError::Field)?;
+            Ok(FieldValue::RecoveryCodes(codes))
+        }
         FieldKind::Text => {
             let typed = field_value.take().ok_or(CliError::Usage(MISSING_VALUE))?;
             Ok(FieldValue::Text(text_of(typed)))
@@ -639,6 +654,17 @@ fn copy_field(field: &CustomField) -> Result<CustomField, CliError> {
             FieldValue::MultilineSecret(SecretText::new(text.expose().to_owned()))
         }
         FieldValue::Date(date) => FieldValue::Date(*date),
+        FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+            codes
+                .iter()
+                .map(|code| {
+                    RecoveryCode::new(
+                        SecretText::new(code.code().expose().to_owned()),
+                        code.used(),
+                    )
+                })
+                .collect(),
+        ),
     };
     try_field(Text::new(field.label().to_owned()), value, field.expiry()).map_err(CliError::Field)
 }
@@ -652,7 +678,8 @@ fn fields_from_preset(preset: FieldPreset) -> Result<Vec<CustomField>, CliError>
             FieldKind::MultilineSecret => {
                 FieldValue::MultilineSecret(SecretText::new(String::new()))
             }
-            FieldKind::Date => continue,
+            // A date row has no empty value, and a codes list cannot be empty.
+            FieldKind::Date | FieldKind::RecoveryCodes => continue,
         };
         fields.push(
             try_field(Text::new(row.label.to_owned()), value, None).map_err(CliError::Field)?,

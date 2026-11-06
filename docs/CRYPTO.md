@@ -235,7 +235,7 @@ attacker who tries repeats would find it sooner; the 1,024-character limit caps 
 
 The padded plaintext is the body: inside the padding, a `u16` little-endian schema
 version (1), then the `postcard` encoding of the settings, the categories, the items and the next category id.
-Holm still reads this schema, but it now writes schema 2 (next section).
+Holm still reads this schema, but it now writes schema 3 (next section).
 `VaultData::decode` treats it as hostile even though the AEAD has authenticated it,
 because a buggy or newer writer is enough to produce bad bytes:
 
@@ -255,22 +255,27 @@ refuse to open. A property test (`body_roundtrip_any`) checks that any valid bod
 survives `decode(encode())`, and the `decode_body` and `open_fixed_key` fuzz targets
 run the decoder on hostile bytes with a 64 MiB per-allocation limit.
 
-## The vault body (schema v2)
+## The vault body (schema v3)
 
-Holm writes schema 2 and reads schemas 1 and 2. The header, the envelope, the KDF and
+Holm writes schema 3 and reads schemas 1, 2 and 3. The header, the envelope, the KDF and
 the padding do not change. `FORMAT_VERSION` stays 1 and the header stays 164 bytes.
 Only the bytes inside the padding change.
 
 - The first two bytes are the body version, a `u16` little-endian. `BODY_SCHEMA_VERSION`
-  is 2 and `BODY_SCHEMA_V1` is 1. The `postcard` encoding follows.
+  is 3, `BODY_SCHEMA_V2` is 2 and `BODY_SCHEMA_V1` is 1. The `postcard` encoding follows.
 - Version 1 is read with the original wire structs, kept unchanged under a `V1` name.
-  Its items get an empty list of custom fields. The next save writes version 2. Holm
-  never writes version 1 again.
+  Its items get an empty list of custom fields. The next save writes version 3. Holm
+  never writes version 1 or 2 again.
 - Version 2 uses a second set of wire structs. Each item is the version-1 item with one
   more value at the end: its list of custom fields.
-- A version above 2 is `NewerSchema`, and the file is not rewritten, so the fields of a
-  newer Holm are not lost. Version 0 is `UnknownSchema`. A Holm built before schema 2
-  refuses a schema-2 vault with `NewerSchema(2)`.
+- Version 3 is the version-2 layout with one more custom value variant appended: tag 4,
+  `RecoveryCodes`. Versions 2 and 3 share one set of wire structs. Appending at the end
+  keeps every schema-2 byte decodable, because postcard writes an enum tag as the variant
+  index, so tags 0 to 3 mean what they always meant. A schema-2 body that holds tag 4 is
+  `Malformed`, because an old Holm could not have written it.
+- A version above 3 is `NewerSchema`, and the file is not rewritten, so the fields of a
+  newer Holm are not lost. Version 0 is `UnknownSchema`. A Holm built before schema 3
+  refuses a schema-3 vault with `NewerSchema(3)`.
 - Why two structs and not `#[serde(default)]`: postcard writes values in order, with no
   field names and no marker for a missing value. A default on the old struct would read
   the next real value as the new field.
@@ -281,7 +286,7 @@ A custom field on the wire is, in this order:
 |---|---|---|
 | position | `u8` | the positions on one item are exactly `0..len`, with no duplicate and no gap |
 | label | string | not blank, at most `MAX_LABEL_CHARS` (64) characters, no control or bidi character |
-| value | enum tag, then the value: 0 `Text`, 1 `Secret`, 2 `MultilineSecret`, 3 `Date` | see below |
+| value | enum tag, then the value: 0 `Text`, 1 `Secret`, 2 `MultilineSecret`, 3 `Date`, 4 `RecoveryCodes` | see below |
 | expiry | `Option` of a date | absent, or a real day |
 
 A date is `year: u16`, `month: u8`, `day: u8`, in that order. It must be a real Gregorian
@@ -293,6 +298,12 @@ Value rules:
 - `Secret`: one line, at most 4096 bytes, no NUL, CR or LF.
 - `MultilineSecret`: at most `MAX_MULTILINE_SECRET_BYTES` (16384), newlines allowed, no NUL.
 - `Date`: a real day, as above.
+- `RecoveryCodes`: a list written as a postcard length, then each entry as
+  `{code: string, used: bool}`. It holds 1 to `MAX_RECOVERY_CODES` (20) codes. More than
+  20 fails while parsing, before anything is reserved: `Malformed`. An empty list is
+  `Invalid`. Each code is one line, not blank, at most `MAX_RECOVERY_CODE_BYTES` (64)
+  bytes, already trimmed, must not start with `*`, and has no control or bidi character.
+  Each code is a `SecretText`, wiped on drop. `Debug` shows only `used`.
 
 What the decoder refuses, and how:
 
@@ -344,16 +355,17 @@ test-only version-1 writer against them, byte for byte:
 4                             next category id
 ```
 
-The version-2 encoding of a new vault is the same 51 bytes with byte 0 set to 2
-(`v2_default_golden_is_v1_with_version_byte_2`). An empty vault has no item, so the
+The current encoding of a new vault is the same 51 bytes with byte 0 set to 3
+(`current_default_golden_is_v1_with_version_byte_3`). An empty vault has no item, so the
 fields list never appears. If either test fails, the body format changed, and that
 needs a schema bump, not an edit to the test.
 
 **The sealed golden stays schema 1.** `tests/golden_vault.rs` seals the schema-1 default
 body with fixed key material, and it must still open. It is the proof that a file
-written before schema 2 opens. A vault that is opened and saved becomes schema 2. The
+written before schema 2 opens. A vault that is opened and saved becomes schema 3. The
 golden test never saves. The `decode_body` fuzz seeds include a version-1 body with
-items (`v1_items`) and a version-2 body with fields (`v2_fields`).
+items (`v1_items`), a version-2 body with fields (`v2_fields`) and a version-3 body with
+recovery codes (`v3_codes`).
 
 ## Storing the file
 

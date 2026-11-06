@@ -4,10 +4,12 @@
 
 use crate::rules::{
     Field, FieldError, MAX_CUSTOM_FIELDS, MAX_LABEL_CHARS, MAX_MULTILINE_SECRET_BYTES,
-    MAX_SECRET_BYTES, is_forbidden_display_char, line_secret, multi_line, non_blank,
+    MAX_RECOVERY_CODE_BYTES, MAX_RECOVERY_CODES, MAX_SECRET_BYTES, is_forbidden_display_char,
+    line_secret, multi_line, non_blank,
 };
 use crate::text::{SecretText, Text};
 use core::fmt;
+use zeroize::Zeroizing;
 
 /// A real Gregorian day in years 1 through 9999, without a time or timezone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -136,6 +138,139 @@ pub enum FieldKind {
     MultilineSecret,
     /// A calendar day.
     Date,
+    /// One-time recovery codes, each marked used or not.
+    RecoveryCodes,
+}
+
+/// One recovery code and whether it has been used. Not `Clone`; `Debug` hides the code.
+pub struct RecoveryCode {
+    code: SecretText,
+    used: bool,
+}
+
+impl RecoveryCode {
+    /// Wraps a code. It is checked when its field is built.
+    #[must_use]
+    pub fn new(code: SecretText, used: bool) -> Self {
+        Self { code, used }
+    }
+
+    /// The code, inside its wiping type.
+    #[must_use]
+    pub fn code(&self) -> &SecretText {
+        &self.code
+    }
+
+    /// Whether the code has been used.
+    #[must_use]
+    pub fn used(&self) -> bool {
+        self.used
+    }
+
+    /// Marks the code used or unused.
+    pub fn set_used(&mut self, used: bool) {
+        self.used = used;
+    }
+}
+
+impl fmt::Debug for RecoveryCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecoveryCode")
+            .field("used", &self.used)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The count rule, then the per-code rules. Errors never carry a code.
+fn check_codes(codes: &[RecoveryCode]) -> Result<(), FieldError> {
+    if !(1..=MAX_RECOVERY_CODES).contains(&codes.len()) {
+        return Err(FieldError::BadCodeCount);
+    }
+    for code in codes {
+        let text = code.code.expose();
+        non_blank(Field::CustomValue, text)?;
+        line_secret(Field::CustomValue, text, MAX_RECOVERY_CODE_BYTES)?;
+        // '*' marks a used code in export, so a code may not start with it.
+        if text != text.trim()
+            || text.starts_with('*')
+            || text.chars().any(is_forbidden_display_char)
+        {
+            return Err(FieldError::ForbiddenChar(Field::CustomValue));
+        }
+    }
+    Ok(())
+}
+
+/// Parses one code per line: each line is trimmed, blank lines are skipped, and every
+/// code starts unused. The result passes the same rules as a stored field.
+///
+/// The text is never logged or echoed; errors name the rule only.
+///
+/// # Errors
+/// [`FieldError::BadCodeCount`] for no codes or more than [`MAX_RECOVERY_CODES`], or
+/// the first per-code rule broken.
+pub fn parse_recovery_codes(text: &str) -> Result<Vec<RecoveryCode>, FieldError> {
+    read_codes(text, false)
+}
+
+/// Reads a stored codes cell: one code per line, a leading `*` marks a used code.
+///
+/// Each line is trimmed and blank lines are skipped. After a `*` is stripped, the rest
+/// is trimmed again. The result passes the same rules as a stored field.
+///
+/// # Errors
+/// The same rules as [`parse_recovery_codes`]. A line that is only `*` is an empty code.
+pub(crate) fn codes_from_cell(cell: &str) -> Result<Vec<RecoveryCode>, FieldError> {
+    read_codes(cell, true)
+}
+
+/// One code per line. With `marks_used`, a leading `*` means used. Each code moves
+/// straight into its own [`SecretText`].
+fn read_codes(text: &str, marks_used: bool) -> Result<Vec<RecoveryCode>, FieldError> {
+    let codes: Vec<RecoveryCode> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(MAX_RECOVERY_CODES + 1)
+        .map(|line| {
+            let (used, code) = match line.strip_prefix('*') {
+                Some(rest) if marks_used => (true, rest.trim()),
+                _ => (false, line),
+            };
+            RecoveryCode::new(SecretText::new(code.to_owned()), used)
+        })
+        .collect();
+    check_codes(&codes)?;
+    Ok(codes)
+}
+
+/// The codes joined by `\n`, a used code prefixed with `*`. The buffer is allocated
+/// once at its final size, so it never moves and leaves no unwiped copy behind.
+pub(crate) fn codes_to_cell(codes: &[RecoveryCode]) -> Zeroizing<String> {
+    let len = codes
+        .iter()
+        .fold(codes.len().saturating_sub(1), |sum, code| {
+            sum.saturating_add(code.code.expose().len())
+                .saturating_add(usize::from(code.used))
+        });
+    let mut out = Zeroizing::new(String::with_capacity(len));
+    for (i, code) in codes.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if code.used {
+            out.push('*');
+        }
+        out.push_str(code.code.expose());
+    }
+    debug_assert_eq!(out.len(), len, "codes cell measure and fill disagree");
+    out
+}
+
+/// Unused codes and total codes, in that order.
+#[must_use]
+pub fn codes_left(codes: &[RecoveryCode]) -> (usize, usize) {
+    (codes.iter().filter(|code| !code.used).count(), codes.len())
 }
 
 /// A custom value. Secret variants own wiping text; no variant implements `Clone`.
@@ -148,6 +283,8 @@ pub enum FieldValue {
     MultilineSecret(SecretText),
     /// A calendar day, independent of the reminder date.
     Date(CalendarDate),
+    /// One-time recovery codes, in order.
+    RecoveryCodes(Vec<RecoveryCode>),
 }
 
 impl FieldValue {
@@ -157,6 +294,7 @@ impl FieldValue {
             Self::Secret(_) => FieldKind::Secret,
             Self::MultilineSecret(_) => FieldKind::MultilineSecret,
             Self::Date(_) => FieldKind::Date,
+            Self::RecoveryCodes(_) => FieldKind::RecoveryCodes,
         }
     }
 }
@@ -256,6 +394,7 @@ fn validate_field(field: &CustomField) -> Result<(), FieldError> {
         FieldValue::Date(date) => {
             CalendarDate::from_parts(date.year, date.month, date.day)?;
         }
+        FieldValue::RecoveryCodes(codes) => check_codes(codes)?,
     }
     if let Some(date) = field.expiry {
         CalendarDate::from_parts(date.year, date.month, date.day)?;
@@ -538,6 +677,100 @@ mod tests {
         // A secret value is moved, not copied.
         assert_not_impl_any!(CustomField: Clone, Copy);
         assert_not_impl_any!(FieldValue: Clone, Copy);
+        assert_not_impl_any!(RecoveryCode: Clone, Copy, serde::Serialize);
+    }
+
+    fn code_texts(codes: &[RecoveryCode]) -> Vec<&str> {
+        codes.iter().map(|code| code.code().expose()).collect()
+    }
+
+    #[test]
+    fn parse_codes_skips_blanks_and_trims() {
+        let codes = parse_recovery_codes("  EXAMPLE-1 \n\n\t\r\nEXAMPLE-2\r\n").unwrap();
+        assert_eq!(code_texts(&codes), ["EXAMPLE-1", "EXAMPLE-2"]);
+        assert!(codes.iter().all(|code| !code.used()));
+    }
+
+    #[test]
+    fn code_count_rules() {
+        let many: Vec<String> = (0..=MAX_RECOVERY_CODES)
+            .map(|i| format!("EXAMPLE-{i}"))
+            .collect();
+        assert_eq!(
+            parse_recovery_codes(&many.join("\n")).unwrap_err(),
+            FieldError::BadCodeCount
+        );
+        assert!(parse_recovery_codes(&many[..MAX_RECOVERY_CODES].join("\n")).is_ok());
+        for empty in ["", "\n \n\t"] {
+            assert_eq!(
+                parse_recovery_codes(empty).unwrap_err(),
+                FieldError::BadCodeCount
+            );
+        }
+    }
+
+    #[test]
+    fn code_character_rules() {
+        assert_eq!(
+            parse_recovery_codes(&"x".repeat(MAX_RECOVERY_CODE_BYTES + 1)).unwrap_err(),
+            FieldError::TooLong(Field::CustomValue)
+        );
+        assert!(parse_recovery_codes(&"x".repeat(MAX_RECOVERY_CODE_BYTES)).is_ok());
+        for bad in ["EXAMPLE\tcode", "*EXAMPLE", "EXAMPLE\u{202E}"] {
+            assert_eq!(
+                parse_recovery_codes(bad).unwrap_err(),
+                FieldError::ForbiddenChar(Field::CustomValue)
+            );
+        }
+        let untrimmed = vec![RecoveryCode::new(SecretText::new(" EXAMPLE".into()), false)];
+        assert_eq!(
+            try_field(
+                Text::new("codes".into()),
+                FieldValue::RecoveryCodes(untrimmed),
+                None
+            )
+            .unwrap_err(),
+            FieldError::ForbiddenChar(Field::CustomValue)
+        );
+    }
+
+    #[test]
+    fn codes_cell_roundtrip() {
+        let mut codes = parse_recovery_codes("EXAMPLE-1\nEXAMPLE-2\nEXAMPLE-3").unwrap();
+        codes[1].set_used(true);
+        let cell = codes_to_cell(&codes);
+        assert_eq!(cell.as_str(), "EXAMPLE-1\n*EXAMPLE-2\nEXAMPLE-3");
+        assert_eq!(cell.capacity(), cell.len());
+        let back = codes_from_cell(&cell).unwrap();
+        assert_eq!(code_texts(&back), code_texts(&codes));
+        let used: Vec<bool> = back.iter().map(RecoveryCode::used).collect();
+        assert_eq!(used, [false, true, false]);
+        assert!(codes_from_cell("EXAMPLE-1\n*\n").is_err());
+        assert!(codes_from_cell("EXAMPLE-1\n * \n").is_err());
+    }
+
+    #[test]
+    fn codes_left_counts() {
+        let mut codes = parse_recovery_codes("EXAMPLE-1\nEXAMPLE-2\nEXAMPLE-3").unwrap();
+        assert_eq!(codes_left(&codes), (3, 3));
+        codes[1].set_used(true);
+        assert_eq!(codes_left(&codes), (2, 3));
+    }
+
+    #[test]
+    fn recovery_codes_debug_hides_codes() {
+        let codes = parse_recovery_codes("EXAMPLE-code-1\nEXAMPLE-code-2").unwrap();
+        let field = try_field(
+            Text::new("codes".to_owned()),
+            FieldValue::RecoveryCodes(codes),
+            None,
+        )
+        .unwrap();
+        let FieldValue::RecoveryCodes(codes) = field.value() else {
+            panic!("kind changed");
+        };
+        let shown = format!("{field:?} {:?} {codes:?}", field.value());
+        assert!(!shown.contains("EXAMPLE"), "{shown}");
     }
 
     #[test]

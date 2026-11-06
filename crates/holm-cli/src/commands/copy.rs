@@ -26,13 +26,16 @@ use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use crate::Env;
-use crate::args::{CopyField, GenArgs, GenKind};
+use crate::args::{CopyField, GenArgs, GenKind, UsageError};
 use crate::output::{CliError, date_text, read_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
 /// The prompt that re-checks the master password before a recovery phrase is copied.
 pub const AGAIN_PROMPT: &str = "Master password again: ";
+
+/// `--copy field=N` on a recovery codes field. The CLI never puts a code on the clipboard.
+pub const COPY_ONE_CODE: UsageError = UsageError("Copy one recovery code from the Holm window.");
 
 /// The clipboard as a trait, shared with the shell and the GUI.
 pub use holm_platform::clip_clear::Clip;
@@ -147,6 +150,7 @@ fn custom_value(
             Zeroizing::new(text.expose().to_owned())
         }
         FieldValue::Date(date) => Zeroizing::new(date_text(*date)),
+        FieldValue::RecoveryCodes(_) => return Err(CliError::Usage(COPY_ONE_CODE)),
     };
     if value.is_empty() {
         return Err(CliError::EmptyField);

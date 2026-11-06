@@ -142,7 +142,7 @@ fn version_zero_is_unknown() {
 #[test]
 fn newer_versions_are_refused() {
     let next = BODY_SCHEMA_VERSION + 1;
-    assert_eq!(next, 3);
+    assert_eq!(next, 4);
     let mut b = default_v2();
     b[..2].copy_from_slice(&next.to_le_bytes());
     assert_eq!(

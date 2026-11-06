@@ -13,7 +13,7 @@ use std::thread;
 
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::fields::{CustomField, FieldValue, try_field};
+use holm_core::fields::{CustomField, FieldValue, RecoveryCode, try_field};
 use holm_core::import::{ImportBatch, ImportPreview, ImportReport};
 use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::rules::FieldError;
@@ -379,6 +379,17 @@ fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
             FieldValue::MultilineSecret(SecretText::new(secret.expose().to_owned()))
         }
         FieldValue::Date(date) => FieldValue::Date(*date),
+        FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+            codes
+                .iter()
+                .map(|code| {
+                    RecoveryCode::new(
+                        SecretText::new(code.code().expose().to_owned()),
+                        code.used(),
+                    )
+                })
+                .collect(),
+        ),
     };
     try_field(Text::new(field.label().to_owned()), value, field.expiry())
 }

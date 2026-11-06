@@ -456,6 +456,13 @@ fn same_value(a: &FieldValue, b: &FieldValue) -> bool {
         (FieldValue::Date(left), FieldValue::Date(right)) => {
             format_date(*left) == format_date(*right)
         }
+        (FieldValue::RecoveryCodes(left), FieldValue::RecoveryCodes(right)) => {
+            left.len() == right.len()
+                && left.iter().zip(right).all(|(l, r)| {
+                    l.used() == r.used()
+                        && l.code().expose().as_bytes() == r.code().expose().as_bytes()
+                })
+        }
         _ => false,
     }
 }

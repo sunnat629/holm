@@ -19,6 +19,10 @@ pub const MAX_CUSTOM_FIELDS: usize = 10;
 pub const MAX_LABEL_CHARS: usize = 64;
 /// Longest multiline custom secret in bytes.
 pub const MAX_MULTILINE_SECRET_BYTES: usize = 16 * 1024;
+/// Most codes in one recovery code list.
+pub const MAX_RECOVERY_CODES: usize = 20;
+/// Longest single recovery code in bytes.
+pub const MAX_RECOVERY_CODE_BYTES: usize = 64;
 /// A reminder this many UTC days ahead, or sooner, counts as expiring.
 ///
 /// Already-past reminders count as well. Callers pass the UTC date in.
@@ -85,6 +89,9 @@ pub enum FieldError {
     /// The requested field position is absent or invalid.
     #[error("That field is not on the item")]
     NoSuchIndex,
+    /// A recovery code list is empty or has more than [`MAX_RECOVERY_CODES`] codes.
+    #[error("A recovery code list holds 1 to 20 codes")]
+    BadCodeCount,
 }
 
 /// Bidirectional controls that can disguise text, beyond `char::is_control`.

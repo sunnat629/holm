@@ -88,6 +88,7 @@ fn problem_text(p: RowProblem) -> &'static str {
         RowProblem::Field(FieldError::TooManyFields) => "An item can have at most 10 custom fields",
         RowProblem::Field(FieldError::BadDate) => "That date is not a real calendar day",
         RowProblem::Field(FieldError::NoSuchIndex) => "That field is not on the item",
+        RowProblem::Field(FieldError::BadCodeCount) => "a recovery code list holds 1 to 20 codes",
         RowProblem::UnknownType => "the type isn't one Holm knows",
         RowProblem::MissingAddress => "a crypto address with no address",
         RowProblem::MissingPhrase => "a recovery phrase with no phrase",
@@ -96,7 +97,9 @@ fn problem_text(p: RowProblem) -> &'static str {
         RowProblem::UnusedField => "a secret is in a column this type doesn't use",
         RowProblem::BadFavourite => "the favourite cell isn't true or false",
         RowProblem::BadTimestamp => "a created or updated time Holm can't read",
-        RowProblem::BadFieldKind => "The field kind must be text, secret, multiline or date.",
+        RowProblem::BadFieldKind => {
+            "The field kind must be text, secret, multiline, date or codes."
+        }
         RowProblem::BadDate => "The date must be YYYY-MM-DD.",
         RowProblem::FieldGap => "A custom field skips an earlier slot.",
     }

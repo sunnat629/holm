@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use holm_core::category::name_key;
-use holm_core::fields::{FieldKind, FieldValue};
+use holm_core::fields::{FieldKind, FieldValue, codes_left};
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -223,6 +223,7 @@ fn kind_name(kind: FieldKind) -> &'static str {
         FieldKind::Secret => "secret",
         FieldKind::MultilineSecret => "multiline",
         FieldKind::Date => "date",
+        FieldKind::RecoveryCodes => "codes",
     }
 }
 
@@ -231,6 +232,10 @@ fn shown_field(value: &FieldValue) -> Cow<'_, str> {
     match value {
         FieldValue::Text(text) => clean(text.as_str()),
         FieldValue::Date(date) => Cow::Owned(date_text(*date)),
+        FieldValue::RecoveryCodes(codes) => {
+            let (left, total) = codes_left(codes);
+            Cow::Owned(format!("{HIDDEN} ({left} of {total} left)"))
+        }
         FieldValue::Secret(_) | FieldValue::MultilineSecret(_) => Cow::Borrowed(HIDDEN),
     }
 }

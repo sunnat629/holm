@@ -383,6 +383,7 @@ fn field_message(e: FieldError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         FieldError::BadDate => f.write_str("That date is not a real calendar day"),
         FieldError::TooManyFields => f.write_str("An item can have at most 10 custom fields"),
         FieldError::NoSuchIndex => f.write_str("That field is not on the item"),
+        FieldError::BadCodeCount => f.write_str("A recovery code list holds 1 to 20 codes"),
         FieldError::Empty(field) => {
             write!(
                 f,

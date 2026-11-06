@@ -946,6 +946,7 @@ fn value_empty(field: &CustomField) -> bool {
         FieldValue::Text(text) => text.as_str().is_empty(),
         FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => text.expose().is_empty(),
         FieldValue::Date(_) => false,
+        FieldValue::RecoveryCodes(codes) => codes.is_empty(),
     }
 }
 
