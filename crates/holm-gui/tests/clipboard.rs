@@ -15,6 +15,7 @@ use eframe::App as _;
 use eframe::egui::{Event, Key, Modifiers, OutputCommand};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_gui::app::{HolmApp, ScreenKind};
 use holm_gui::messages;
 use holm_gui::secret_input::MASTER_CAP;
@@ -54,7 +55,7 @@ fn unlocked(dir: &Path, fake: &FakeClipboard) -> Harness<'static, HolmApp> {
 
 /// Adds one login and leaves it selected in the read-only view.
 fn add_login(harness: &mut Harness<'static, HolmApp>) {
-    harness.get_by_label("New login").click();
+    common::new_login(harness);
     harness.run();
     type_into(harness, TITLE, "Example Mail");
     type_into(harness, "Password", SECRET);
@@ -128,10 +129,10 @@ fn copy_uses_secret_clipboard_only() {
     assert!(!copied_text(&harness));
 
     let state = fake.0.borrow();
-    assert_eq!(state.sets.len(), 1, "one set_secret call");
+    assert_eq!(state.sets.len(), 1, "one set call");
     assert_eq!(state.sets[0].as_str(), SECRET);
     drop(state);
-    let _ = harness.get_by_label(messages::COPIED);
+    let _ = harness.get_by_label(messages::copied_note(CLIPBOARD_DEFAULT_SECS).as_str());
     assert!(harness.query_by_label(messages::COPY_FAILED).is_none());
 }
 
@@ -147,7 +148,11 @@ fn copy_failure_shows_message() {
     harness.run();
     assert_eq!(fake.0.borrow().sets.len(), 1);
     let _ = harness.get_by_label(messages::COPY_FAILED);
-    assert!(harness.query_by_label(messages::COPIED).is_none());
+    assert!(
+        harness
+            .query_by_label(messages::copied_note(CLIPBOARD_DEFAULT_SECS).as_str())
+            .is_none()
+    );
     assert!(!copied_text(&harness));
 }
 
@@ -210,7 +215,7 @@ fn cmd_v_pastes_into_title() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeClipboard::serving(PASTED);
     let mut harness = unlocked(dir.path(), &fake);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     harness.get_by_label(TITLE).click();
     harness.run();
@@ -229,7 +234,7 @@ fn cmd_c_in_title_copies_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeClipboard::default();
     let mut harness = unlocked(dir.path(), &fake);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, TITLE, "Example Mail");
 
@@ -260,11 +265,11 @@ fn cmd_c_in_title_copies_nothing() {
 #[test]
 #[ignore = "uses the real pasteboard; run by hand"]
 fn system_clipboard_marks_concealed() {
-    use holm_gui::clipboard::{SecretClipboard as _, SystemClipboard};
+    use holm_gui::clipboard::{Clip as _, SecretClipboard as _, SystemClipboard};
 
     let mut clipboard = SystemClipboard::new();
     clipboard
-        .set_secret("EXAMPLE-concealed")
+        .set("EXAMPLE-concealed")
         .expect("the pasteboard takes the text");
     let out = std::process::Command::new("osascript")
         .args([

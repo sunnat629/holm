@@ -2,6 +2,7 @@ use super::*;
 use crate::category::BUILT_IN_CATEGORIES;
 use crate::clock::FakeClock;
 use crate::envelope::VaultError;
+use crate::fields::{FieldKind, FieldValue, format_date};
 use crate::item::{Item, ItemData, ItemId};
 use crate::padding::MAX_BODY_LEN;
 use crate::rules::{Field, FieldError, MAX_ITEMS};
@@ -37,6 +38,36 @@ fn fresh() -> S {
 
 fn csv(src: &str) -> ImportBatch {
     parse(src.as_bytes(), ImportFormat::Csv).unwrap()
+}
+
+#[test]
+fn import_clamps_timestamps() {
+    let mut s = fresh();
+    let source = format!(
+        "title,type,notes,created,updated\nPast,note,example,{0},{0}\nFuture,note,example,{1},{1}\nBoth,note,example,{0},{1}\n",
+        i64::MIN,
+        i64::MAX
+    );
+    s.import(csv(&source)).unwrap();
+    for (title, created, updated) in [("Past", 0, 0), ("Future", NOW, NOW), ("Both", 0, NOW)] {
+        let item = by_title(&s, title);
+        assert_eq!(item.created(), Timestamp(created));
+        assert_eq!(item.updated(), Timestamp(updated));
+    }
+    for value in [i64::MIN, i64::MAX] {
+        for pair in [
+            times(Timestamp(NOW), Some(Timestamp(value)), None),
+            times(Timestamp(NOW), None, Some(Timestamp(value))),
+        ] {
+            assert!((0..=NOW).contains(&pair.0.0));
+            assert!((0..=NOW).contains(&pair.1.0));
+            assert!(pair.0 <= pair.1);
+        }
+    }
+    assert_eq!(
+        times(Timestamp(-1), None, None),
+        (Timestamp(0), Timestamp(0))
+    );
 }
 
 fn json(src: &str) -> ImportBatch {
@@ -883,10 +914,7 @@ fn metadata_columns_read() {
     ));
     let m = by_title(&s, "M");
     assert!(m.favourite());
-    assert_eq!(
-        (m.created(), m.updated()),
-        (Timestamp(1_700_000_000), Timestamp(1_700_000_100))
-    );
+    assert_eq!((m.created(), m.updated()), (Timestamp(NOW), Timestamp(NOW)));
     let u = by_title(&s, "U");
     assert!(!u.favourite());
     assert_eq!((u.created(), u.updated()), (Timestamp(NOW), Timestamp(NOW)));
@@ -896,10 +924,7 @@ fn metadata_columns_read() {
         (Timestamp(1_600_000_000), Timestamp(NOW))
     );
     let f = by_title(&s, "F");
-    assert_eq!(
-        (f.created(), f.updated()),
-        (Timestamp(1_800_000_000), Timestamp(1_800_000_000))
-    );
+    assert_eq!((f.created(), f.updated()), (Timestamp(NOW), Timestamp(NOW)));
     let d = by_title(&s, "D");
     assert_eq!(
         (d.created(), d.updated()),
@@ -952,6 +977,7 @@ fn recovery_never_from_password() {
 
 fn seed_note(title: &str) -> Item {
     Item {
+        fields: Vec::new(),
         id: ItemId::random().unwrap(),
         title: Text::new(title.to_owned()),
         category: None,
@@ -1064,4 +1090,187 @@ fn error_messages_are_fixed_text() {
         ImportError::Malformed { line: 7 }.to_string(),
         "the file is not valid at line 7"
     );
+}
+
+#[test]
+fn old_csv_has_no_fields() {
+    let s = imported(concat!(
+        "title,username,password,url,notes,category,type,",
+        "chain,address,memo,recovery,favourite,created,updated\n",
+        "Old,user,EXAMPLE-pw,https://example.com,,,login,,,,,false,1700000000,1700000000\n",
+    ));
+    let item = by_title(&s, "Old");
+    assert!(item.fields().is_empty());
+    assert_eq!(login_of(item).1, "EXAMPLE-pw");
+}
+
+#[test]
+fn field_gap_is_a_row_error() {
+    let batch = csv("title,password,field2_label\nT,pw,Pin\n");
+    assert_eq!(issues(&batch), vec![(1, RowProblem::FieldGap)]);
+    assert_eq!(batch.ready(), 0);
+    let mut s = fresh();
+    let report = s.import(batch).unwrap();
+    assert_eq!(report.imported, 0);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(s.active_items().unwrap().count(), 0);
+}
+
+#[test]
+fn bad_kind_is_a_row_error() {
+    let batch = csv(concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "T,pw,Pin,password,EXAMPLE-field-secret\n",
+    ));
+    assert_eq!(issues(&batch), vec![(1, RowProblem::BadFieldKind)]);
+    assert_eq!(batch.ready(), 0);
+}
+
+#[test]
+fn bad_expiry_is_a_row_error() {
+    let batch = csv(concat!(
+        "title,password,field1_label,field1_kind,field1_value,field1_expiry\n",
+        "A,pw,Note,text,public,2026-13-01\n",
+        "B,pw,Note,text,public,2026-11-05T00:00:00Z\n",
+        "C,pw,When,date,,\n",
+        "D,pw,Note,text,public,   \n",
+    ));
+    assert_eq!(
+        issues(&batch),
+        vec![
+            (1, RowProblem::BadDate),
+            (2, RowProblem::BadDate),
+            (3, RowProblem::BadDate),
+        ]
+    );
+    assert_eq!(batch.ready(), 1);
+    let mut s = fresh();
+    s.import(batch).unwrap();
+    assert_eq!(by_title(&s, "D").fields()[0].expiry(), None);
+}
+
+#[test]
+fn empty_secret_slot_imports() {
+    let s = imported("title,password,field1_label,field1_kind,field1_value\nT,pw,Pin,SeCrEt,\n");
+    let field = &by_title(&s, "T").fields()[0];
+    assert_eq!(field.label(), "Pin");
+    assert_eq!(field.kind(), FieldKind::Secret);
+    assert_eq!(field.expiry(), None);
+    match field.value() {
+        FieldValue::Secret(value) => assert_eq!(value.expose(), ""),
+        _ => panic!("secret"),
+    }
+}
+
+#[test]
+fn ten_fields_import() {
+    let mut header = String::from("title,password");
+    let mut row = String::from("Ten,pw");
+    for n in 1..=10 {
+        header.push_str(&format!(
+            ",field{n}_label,field{n}_kind,field{n}_value,field{n}_expiry"
+        ));
+        if n == 1 {
+            row.push_str(",L1,Text,v1,");
+        } else if n == 2 {
+            row.push_str(",When,DATE,2026-11-05,2026-12-01");
+        } else {
+            row.push_str(&format!(",L{n},text,v{n},"));
+        }
+    }
+    let s = imported(&format!("{header}\n{row}\n"));
+    let item = by_title(&s, "Ten");
+    assert_eq!(item.fields().len(), 10);
+    assert_eq!(item.fields()[0].kind(), FieldKind::Text);
+    assert_eq!(item.fields()[1].kind(), FieldKind::Date);
+    match item.fields()[1].value() {
+        FieldValue::Date(date) => assert_eq!(format_date(*date), *b"2026-11-05"),
+        _ => panic!("date"),
+    }
+    assert_eq!(
+        item.fields()[1].expiry().map(format_date),
+        Some(*b"2026-12-01")
+    );
+    assert_eq!(item.fields()[9].label(), "L10");
+    assert_eq!(
+        csv_err(b"title,field1_label,field1_label"),
+        ImportError::DuplicateColumn
+    );
+}
+
+#[test]
+fn browser_fixtures_unchanged() {
+    let chrome = parse(CHROME_CSV, ImportFormat::Csv).unwrap();
+    assert_eq!(chrome.dialect(), Dialect::Chrome);
+    assert_eq!(chrome.ready(), 2);
+    let firefox = parse(FIREFOX_CSV, ImportFormat::Csv).unwrap();
+    assert_eq!(firefox.dialect(), Dialect::Firefox);
+    assert_eq!(firefox.ready(), 1);
+    let safari = parse(SAFARI_CSV, ImportFormat::Csv).unwrap();
+    assert_eq!(safari.dialect(), Dialect::Safari);
+    assert_eq!(safari.ready(), 2);
+    assert_eq!(safari.otp_ignored(), 1);
+
+    let mut s = fresh();
+    s.import(chrome).unwrap();
+    s.import(firefox).unwrap();
+    s.import(safari).unwrap();
+    assert_eq!(s.active_items().unwrap().count(), 5);
+    assert!(
+        s.active_items()
+            .unwrap()
+            .all(|item| item.fields().is_empty())
+    );
+}
+
+#[test]
+fn same_item_sees_custom_fields() {
+    let different = concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "Twin,pw,Pin,secret,EXAMPLE-a\n",
+        "Twin,pw,Pin,secret,EXAMPLE-b\n",
+    );
+    let mut s = fresh();
+    let report = s.import(csv(different)).unwrap();
+    assert_eq!(report.imported, 2);
+    assert_eq!(report.duplicates, 0);
+
+    let identical = concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "Twin,pw,Pin,secret,EXAMPLE-a\n",
+        "Twin,pw,Pin,secret,EXAMPLE-a\n",
+    );
+    let report = fresh().import(csv(identical)).unwrap();
+    assert_eq!(report.imported, 1);
+    assert_eq!(report.duplicates, 1);
+
+    let other = concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "Twin,pw,Pin,secret,EXAMPLE-c\n",
+    );
+    assert_eq!(s.preview_import(&csv(other)).unwrap().duplicates, 0);
+    let same = concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "Twin,pw,Pin,secret,EXAMPLE-a\n",
+    );
+    assert_eq!(s.preview_import(&csv(same)).unwrap().duplicates, 1);
+}
+
+#[test]
+fn export_debug_has_no_secret() {
+    let err = csv_err(b"title,password,nope\nT,EXAMPLE-field-secret,x\n");
+    let shown = format!("{err} {err:?}");
+    assert!(!shown.contains("EXAMPLE"));
+
+    let err = json_err(br#"[{"title":"T","password":"EXAMPLE-field-secret","nested":{"a":"x"}}]"#);
+    let shown = format!("{err} {err:?}");
+    assert!(!shown.contains("EXAMPLE"));
+
+    let batch = csv(concat!(
+        "title,password,field1_label,field1_kind,field1_value\n",
+        "T,pw,Pin,password,EXAMPLE-field-secret\n",
+    ));
+    let shown = format!("{batch:?} {:?}", batch.issues());
+    assert!(!shown.contains("EXAMPLE"));
+    assert_eq!(issues(&batch), vec![(1, RowProblem::BadFieldKind)]);
 }

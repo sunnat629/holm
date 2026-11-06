@@ -68,15 +68,17 @@ impl fmt::Debug for SecretText {
 }
 ```
 
-- `#[derive(Debug)]` would print every field, which for `SecretText` means the secret itself. So we write the impl by hand.
+- `#[derive(Debug)]` prints each field with that field's own `Debug`. The output would then depend on how the inner type prints, and a dependency update could change that. So we write the impl by hand, and the text is fixed.
 - `f.write_str` writes a fixed string. It never looks at `self.0`.
 - `ItemData` does the same with a `match`: it prints `Login` or `SecureNote` and nothing else.
 - `SecretText`, `GatedSecret` and `ItemData` have no `Clone`, so nobody can copy a secret without it being a visible decision. (`Text` holds no secret and does derive `Clone`.)
-- None of the item, text or category types implement serde's `Serialize` or `Deserialize` either. Only crate-private wire types in `wire.rs` do, and they re-run every field rule when reading. Two `compile_fail` doctests in `lib.rs` prove that outside code cannot serialize an `Item` or deserialize a `GatedSecret`.
+- `Item`, `ItemData`, `Text`, `SecretText` and `GatedSecret` do not implement serde's `Serialize` or `Deserialize` either. (Plain ids such as `ItemId` do, as they hold no secret.) Only crate-private wire types in `crates/holm-core/src/wire.rs` do, and `ItemIn::into_item` re-runs the field rules when reading. The tests in `text.rs` and `item.rs` prove both rules at compile time, for example `assert_not_impl_any!(SecretText: Clone, Copy)` and `assert_not_impl_any!(Item: serde::Serialize, serde::de::DeserializeOwned)`. If someone adds the trait, the test build fails.
 
 In Kotlin you'd write: a `data class` with an overridden `toString()` that returns `"SecretText([REDACTED])"`. Forgetting the override leaks, because a `data class` prints every field.
 
 ### `char` ranges in `matches!`
+
+From `crates/holm-core/src/rules.rs`:
 
 ```rust
 fn is_bidi(c: char) -> bool {
@@ -87,11 +89,13 @@ fn is_bidi(c: char) -> bool {
 - `'\u{202E}'` is a `char` written by its Unicode number. A `char` is one Unicode scalar value, not one byte.
 - `'\u{202A}'..='\u{202E}'` is an inclusive range. It matches the five characters from 202A to 202E.
 - `|` means "or". `matches!` gives back `true` if `c` fits any pattern.
-- These characters flip the display direction of text. A title can look like `invoice` while holding something else, so display fields reject them.
+- These characters flip the display direction of text. A title can look like `invoice` while holding something else, so display fields reject them, together with every `char::is_control` character. The test `display_fields_reject_controls_and_bidi` in `item.rs` checks that `'\u{202E}'` in a title and `'\u{2066}'` in a username are refused.
 
 In Kotlin you'd write: `c.code in 0x202A..0x202E || c.code in 0x2066..0x2069 || c == '\u061C'`. Kotlin `Char` is a UTF-16 unit, so characters outside the first 65 536 need `Int` code points. Rust `char` covers them all.
 
 ### Errors that name the field, never the value
+
+A trimmed view of `FieldError` in `crates/holm-core/src/rules.rs`:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -106,12 +110,14 @@ pub enum FieldError {
     TooManyUrls,
     #[error("{0:?} is a reserved name")]
     Reserved(Field),
+    // ... more variants, such as TooManyFields and BadDate
 }
 ```
 
+- `thiserror::Error` turns each `#[error("...")]` line into the text the error prints.
 - `Field` is a plain enum such as `Title` or `Password`. The error holds that label and nothing else.
-- Because the error is `Copy` and holds no text, it is safe to log, show in the UI or put in a test failure message.
-- The `{0:?}` in the message prints the first field of the variant with `Debug`.
+- Because the error is `Copy` and holds no text from the item, it is safe to log, show in the UI or put in a test failure message.
+- The `{0:?}` in the message prints the first field of the variant with `Debug`. The test `error_messages_name_field_not_value` checks that `FieldError::Empty(Field::Title)` prints `Title must not be empty`.
 
 In Kotlin you'd write: a `sealed class FieldError` whose subclasses carry a `Field` enum. Not an exception built with `"Bad password: $value"`.
 
@@ -123,21 +129,22 @@ Secrets leak through side doors: a debug print, a log line, an error message, a 
 
 1. See the redaction test run.
    - Run: `cargo test -p holm-core --locked secret_text_debug_is_redacted`
-   - Check: the `test result:` line says `ok. 1 passed`, followed by `filtered out` for the other tests.
+   - Check: one `test result:` line says `ok. 1 passed`, with the other tests counted as `filtered out`.
    - Undo: nothing to undo, it only reads.
 2. Prove `match` is exhaustive. Add a variant `Card {}` to the `ItemData` enum in `crates/holm-core/src/item.rs`.
    - Run: `cargo check -p holm-core --locked`
-   - Check: the compiler reports `non-exhaustive patterns` and points at `item_type`.
+   - Check: the compiler reports `non-exhaustive patterns` and points at `item_type` (and at the other `match` blocks on `ItemData`).
    - Undo: `git checkout crates/holm-core/src/item.rs`
 3. Break the secret rule on purpose. In `text.rs`, replace the hand-written `Debug` for `SecretText` with `#[derive(Debug)]` on the struct (and delete the impl).
    - Run: `cargo test -p holm-core --locked secret_text_debug_is_redacted`
-   - Check: the test fails because the output shows the string instead of `[REDACTED]`.
+   - Check: the test fails because the output is no longer exactly `SecretText([REDACTED])`.
    - Undo: `git checkout crates/holm-core/src/text.rs`
 
 ## Read next
 
+- Previous: [Lesson 09, Feature unification and cargo vet](09-feature-unification-and-vet.md).
+- Next: [Lesson 11, Randomness without bias](11-randomness-without-bias.md).
+- All lessons: [the index](README.md).
 - [The Rust book, ch07: packages, crates and modules](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html), for how a private field keeps a secret in one place.
 - [The Rust book, ch09: error handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html), for `Result` and the `?` operator.
 - [The Rust book on enums and `match`](https://doc.rust-lang.org/book/ch06-00-enums.html)
-
-Next lesson: [11, Randomness without bias](11-randomness-without-bias.md).

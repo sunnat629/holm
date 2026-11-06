@@ -11,6 +11,8 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use holm_core::clock::Clock;
+use holm_core::fields::FieldValue;
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -19,45 +21,24 @@ use holm_core::item::{ItemData, ItemId};
 use holm_core::session::Session;
 use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_core::text::Text;
-use holm_platform::clipboard::{ClipCheck, ClipboardError, ConcealedClipboard};
+use holm_platform::clip_clear::{self, ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use crate::Env;
-use crate::args::{CopyField, GenArgs, GenKind};
-use crate::output::{CliError, write_error};
+use crate::args::{CopyField, GenArgs, GenKind, UsageError};
+use crate::output::{CliError, date_text, read_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
 /// The prompt that re-checks the master password before a recovery phrase is copied.
 pub const AGAIN_PROMPT: &str = "Master password again: ";
 
-/// The clipboard as a trait, so tests swap in a fake one.
-pub trait Clip {
-    /// Puts `text` on the clipboard, marked concealed.
-    ///
-    /// # Errors
-    /// [`ClipboardError`] if the clipboard did not take it.
-    fn set(&mut self, text: &str) -> Result<(), ClipboardError>;
-    /// Whether the clipboard holds exactly `text`, or could not be read.
-    fn check(&mut self, text: &str) -> ClipCheck;
-    /// Empties the clipboard.
-    fn clear(&mut self);
-}
+/// `--copy field=N` on a recovery codes field. The CLI never puts a code on the clipboard.
+pub const COPY_ONE_CODE: UsageError = UsageError("Copy one recovery code from the Holm window.");
 
-impl Clip for ConcealedClipboard {
-    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
-        ConcealedClipboard::set(self, text)
-    }
-
-    fn check(&mut self, text: &str) -> ClipCheck {
-        ConcealedClipboard::check(self, text)
-    }
-
-    fn clear(&mut self) {
-        ConcealedClipboard::clear(self);
-    }
-}
+/// The clipboard as a trait, shared with the shell and the GUI.
+pub use holm_platform::clip_clear::Clip;
 
 /// Holm's value was there and is gone now.
 const CLEARED: &str = "Clipboard cleared.";
@@ -77,16 +58,12 @@ const CLEARED_UNCHECKED: &str =
 /// # Errors
 /// [`CliError::ClearFailed`] if `value` is still there after the clear.
 pub(crate) fn clear_copied(clip: &mut dyn Clip, value: &str) -> Result<&'static str, CliError> {
-    let before = clip.check(value);
-    if before == ClipCheck::Other {
-        return Ok(LEFT_ALONE);
-    }
-    clip.clear();
-    match (before, clip.check(value)) {
-        (_, ClipCheck::Holds) => Err(CliError::ClearFailed),
-        (_, ClipCheck::Unreadable) => Ok(CLEARED_UNCHECKED),
-        (ClipCheck::Unreadable, ClipCheck::Other) => Ok(CLEARED_UNREADABLE),
-        (_, ClipCheck::Other) => Ok(CLEARED),
+    match clip_clear::clear_copied(clip, value) {
+        ClearOutcome::Cleared => Ok(CLEARED),
+        ClearOutcome::LeftAlone => Ok(LEFT_ALONE),
+        ClearOutcome::ClearedUnreadable => Ok(CLEARED_UNREADABLE),
+        ClearOutcome::ClearedUnchecked => Ok(CLEARED_UNCHECKED),
+        ClearOutcome::StillThere => Err(CliError::ClearFailed),
     }
 }
 
@@ -103,21 +80,25 @@ pub(crate) fn open_clip(env: &Env) -> Result<Box<dyn Clip>, CliError> {
 ///
 /// # Errors
 /// [`CliError::NotFound`], [`CliError::NoSuchField`] if the item's type has no such
-/// field, [`CliError::EmptyField`], a terminal error, [`CliError::WrongPassword`] or
-/// [`CliError::Throttled`].
+/// field or `field=N` is past its custom fields, [`CliError::EmptyField`], a terminal
+/// error, [`CliError::WrongPassword`] or [`CliError::Throttled`]. A custom field does
+/// not ask for the master password again.
 pub fn value_of(
     session: &mut Session<FsStore>,
     id: ItemId,
     field: CopyField,
     term: &mut dyn Terminal,
 ) -> Result<Zeroizing<String>, CliError> {
+    if let CopyField::Custom(index) = field {
+        return custom_value(session, id, index);
+    }
     let item = session.item(id).map_err(|_| CliError::NotFound)?;
     let value = match (field, item.data()) {
         (CopyField::Phrase, ItemData::RecoveryPhrase { .. }) => {
             let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
             let phrase = session
                 .reveal_phrase(id, &password)
-                .map_err(|e| write_error(&e))?;
+                .map_err(|e| read_error(&e))?;
             // Straight from the vault's buffer into a wiping one.
             Zeroizing::new(phrase.to_owned())
         }
@@ -153,9 +134,33 @@ pub fn value_of(
     Ok(value)
 }
 
-/// Puts `value` on the clipboard, waits up to `secs` seconds or until Enter, then
-/// clears the clipboard if it still holds `value` or can't be read
-/// ([`clear_copied`]).
+/// Custom field `index` (0-based) in a wiping buffer. Never printed.
+fn custom_value(
+    session: &Session<FsStore>,
+    id: ItemId,
+    index: u8,
+) -> Result<Zeroizing<String>, CliError> {
+    let item = session.item(id).map_err(|_| CliError::NotFound)?;
+    let Some(field) = item.fields().get(usize::from(index)) else {
+        return Err(CliError::NoSuchField);
+    };
+    let value = match field.value() {
+        FieldValue::Text(text) => Zeroizing::new(text.as_str().to_owned()),
+        FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => {
+            Zeroizing::new(text.expose().to_owned())
+        }
+        FieldValue::Date(date) => Zeroizing::new(date_text(*date)),
+        FieldValue::RecoveryCodes(_) => return Err(CliError::Usage(COPY_ONE_CODE)),
+    };
+    if value.is_empty() {
+        return Err(CliError::EmptyField);
+    }
+    Ok(value)
+}
+
+/// Puts `value` on the clipboard, waits up to `secs` seconds (on either of `clock`'s
+/// clocks, so a sleep cannot stretch it) or until Enter, then clears the clipboard if
+/// it still holds `value` or can't be read ([`clear_copied`]).
 ///
 /// The clear runs even when the message or the wait fails; that error is returned
 /// after it.
@@ -170,16 +175,26 @@ pub fn copy_and_wait(
     clip: &mut dyn Clip,
     term: &mut dyn Terminal,
     err: &mut dyn Write,
+    clock: &dyn Clock,
 ) -> Result<(), CliError> {
     clip.set(&value).map_err(|_| CliError::CopyFailed)?;
-    let until = Instant::now() + Duration::from_secs(u64::from(secs));
+    // One clamp for every client: the wait and the message use the clamped time.
+    let pending = PendingClear::new(value, secs, clock);
+    let wait = pending.due().saturating_sub(clock.monotonic());
+    let until = Instant::now() + wait;
     let said = writeln!(
         err,
-        "Copied. Holm clears the clipboard in {secs} seconds. Press Enter to clear it now."
+        "Copied. Holm clears the clipboard in {} seconds. Press Enter to clear it now.",
+        (wait + Duration::from_millis(500)).as_secs()
     );
-    let waited = term.wait_for_key(until);
-    let cleared = clear_copied(clip, &value)?;
-    drop(value);
+    // The wait also ends when the clear is due on either clock: `until` is monotonic,
+    // and a Mac asleep stops that clock, so after a wake only the wall clock shows
+    // that the time has passed.
+    let due = || pending.is_due(clock);
+    let waited = term.wait_for_key_interruptible(until, Some(&due));
+    let cleared = clear_copied(clip, pending.value());
+    drop(pending);
+    let cleared = cleared?;
     said?;
     waited?;
     writeln!(err, "{cleared}")?;
@@ -209,7 +224,8 @@ pub fn get_copy(
         (value, settings.clipboard_clear_secs)
         // `opened` drops here: the session locks and the folder lock is released.
     };
-    copy_and_wait(value, secs, clip.as_mut(), term, err)
+    let clock = (env.clock)();
+    copy_and_wait(value, secs, clip.as_mut(), term, err, &*clock)
 }
 
 /// `holm gen [KIND] --copy`: a new value from the default spec, copied for
@@ -227,7 +243,15 @@ pub fn gen_copy(
 ) -> Result<(), CliError> {
     let mut clip = open_clip(env)?;
     let value = gen_secret(args.kind)?;
-    copy_and_wait(value, CLIPBOARD_DEFAULT_SECS, clip.as_mut(), term, err)
+    let clock = (env.clock)();
+    copy_and_wait(
+        value,
+        CLIPBOARD_DEFAULT_SECS,
+        clip.as_mut(),
+        term,
+        err,
+        &*clock,
+    )
 }
 
 /// A new value of `kind` from the default spec, in a wiping buffer.

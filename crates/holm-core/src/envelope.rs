@@ -482,8 +482,18 @@ mod tests {
         let (h, _) = Header::parse(file).unwrap();
         assert_eq!(h.kdf, KdfParams::FLOOR);
         let (keys, body) = open(file, &pw("cafe\u{301} golden")).unwrap();
+        // The sealed body is schema 1; it decodes to the default vault, which now
+        // encodes as schema 2.
+        assert_eq!(
+            &body.expose()[..2],
+            &crate::body::BODY_SCHEMA_V1.to_le_bytes()
+        );
+        let reencoded = crate::body::VaultData::decode(body.expose())
+            .unwrap()
+            .encode()
+            .unwrap();
         let default_body = crate::body::VaultData::new_default().encode().unwrap();
-        assert_eq!(body.expose(), default_body.expose());
+        assert_eq!(reencoded.expose(), default_body.expose());
         assert_eq!(keys.header, h);
         assert_eq!(
             open(file, &pw("cafe golden")).unwrap_err(),

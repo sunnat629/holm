@@ -16,10 +16,15 @@ pub(super) fn parse_json(src: &str) -> Result<ImportBatch, ImportError> {
     for (i, mut object) in objects.into_iter().enumerate() {
         let malformed = ImportError::Malformed { line: object.line };
         let mut raw = RawRow::default();
-        let mut seen = 0u32;
+        // One bit per Holm column. Fifty-four columns fit in a `u64`.
+        let mut seen = 0u64;
         for (key, value) in &mut object.fields {
             let col = row::holm_col(key).ok_or_else(|| malformed.clone())?;
-            let bit = 1u32 << (col as u32);
+            let shift = col as usize;
+            if shift >= 64 {
+                return Err(malformed);
+            }
+            let bit = 1u64 << shift;
             if seen & bit != 0 {
                 return Err(malformed);
             }

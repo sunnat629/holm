@@ -78,12 +78,27 @@ fn seal_fixed(key: &[u8; 32], nonce: &[u8; 24], aad: &[u8], plaintext: &[u8]) ->
     buf
 }
 
+// Pin the original body independently of the schema the current encoder writes.
+#[rustfmt::skip]
+const V1_DEFAULT_GOLDEN: [u8; 51] = [
+    1, 0,                         // schema version 1, little-endian
+    172, 2, 30, 1,                // auto-lock 300 (varint), clipboard 30, lock on sleep
+    20, 1, 1, 1, 1, 0, 1, 1,      // password: length 20, sets, no look-alike filter, minimums
+    6, 1, 45, 0, 0,               // passphrase: 6 words, separator "-", flags
+    2, 3,                         // username: 2 words, 3 digits
+    3,                            // 3 categories
+    1, 8, b'P', b'e', b'r', b's', b'o', b'n', b'a', b'l',
+    2, 4, b'W', b'o', b'r', b'k',
+    3, 9, b'C', b'o', b'm', b'm', b'u', b'n', b'i', b't', b'y',
+    0,                            // no items
+    4,                            // next category id
+];
+
 /// Builds the golden vault the same way `envelope::create` does, with the fixed
 /// salt, data key and nonces above.
 fn build_golden() -> Vec<u8> {
     let params = KdfParams::FLOOR;
-    let body = VaultData::new_default().encode().unwrap();
-    let padded = pad(body.expose()).unwrap();
+    let padded = pad(&V1_DEFAULT_GOLDEN).unwrap();
 
     let mut header = Header {
         kdf: params,
@@ -118,8 +133,11 @@ fn golden_vault_opens_and_decodes_to_schema_v1() {
     s.unlock(&pw("cafe\u{301} golden")).unwrap();
     assert!(s.is_unlocked());
     assert!(!s.is_dirty());
-    // The body round trip: the default body is schema 1 and re-encodes identically.
-    let body = VaultData::new_default().encode().unwrap();
+    // Reading the original default body migrates its next encoding to schema 2.
+    let body = VaultData::decode(&V1_DEFAULT_GOLDEN)
+        .unwrap()
+        .encode()
+        .unwrap();
     assert_eq!(&body.expose()[..2], &BODY_SCHEMA_VERSION.to_le_bytes());
     assert_eq!(VaultData::decode(body.expose()).unwrap().item_count(), 0);
 }

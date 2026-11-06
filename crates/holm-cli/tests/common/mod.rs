@@ -11,11 +11,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
-use holm_cli::term::Terminal;
+use holm_cli::term::{Interrupt, Terminal};
 use holm_cli::{Clip, Env};
-use holm_core::clock::SystemClock;
+use holm_core::clock::{Clock, SystemClock};
+use holm_core::item::Timestamp;
 use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
@@ -39,13 +42,19 @@ pub enum Kind {
 /// A terminal that answers from a queue and records every prompt. An empty queue
 /// answers [`TtyError::EndOfInput`], as Ctrl-D would. `wait_for_key` answers
 /// `wait_answer` at once (true: Enter was pressed; false: the time ran out) after
-/// running `on_wait`.
+/// running `on_wait`, unless `wait_stalls` is set.
 #[derive(Default)]
 pub struct FakeTerminal {
     answers: VecDeque<String>,
     pub prompts: Vec<(Kind, String)>,
     pub wait_answer: bool,
     pub on_wait: Option<Box<dyn FnMut()>>,
+    /// Models a wait whose monotonic deadline never comes (the Mac slept, so
+    /// `Instant` stood still): after `on_wait`, only the interrupt can end it, and a
+    /// wait with no interrupt, or one that never fires, panics.
+    pub wait_stalls: bool,
+    /// How many waits ended because the interrupt fired.
+    pub wait_interrupted: usize,
     /// If set, every prompt is also appended here, as `[prompt]`.
     pub transcript: Option<Rc<RefCell<String>>>,
 }
@@ -98,6 +107,14 @@ impl Terminal for FakeTerminal {
     }
 
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
+        self.wait_for_key_interruptible(until, None)
+    }
+
+    fn wait_for_key_interruptible(
+        &mut self,
+        until: Instant,
+        interrupt: Interrupt<'_>,
+    ) -> Result<bool, TtyError> {
         let secs = until
             .saturating_duration_since(Instant::now())
             .as_secs_f64()
@@ -106,7 +123,46 @@ impl Terminal for FakeTerminal {
         if let Some(f) = &mut self.on_wait {
             f();
         }
+        if interrupt.is_some_and(|fired| fired()) {
+            self.wait_interrupted += 1;
+            return Ok(false);
+        }
+        assert!(
+            !self.wait_stalls,
+            "the wait never ended: no interrupt fired"
+        );
         Ok(self.wait_answer)
+    }
+}
+
+/// A clock the test moves by hand. Clones share the same time.
+#[derive(Clone, Default)]
+pub struct TestClock {
+    mono_secs: Arc<AtomicU64>,
+    unix: Arc<AtomicI64>,
+}
+
+impl TestClock {
+    /// A clock at a plausible wall time.
+    pub fn new() -> TestClock {
+        let clock = TestClock::default();
+        clock.unix.store(1_800_000_000, Ordering::SeqCst);
+        clock
+    }
+
+    /// Moves only the wall clock, as a sleep does: the monotonic clock stops.
+    pub fn sleep(&self, secs: i64) {
+        self.unix.fetch_add(secs, Ordering::SeqCst);
+    }
+}
+
+impl Clock for TestClock {
+    fn now_unix(&self) -> Timestamp {
+        Timestamp(self.unix.load(Ordering::SeqCst))
+    }
+
+    fn monotonic(&self) -> Duration {
+        Duration::from_secs(self.mono_secs.load(Ordering::SeqCst))
     }
 }
 
@@ -164,6 +220,8 @@ pub fn env() -> Env {
         clock: Box::new(|| Box::new(SystemClock::new())),
         default_vault: None,
         clip: Box::new(|| Err(ClipboardError::Unavailable)),
+        // Unknown, as when `/dev/console` can't be read: never a change.
+        console_owner: Rc::new(|| None),
     }
 }
 

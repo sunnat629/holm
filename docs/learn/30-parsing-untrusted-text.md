@@ -5,7 +5,7 @@
 An import file comes from outside Holm and is full of passwords. A parser for it must never
 crash, never run out of stack, never echo what it read into an error, and never leave a copy of a
 password in freed memory. Off-the-shelf CSV and JSON crates do none of the last part, so Holm
-reads both formats with about 550 lines (comments included) of its own std-only code.
+reads both formats with a small amount of its own std-only code.
 
 ## What we built
 
@@ -73,7 +73,7 @@ case, so there is no forgotten state.
 
 The JSON reader has a fixed shape (an array of flat objects), so its states are just the loops in
 `parse_json_rows` and `Parser::object`. There is no recursion: a `[` or `{` where a value should be
-is refused on the spot. A file of 100,000 `[` fails on a 64 KiB stack, and a test proves it.
+is refused on the spot. A file of 100,000 `[` is an error, not a stack overflow.
 
 In Kotlin you'd write a `sealed class State` with `InQuotes`, `AfterQuote` and so on, and a
 `when (state)` over it. Rust's `match` on bytes plus position does the same job without objects.
@@ -98,7 +98,7 @@ run checks that nothing grew. The writer works the same way: `quoted_len` says h
 `push_quoted` will write, so export can allocate the whole file once.
 
 A cell past `max_cells` is still scanned (a bad quote there is still an error) but never
-allocated. One line of 1,000,000 commas allocates 64 empty cells, not a million.
+allocated. One line of 1,000,000 commas allocates at most `max_cells` empty cells, not a million.
 
 In Kotlin you'd write `buildString(capacity) { ... }`. The capacity there is a hint for speed.
 Here it is a security rule.
@@ -144,7 +144,7 @@ For CSV there is no oracle, so the test is a round trip: write with `push_quoted
 In Kotlin you'd write a Kotest `checkAll(Arb.list(Arb.map(...)))` and compare against
 kotlinx.serialization.
 
-## Exercises
+## Try it
 
 1. Add a test that `CsvReader` reads `"a""""b"` as the cell `a""b`, and that its capacity equals
    its length. Check: `cargo test -p holm-core --locked plain::csv`
@@ -160,3 +160,6 @@ kotlinx.serialization.
 - [The Rust Programming Language, ch. 8.2: Storing UTF-8 encoded text with strings](https://doc.rust-lang.org/book/ch08-02-strings.html)
 - [std::string::String::with_capacity](https://doc.rust-lang.org/std/string/struct.String.html#method.with_capacity)
 - [RFC 4180: Common format for CSV files](https://www.rfc-editor.org/rfc/rfc4180)
+- Previous: [Lesson 29: Iterators and lifetimes](29-iterators-and-lifetimes.md)
+- Next: [Lesson 31: Hostile input, all or nothing](31-hostile-input-all-or-nothing.md)
+- [The index](README.md)

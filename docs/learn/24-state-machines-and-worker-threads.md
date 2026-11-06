@@ -2,7 +2,7 @@
 
 ## Why this matters
 
-Argon2 is meant to be slow: with Holm's default costs it takes about a second and 256 MiB. If that ran on the UI thread the window would freeze, macOS would show the spinning cursor, and a user might force-quit in the middle of creating a vault. Moving the work to another thread is easy; moving it without sharing the session between two threads, and without a hung screen when the thread dies, is what this task is about.
+Argon2 is meant to be slow: with Holm's default costs it takes about a second and 256 MiB. If that ran on the UI thread the window would freeze, macOS would show the spinning cursor, and a user might force-quit in the middle of creating a vault. Moving the work to another thread is easy; moving it without sharing the session between two threads, and without a hung screen when the thread dies, is what this lesson is about.
 
 ## What we built
 
@@ -11,6 +11,8 @@ Argon2 is meant to be slow: with Holm's default costs it takes about a second an
 ## Rust ideas in this task
 
 ### An enum as a screen state machine
+
+This is the first version of the enum, simplified. Later lessons add more screens and more fields, but the idea stays the same.
 
 ```rust
 enum Screen {
@@ -90,7 +92,7 @@ The return type is `&'static str`, so the function can only return text written 
 
 In Kotlin you'd write a `when (e) { is WrongPassword -> R.string.wrong_password ... }` that returns a string resource id.
 
-## Exercises
+## Try it
 
 1. In `HolmApp::tick`, make the `Disconnected` arm do what the `Empty` arm does (`ctx.request_repaint_after(WORKER_POLL)`) and run the test. How long does it take to fail, and what would a user see on screen in the meantime? Undo the change.
    Check: `cargo test -p holm-gui --locked --test create_unlock worker_panic_is_fatal_not_hang`
@@ -101,6 +103,9 @@ In Kotlin you'd write a `when (e) { is WrongPassword -> R.string.wrong_password 
 
 ## Read next
 
+- Previous: [Lesson 23](23-a-password-widget-that-wipes.md)
+- Next: [Lesson 25](25-borrowing-across-a-frame.md)
+- [The index](README.md)
 - [`std::sync::mpsc::Receiver::try_recv`](https://doc.rust-lang.org/std/sync/mpsc/struct.Receiver.html#method.try_recv)
 - [`std::thread::Builder`](https://doc.rust-lang.org/std/thread/struct.Builder.html)
 - [`egui::Context::request_repaint_after`](https://docs.rs/egui/0.37.0/egui/struct.Context.html#method.request_repaint_after)

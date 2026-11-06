@@ -8,6 +8,7 @@ use std::io::ErrorKind;
 use holm_core::body::BodyError;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
+use holm_core::fields::{CalendarDate, format_date};
 use holm_core::import::ImportError;
 use holm_core::item::Timestamp;
 use holm_core::rules::{Field, FieldError};
@@ -225,9 +226,7 @@ impl fmt::Display for CliError {
             CliError::Field(e) => return field_message(*e, f),
             CliError::SecretsDiffer => "The two entries don't match. Nothing was changed.",
             CliError::InTrash => "That item is in the Trash. Nothing was changed.",
-            CliError::NotInTrash => {
-                "That item isn't in the Trash. Run holm rm without --forever first."
-            }
+            CliError::NotInTrash => "That item isn't in the Trash. Nothing was changed.",
             CliError::TooManyItems => "The vault is full (50000 items). Nothing was changed.",
             CliError::TooLargeToSave => {
                 "The vault would be too large to save. Nothing was changed."
@@ -371,11 +370,20 @@ fn field_word(field: Field) -> &'static str {
         Field::Phrase => "recovery phrase",
         Field::Body => "note",
         Field::CategoryName => "category name",
+        Field::CustomLabel => "field name",
+        Field::CustomValue => "field value",
+        Field::CustomDate => "date",
     }
 }
 
 fn field_message(e: FieldError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match e {
+        FieldError::Empty(Field::CustomLabel) => f.write_str("The field name can't be empty"),
+        FieldError::TooLong(Field::CustomValue) => f.write_str("The field value is too long"),
+        FieldError::BadDate => f.write_str("That date is not a real calendar day"),
+        FieldError::TooManyFields => f.write_str("An item can have at most 10 custom fields"),
+        FieldError::NoSuchIndex => f.write_str("That field is not on the item"),
+        FieldError::BadCodeCount => f.write_str("A recovery code list holds 1 to 20 codes"),
         FieldError::Empty(field) => {
             write!(
                 f,
@@ -438,6 +446,21 @@ fn import_message(e: &ImportError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     }
 }
 
+/// An error from a read or password check, without claims about saving a change.
+#[must_use]
+pub fn read_error(e: &CoreError) -> CliError {
+    match e {
+        CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
+            CliError::WrongPassword
+        }
+        CoreError::Throttled { retry_after_secs } => CliError::Throttled {
+            retry_after_secs: *retry_after_secs,
+        },
+        CoreError::NotFound | CoreError::NotAPhrase => CliError::NotFound,
+        _ => CliError::Failed,
+    }
+}
+
 /// An error from a change to the vault (add, edit, rm, import and so on), as fixed
 /// text. A save error other than "too large" means the change was made in memory and
 /// may not be on disk: [`CliError::NotSaved`], never "nothing was changed".
@@ -474,17 +497,28 @@ impl CliError {
     }
 }
 
+/// Ten ASCII bytes, `YYYY-MM-DD`. A date is not a secret.
+#[must_use]
+pub(crate) fn date_text(date: CalendarDate) -> String {
+    format_date(date).into_iter().map(char::from).collect()
+}
+
 /// `text` with every control character and every bidirectional formatting character
 /// replaced by U+FFFD, so a stored title can't move the cursor, clear the screen or
 /// reorder what the terminal shows. The core already refuses these in fields; this is
-/// a second line of defence for output.
+/// a second line of defence for output. Invisible characters and Unicode line
+/// separators are dropped.
 #[must_use]
 pub fn clean(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(unsafe_for_terminal) {
+    if !text
+        .chars()
+        .any(|c| unsafe_for_terminal(c) || invisible_or_separator(c))
+    {
         return Cow::Borrowed(text);
     }
     Cow::Owned(
         text.chars()
+            .filter(|&c| !invisible_or_separator(c))
             .map(|c| {
                 if unsafe_for_terminal(c) {
                     '\u{fffd}'
@@ -493,6 +527,13 @@ pub fn clean(text: &str) -> Cow<'_, str> {
                 }
             })
             .collect(),
+    )
+}
+
+fn invisible_or_separator(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2028}' | '\u{2029}' | '\u{200b}'..='\u{200d}' | '\u{2060}' | '\u{feff}'
     )
 }
 
@@ -553,6 +594,42 @@ mod tests {
             clean("a\tb\x1b[2Jc\u{202e}d"),
             "a\u{fffd}b\u{fffd}[2Jc\u{fffd}d"
         );
+    }
+
+    #[test]
+    fn clean_drops_invisible_and_separators() {
+        assert_eq!(
+            clean("a\u{2028}\u{2029}\u{200b}\u{200c}\u{200d}\u{2060}\u{feff}b"),
+            "ab"
+        );
+        assert!(matches!(clean("café"), Cow::Borrowed("café")));
+    }
+
+    #[test]
+    fn read_only_errors_say_nothing_about_saving() {
+        for error in [
+            CoreError::Store(StoreError::NotFound),
+            CoreError::Body(holm_core::body::BodyError::Malformed),
+            CoreError::Vault(VaultError::TooLargeToSave),
+            CoreError::Vault(VaultError::OutOfMemory),
+            CoreError::Locked,
+            CoreError::WrongPassword,
+            CoreError::NotAPhrase,
+            CoreError::Throttled {
+                retry_after_secs: 2,
+            },
+        ] {
+            let message = read_error(&error).to_string().to_lowercase();
+            assert!(!message.contains("sav"), "{message}");
+        }
+        assert!(matches!(
+            read_error(&CoreError::WrongPassword),
+            CliError::WrongPassword
+        ));
+        assert!(matches!(
+            read_error(&CoreError::NotAPhrase),
+            CliError::NotFound
+        ));
     }
 
     #[test]

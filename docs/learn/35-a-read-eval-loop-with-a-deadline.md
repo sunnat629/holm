@@ -12,11 +12,11 @@ it, and waits for the next line, but never waits forever.
 
 `holm shell` is in `crates/holm-cli/src/shell.rs`. It takes the vault folder's lock once, keeps
 one `Session` for its whole life, and runs a loop: show `holm> ` (or `holm (locked)> `), read a
-line with a deadline, lock if the idle time has passed, clear the clipboard if its time has
-come, then split the line into words and run the command. The one-shot handlers were split so
-the shell can call their bodies on its open session (`add_to`, `edit_in`, `rm_in`,
-`passwd_in`, `import_into`, `export_to`), and `vault::unlock_once` is one try at the master
-password, used by both.
+line with a deadline, lock if the computer slept or the idle time has passed, clear the
+clipboard if its time has come, then split the line into words and run the command. The
+one-shot handlers were split so the shell can call their bodies on its open session (`add_to`,
+`edit_in`, `rm_in`, `passwd_in`, `import_into`, `export_to`), and `vault::unlock_once` is one
+try at the master password.
 
 ## Rust ideas in this task
 
@@ -27,27 +27,37 @@ decides what happens next:
 
 ```rust
 loop {
-    let read = term.line(prompt, MAX_SHELL_LINE_BYTES, self.deadline());
-    self.on_wake(err)?;
+    let away = self.sleep_armed().then(|| self.away_check());
+    let deadline = self.deadline();
+    let (read, fired) = ask_with_away(away.as_ref(), |interrupt| {
+        term.line_interruptible(prompt, MAX_SHELL_LINE_BYTES, deadline, interrupt)
+    });
+    self.on_wake(err, fired)?;
     let line = match read {
         Ok(None) => continue,                // the deadline passed
         Ok(Some(line)) => line,              // a typed line
-        Err(TtyError::Cancelled) => { /* Ctrl-D: lock and leave */ }
+        Err(TtyError::Cancelled | TtyError::EndOfInput) => { /* Ctrl-C or Ctrl-D: lock and leave */ }
         Err(e @ (TtyError::TooLong | TtyError::NotUtf8)) => { /* say so */ continue; }
         Err(e) => return Err(e.into()),      // the terminal is gone
     };
-    match self.line(&line, term, out, err)? {
+    let flow = self.line(&line, term, out, err);
+    drop(line);
+    match flow? {
         Flow::Continue => {}
         Flow::Exit => return Ok(()),
     }
 }
 ```
 
+`ask_with_away` gives the prompt a small check that runs while it waits. If the computer
+slept, the check stops the prompt, and `fired` says why. `drop(line)` wipes the typed line
+before the outcome is looked at.
+
 Three things to see:
 
 - `match` must cover every case, so adding a new `TtyError` variant later is a compile error
   here until someone decides what the shell does with it.
-- `e @ (A | B)` binds the matched value to `e` while matching either pattern.
+- `A | B` matches either pattern, and `e @ (A | B)` also binds the matched value to `e`.
 - `Flow` is a two-variant enum instead of a `bool`. `Flow::Exit` reads better than `true`, and
   a third outcome can be added without changing every caller's meaning.
 
@@ -67,8 +77,11 @@ nothing on the clipboard. So each is an `Option`, and the deadline is the earlie
 that exist:
 
 ```rust
-let idle = self.session.is_unlocked().then(|| self.last_active + auto_lock);
-let clear = self.pending.as_ref().map(|p| p.at);
+let idle = self
+    .session
+    .is_unlocked()
+    .then(|| self.last_active + Duration::from_secs(u64::from(self.auto_lock_secs())));
+let clear = self.pending.as_ref().map(|p| p.clear.due());
 let target = idle.into_iter().chain(clear).min()?;
 ```
 
@@ -88,8 +101,7 @@ Some(Instant::now() + wait)
 `max(MIN_WAIT)` keeps a deadline that is a hair early from making the loop spin.
 
 The deadline is only a hint to wake up. The decision to lock is the session's own
-`idle_expired()`, which checks the monotonic clock and a forward jump of the wall clock. Two
-clocks never have to agree for the shell to be safe.
+`idle_expired()`, so a deadline that fires a little early never locks by itself.
 
 Every prompt needs the deadline, not only `holm> `. The first version gave one only to the
 shell prompt, so a user who walked away at `add`'s hidden `Note: ` prompt, or at
@@ -146,21 +158,28 @@ The `Shell` struct lives as long as the shell does, so it holds only what must o
 ```rust
 struct Shell<'a> {
     session: Session<FsStore>,
-    clock: Box<dyn Clock>,
+    clock: Rc<dyn Clock>,
+    watch: SleepWatch,
+    console_owner: Option<u32>,
     env: &'a Env,
     last_active: Duration,
-    pending: Option<PendingClear>,
+    pending: Option<Pending>,
 }
 ```
+
+The clock is an `Rc<dyn Clock>`, so each line's `IdleTerm` can share it without a copy.
+`watch` and `console_owner` let the shell tell that the computer slept or another user took
+the screen.
 
 The typed line, its words and the parsed command are locals inside one turn of the loop. When
 the turn ends they drop, and the wiping buffers are wiped. If they were fields, a line typed an
 hour ago could still be in memory. Rust's scopes make "this lives for one turn" the default.
 
 The one secret that must outlive a turn is the copied value waiting to be cleared. It lives in
-`pending`, in a `Zeroizing<String>`, and `take()` moves it out when the clipboard is cleared, so
-it is wiped at that moment rather than left in the struct. Neither `Shell` nor `PendingClear`
-derives `Debug`, so neither can be printed by accident.
+`pending`: a `Pending` holds the clipboard handle and a `PendingClear`, which keeps the value in
+a `Zeroizing<String>`. `take()` moves it out when the clipboard is cleared, and it drops at the
+end of `clear_clipboard`, so it is wiped at that moment rather than left in the struct. None of
+`Shell`, `Pending` and `PendingClear` derives `Debug`, so none can be printed by accident.
 
 The same idea keeps the throttle working. The throttle lives in the `Session`, and
 `Session::lock` drops only the keys and the data. Because the shell keeps one `Session` and
@@ -169,23 +188,22 @@ never builds a new one, three wrong passwords followed by `lock` and `unlock` st
 In Kotlin you'd keep the line in a local `val` inside the `while` body for the same reason,
 though there the garbage collector, not the scope, decides when it is freed.
 
-## Exercises
+## Try it
 
-1. Make `tokenize` refuse a word longer than 1024 bytes with a new `UsageError`, and add a case
-   to `tokenize_quotes_and_escapes`. Check: `cargo test -p holm-cli --locked --test shell
-   tokenize`
-2. Add a `clear` command that clears the clipboard now if Holm's value is still there, and
-   prints "Nothing to clear." otherwise. Test it with `ShellTerm` and `ClipState`. Check:
-   `cargo test -p holm-cli --locked --test shell`
-3. `ShellTerm` records each deadline it gets in `deadlines`. Test that an open vault with
-   nothing on the clipboard gets a deadline about 300 seconds from `Instant::now()`, and that
-   after `gen --copy` it is about 30 seconds away. (The test clock does not move by itself, so
-   the shell's wait is the whole auto-lock time.) Check: `cargo test -p holm-cli --locked
-   --test shell`
+1. Make `tokenize` refuse a word longer than 1024 bytes with a new `UsageError`. Add a unit
+   test next to `words_give_back_what_they_took` in `shell.rs`. Check:
+   `cargo test -p holm-cli --locked shell`
+2. Make `span(90)` read "1 minute 30 seconds", and update `span_reads_as_minutes_when_whole`.
+   Check: `cargo test -p holm-cli --locked shell`
+3. Add a `clear` command next to `lock` in `Shell::line` that calls `clear_clipboard` and
+   prints "Nothing to clear." when `pending` is `None`. Check:
+   `cargo test -p holm-cli --locked`
 
 ## Read next
 
+- Previous: [Lesson 34: Moving secrets in and out](34-moving-secrets-in-and-out.md)
+- Next: [Lesson 36: Thin screens over the core](36-thin-screens-over-the-core.md)
+- [The index](README.md)
 - [The `loop` keyword](https://doc.rust-lang.org/std/keyword.loop.html)
 - [`Option::into_iter`](https://doc.rust-lang.org/std/option/enum.Option.html#method.into_iter)
   and [`Iterator::min`](https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.min)
-- [Lesson 34: Moving secrets in and out](34-moving-secrets-in-and-out.md)

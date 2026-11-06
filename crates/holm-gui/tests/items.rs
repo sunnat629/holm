@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::{PASSWORD, TestClock, harness, make_vault, run_until, test_app, vault_path};
-use eframe::egui::{Event, Key, accesskit::Role};
+use eframe::egui::{Event, Key, Shape, accesskit::Role};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use holm_core::settings::REHIDE_PASSWORD_SECS;
@@ -53,7 +53,7 @@ fn reopen(dir: &Path) -> (Harness<'static, HolmApp>, TestClock) {
 }
 
 fn fill_form(harness: &mut Harness<'static, HolmApp>, title: &str) {
-    harness.get_by_label("New login").click();
+    common::new_login(harness);
     harness.run();
     if !title.is_empty() {
         type_into(harness, TITLE, title);
@@ -88,6 +88,23 @@ fn nodes_with(harness: &Harness<'static, HolmApp>, needle: &str) -> Vec<Role> {
         }
     }
     roles
+}
+
+/// Whether any text painted in the last frame contains `needle`.
+fn painted(harness: &Harness<'static, HolmApp>, needle: &str) -> bool {
+    harness
+        .output()
+        .shapes
+        .iter()
+        .any(|clipped| shape_has(&clipped.shape, needle))
+}
+
+fn shape_has(shape: &Shape, needle: &str) -> bool {
+    match shape {
+        Shape::Text(t) => t.galley.text().contains(needle),
+        Shape::Vec(shapes) => shapes.iter().any(|s| shape_has(s, needle)),
+        _ => false,
+    }
 }
 
 fn add_example(harness: &mut Harness<'static, HolmApp>) {
@@ -137,7 +154,7 @@ fn edit_changes_title_and_keeps_password() {
     assert_eq!(count(&harness, "Example Mail 2"), 2);
     harness.get_by_label("Reveal").click();
     harness.run();
-    assert_eq!(nodes_with(&harness, SECRET).len(), 1);
+    assert!(painted(&harness, SECRET), "the kept password shows");
 }
 
 #[test]
@@ -185,7 +202,7 @@ fn save_banner_and_retry_survive_navigation() {
     let _ = harness.get_by_label("Try again");
 
     // New login: the session is still dirty, so the banner stays.
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
     let _ = harness.get_by_label("Try again");
@@ -218,14 +235,18 @@ fn no_node_holds_password_while_hidden() {
 }
 
 #[test]
-fn reveal_leaks_only_in_label() {
+fn reveal_leaks_into_no_accesskit_node() {
     let dir = tempfile::tempdir().unwrap();
     let (mut harness, _clock) = open(dir.path());
     add_example(&mut harness);
     harness.get_by_label("Reveal").click();
     harness.run();
     assert!(harness.state().secret_buffers_empty());
-    assert_eq!(nodes_with(&harness, SECRET), [Role::Label]);
+    assert!(painted(&harness, SECRET), "the password shows");
+    assert!(
+        nodes_with(&harness, SECRET).is_empty(),
+        "no accessibility node holds the password"
+    );
 }
 
 #[test]
@@ -235,12 +256,13 @@ fn reveal_shows_then_hides_after_rehide_secs() {
     add_example(&mut harness);
     harness.get_by_label("Reveal").click();
     harness.run();
-    assert_eq!(nodes_with(&harness, SECRET).len(), 1);
+    assert!(painted(&harness, SECRET));
     clock.advance(Duration::from_secs(u64::from(REHIDE_PASSWORD_SECS) - 1));
     harness.run();
-    assert_eq!(nodes_with(&harness, SECRET).len(), 1, "still within time");
+    assert!(painted(&harness, SECRET), "still within time");
     clock.advance(Duration::from_secs(2));
     harness.run();
+    assert!(!painted(&harness, SECRET));
     assert!(nodes_with(&harness, SECRET).is_empty());
     let _ = harness.get_by_label("Reveal");
 }
@@ -252,7 +274,7 @@ fn reveal_hides_on_focus_loss() {
     add_example(&mut harness);
     harness.get_by_label("Reveal").click();
     harness.run();
-    assert_eq!(nodes_with(&harness, SECRET).len(), 1);
+    assert!(painted(&harness, SECRET));
     let viewport = harness
         .input_mut()
         .viewports
@@ -260,5 +282,6 @@ fn reveal_hides_on_focus_loss() {
         .unwrap();
     viewport.focused = Some(false);
     harness.run();
+    assert!(!painted(&harness, SECRET));
     assert!(nodes_with(&harness, SECRET).is_empty());
 }

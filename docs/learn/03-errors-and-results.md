@@ -11,7 +11,7 @@ Two small files and two new functions in `crates/holm-crypto`:
 Every function that can fail now returns a `Result`, and no error message contains a key,
 a password or plaintext. The decryption error is deliberately vague.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Enums that carry data, and thiserror
 
@@ -28,7 +28,7 @@ pub enum CryptoError {
     Aead,
     #[error("key must be exactly 32 bytes")]
     InvalidKeyLength,
-    // (the Kdf variant is left out here for space)
+    // (the Kdf and OutOfMemory variants are left out here for space)
 }
 ```
 
@@ -187,8 +187,8 @@ Error messages end up in logs and bug tickets, so every `CryptoError` message is
 
 ## Try it
 
-1. Run `cargo test -p holm-crypto from_slice`. Check: both `from_slice` tests show `ok` and the summary line reads `2 passed`.
-2. In `random.rs`, replace the body of `fill_random` with `let _ = buf; Ok(())` (a "random" function that does nothing) and run `cargo test -p holm-crypto differ`. Check: the summary line reads `3 failed` (`random::random_nonces_differ`, `aead::random_nonces_differ` and `secret::two_generated_keys_differ`). Explain in one sentence why a broken generator that leaves zeros is caught. Undo with `git checkout crates/holm-crypto/src/random.rs`.
+1. Run `cargo test -p holm-crypto secret::tests::from_slice`. Check: both `from_slice` tests show `ok` and the summary line reads `2 passed`.
+2. In `random.rs`, replace the body of `fill_random` with `let _ = buf; Ok(())` (a "random" function that does nothing) and run `cargo test -p holm-crypto differ`. Check: tests fail, including `random::tests::random_nonces_differ` and `secret::tests::two_generated_keys_differ`. Explain in one sentence why a broken generator that leaves zeros is caught. Undo with `git checkout crates/holm-crypto/src/random.rs`.
 3. In `error.rs`, add a variant to `CryptoError`, with a doc line because the crate uses `deny(missing_docs)`:
 
    ```rust
@@ -214,3 +214,6 @@ Error messages end up in logs and bug tickets, so every `CryptoError` message is
 - [ch. 9: Error Handling](https://doc.rust-lang.org/book/ch09-00-error-handling.html)
 - [thiserror documentation](https://docs.rs/thiserror)
 - [getrandom documentation](https://docs.rs/getrandom)
+- Previous: [Lesson 02](02-ownership-and-drop.md)
+- Next: lesson 04, listed in [the index](README.md)
+- [The index](README.md)

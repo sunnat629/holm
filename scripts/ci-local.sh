@@ -93,6 +93,31 @@ gate() { # name, command...
   fi
 }
 
+# Platform alone permits its reviewed AppKit module to opt into unsafe code.
+# Every other Rust lint must match the workspace table.
+lint_drift_gate() {
+  python3 - <<'PYTHON'
+import sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit("FAIL  lint drift gate needs Python 3.11 or newer")
+
+with open("Cargo.toml", "rb") as source:
+    workspace = tomllib.load(source)["workspace"]["lints"]["rust"]
+with open("crates/holm-platform/Cargo.toml", "rb") as source:
+    platform = tomllib.load(source)["lints"]["rust"]
+if workspace.pop("unsafe_code", None) != "forbid":
+    sys.exit("FAIL  workspace unsafe_code must be forbid")
+if platform.pop("unsafe_code", None) != "deny":
+    sys.exit("FAIL  holm-platform unsafe_code must be deny")
+if platform != workspace:
+    sys.exit("FAIL  holm-platform Rust lints drifted from the workspace")
+print("lint drift OK")
+PYTHON
+}
+gate lint-drift lint_drift_gate
+
 # The EFF wordlist and the zxcvbn common-password lists are include_str!'d into the binary.
 # Their pinned SHA-256 values (also in NOTICE) must match, and a missing shasum or file fails
 # the gate, so this fails closed.
@@ -106,6 +131,7 @@ wordlist_gate() {
     | shasum -a 256 -c -
 }
 gate wordlist wordlist_gate
+gate bundle-check bash scripts/bundle-macos.sh --check
 gate fmt cargo fmt --all --check
 gate clippy cargo clippy --workspace --all-targets --locked -- -D warnings
 # Without holm-gui, `gui-window` stays off, so this checks the default feature set.
@@ -128,6 +154,34 @@ fuzzing_guard_gate() {
   }
 }
 gate fuzzing-guard fuzzing_guard_gate
+# holm-gui's `dev-unlock` feature (unlock from HOLM_DEV_PASSWORD) is for debug builds only.
+# A release build that turns the feature on must stop with holm-gui's compile_error!, and
+# this gate proves it does.
+DEV_UNLOCK_GUARD_MSG="the dev-unlock feature is for debug builds only"
+dev_unlock_guard_gate() {
+  local out
+  if out=$(cargo check -p holm-gui --release --features dev-unlock --locked 2>&1); then
+    echo "holm-gui built in release mode with --features dev-unlock" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -qF "$DEV_UNLOCK_GUARD_MSG" || {
+    printf '%s\n' "$out" >&2
+    echo "the build failed, but not on the dev-unlock guard" >&2
+    return 1
+  }
+}
+gate dev-unlock-guard dev_unlock_guard_gate
+gate dev-unlock-test cargo test -p holm-gui --features dev-unlock --test dev_unlock --locked
+# Proves a release binary carries no dev-unlock code: the variable name is only in the
+# feature's module, so it must not appear in the normal release build.
+dev_unlock_absent_gate() {
+  cargo build -p holm-gui --release --locked || return 1
+  if grep -qa HOLM_DEV_PASSWORD target/release/holm-gui; then
+    echo "HOLM_DEV_PASSWORD is in the release binary" >&2
+    return 1
+  fi
+}
+gate dev-unlock-absent dev_unlock_absent_gate
 # No other gate compiles holm-core's `fuzzing` module (test-only API for fuzz/) with clippy.
 # Its own target dir, so the changed RUSTFLAGS do not force the other gates to rebuild.
 gate clippy-fuzzing env RUSTFLAGS="--cfg fuzzing" CARGO_TARGET_DIR=target/cfg-fuzzing \
@@ -136,6 +190,17 @@ gate test cargo test --workspace --locked
 gate deny cargo deny --all-features --locked check
 gate audit cargo audit
 gate vet cargo vet --locked
+# Holm is offline: no HTTP or URL crate may enter the GUI's normal dependency tree.
+# Pinned to the shipped target, so Linux-only crates do not show up (preflight F28).
+no_network_gate() {
+  local tree
+  tree="$(cargo tree -p holm-gui -e normal --target aarch64-apple-darwin --locked --prefix none)" || return 1
+  if grep -E '^(reqwest|ureq|hyper|url) v' <<<"$tree"; then
+    echo "network crate in holm-gui's tree" >&2
+    return 1
+  fi
+}
+gate no-network no_network_gate
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable
@@ -145,9 +210,9 @@ oracle_gate() {
     cargo clippy --manifest-path oracle/Cargo.toml --all-targets --locked -- -D warnings &&
     cargo test --manifest-path oracle/Cargo.toml --locked &&
     cargo audit --file oracle/Cargo.lock \
-      --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369
+      --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 --ignore RUSTSEC-2026-0369 --ignore RUSTSEC-2026-0429
 }
-# Those three advisories are for zip 8.6.0 (fixed in 9.0), ignored for the oracle only.
+# Those four advisories are for zip 8.6.0 (fixed in 9.0), ignored for the oracle only.
 # zip is a build-dependency of libsodium-sys-stable 1.24.3, the latest release, which
 # requires zip 8.x. Its build script uses zip only for *-windows-msvc targets, where this
 # gate is skipped, and only on an archive it has minisign-verified first. Remove the
@@ -170,7 +235,7 @@ fuzz_gate() {
   cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
   cargo audit --file fuzz/Cargo.lock || return 1
   local t seeds
-  for t in parse_header parse_header_structured unpad open_fixed_key decode_body import_csv import_json; do
+  for t in parse_header parse_header_structured unpad open_fixed_key decode_body decode_body_v1 import_csv import_json; do
     mkdir -p "fuzz/corpus/$t"
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi

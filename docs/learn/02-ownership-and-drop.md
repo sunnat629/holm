@@ -14,7 +14,7 @@ accident. And the password is normalised so the same letters always give the sam
 This reduces how long secrets sit in memory. It does not make memory "fully wiped"; the
 limits section says why.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Ownership and moves, and why the key sits in a Box
 
@@ -102,8 +102,8 @@ It does not run if the value is leaked (`std::mem::forget`, `Box::leak`, a refer
 `Rc`), or if the process ends without unwinding: `std::process::exit`, `abort`, a panic while
 already panicking, `panic = "abort"`, or being killed by a signal. A moved value is dropped
 where its *new* owner goes out of scope, not at the brace where it was created. So a program
-that calls `process::exit` while holding a `MasterPassword` skips the wipe. Later tasks must
-keep that in mind.
+that calls `process::exit` while holding a `MasterPassword` skips the wipe. Any code that
+holds secrets must keep that in mind.
 
 ([The Drop Trait](https://doc.rust-lang.org/book/ch15-03-drop.html),
 [Derivable Traits](https://doc.rust-lang.org/book/appendix-03-derivable-traits.html))
@@ -181,7 +181,7 @@ Be honest about the limits. We wipe the memory our types own, and nothing more:
 
 - Drop does not run on `mem::forget`, `Box::leak`, `process::exit`, `abort` or a kill signal (see above).
 - The compiler may leave temporary copies on the stack or in CPU registers, for example while a key or password is being moved or compared. `zeroize` cannot reach those.
-- The operating system can write memory to swap, hibernation files and crash dumps. We do not lock memory yet; that comes in Phase 4.
+- The operating system can write memory to swap, hibernation files and crash dumps. These types do not lock their memory, so nothing here stops that.
 - The `String` the caller gives to `MasterPassword::new` (or the `Vec` given to `SecretBuf::from_vec`) may have been copied or reallocated before it reached us, for example by the terminal or the UI toolkit. We wipe only what we hold.
 - The NFC normaliser keeps its own small scratch buffers. For unusual input (five or more stacked combining marks) they spill to the heap and are freed without a wipe. We cannot fix that without writing our own normaliser.
 - The allocator may have kept copies from earlier reallocations that are not ours to find.
@@ -190,7 +190,7 @@ So never say "the password is fully wiped". Say "the buffers Holm owns are wiped
 
 ## Try it
 
-1. Run `cargo test -p holm-crypto secret` and read the 12 test names. Which one proves the caller's array is wiped? Check: `cargo test -p holm-crypto from_bytes_wipes_source` shows `1 passed`.
+1. Run `cargo test -p holm-crypto secret::tests` and read the 12 test names. Which one proves the caller's array is wiped? Check: `cargo test -p holm-crypto from_bytes_wipes_source` shows `1 passed`.
 2. In `secret.rs`, temporarily add `Clone` to a derive list on `SecretKey` (for example `#[derive(ZeroizeOnDrop, Clone)]`) and run `cargo test -p holm-crypto`. Read the error from the build, then undo it with `git checkout crates/holm-crypto/src/secret.rs`. Check: the test run must fail before you undo and pass after.
 3. Write a test that builds `SecretBuf::from_vec(vec![1, 2, 3])` and asserts `len()` is 3 and `is_empty()` is false. Check: `cargo test -p holm-crypto <your test name>` shows `1 passed`.
 
@@ -199,3 +199,6 @@ So never say "the password is fully wiped". Say "the buffers Holm owns are wiped
 - [The Rust Programming Language, ch. 4: Understanding Ownership](https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html)
 - [ch. 15.3: Running Code on Cleanup with the Drop Trait](https://doc.rust-lang.org/book/ch15-03-drop.html)
 - [zeroize documentation](https://docs.rs/zeroize)
+- Previous: [Lesson 01](01-dependencies-and-supply-chain.md)
+- Next: [Lesson 03](03-errors-and-results.md)
+- [The index](README.md)

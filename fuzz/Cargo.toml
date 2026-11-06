@@ -56,6 +56,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "decode_body_v1"
+path = "fuzz_targets/decode_body_v1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "import_csv"
 path = "fuzz_targets/import_csv.rs"
 test = false

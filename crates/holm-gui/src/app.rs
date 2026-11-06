@@ -8,8 +8,8 @@
 //!
 //! Locking ([`HolmApp::lock`]) wipes the session's keys and data in the core and
 //! replaces the vault screen with an empty unlock form, which drops the vault view and
-//! everything it holds. [`HolmApp::tick`] runs the idle and minimise checks even in
-//! frames that draw nothing.
+//! everything it holds. [`HolmApp::tick`] runs the idle, minimise and sleep checks even
+//! in frames that draw nothing.
 
 use core::fmt;
 use std::path::PathBuf;
@@ -17,17 +17,26 @@ use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use eframe::egui;
-use holm_core::clock::Clock;
+use holm_core::clock::{Clock, SleepWatch};
 use holm_core::error::CoreError;
+use holm_core::fields::from_unix_secs;
 use holm_core::session::Session;
-use holm_core::settings::{AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS};
+use holm_core::settings::{
+    AUTO_LOCK_DEFAULT_SECS, AUTO_LOCK_MAX_SECS, AUTO_LOCK_MIN_SECS, CLIPBOARD_DEFAULT_SECS,
+    CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS,
+};
 use holm_core::throttle::ThrottleStatus;
+#[cfg(all(feature = "dev-unlock", debug_assertions))]
+use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
+use holm_platform::clip_clear::{ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use holm_platform::lock::{self, InstanceLock, LockError};
 use holm_platform::paths;
+use holm_platform::window::LockEvents;
 
 use crate::clipboard::SecretClipboard;
+use crate::file_dialog::{DialogKind, FileDialog};
 use crate::messages;
 pub use crate::messages::{LockNote, LockReason};
 use crate::screens::create::CreateForm;
@@ -59,6 +68,12 @@ pub struct AppConfig {
     pub ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets and pastes.
     pub clipboard: Box<dyn SecretClipboard>,
+    /// The native file dialog (a fake in tests).
+    pub file_dialog: Box<dyn FileDialog>,
+    /// The sleep, screen lock and logout observers, installed on the main thread
+    /// before the window opens. `None` in tests and when they could not be added; the
+    /// wall-clock check still catches a sleep.
+    pub lock_events: Option<LockEvents>,
 }
 
 /// Where the app learns whether its window is minimised. eframe's own
@@ -68,14 +83,30 @@ pub struct AppConfig {
 pub trait WindowState {
     /// `Some(true)` when the window is minimised, `None` when that is unknown.
     fn minimised(&self) -> Option<bool>;
+
+    /// True when the Mac slept, its screens slept, the screen locked or the session
+    /// went inactive since the last frame. Read once per frame.
+    fn os_lock_event(&self) -> bool {
+        false
+    }
 }
 
-/// The real window, asked through AppKit (`NSWindow.isMiniaturized`).
-pub struct AppKitWindow<'a>(pub &'a eframe::Frame);
+/// The real window, asked through AppKit (`NSWindow.isMiniaturized`), with the OS lock
+/// event already read from [`LockEvents`] for this frame.
+pub struct AppKitWindow<'a> {
+    /// The eframe frame, for the window handle.
+    pub frame: &'a eframe::Frame,
+    /// Whether [`LockEvents::take`] reported an event this frame.
+    pub os_lock_event: bool,
+}
 
 impl WindowState for AppKitWindow<'_> {
     fn minimised(&self) -> Option<bool> {
-        holm_platform::window::is_minimised(self.0)
+        holm_platform::window::is_minimised(self.frame)
+    }
+
+    fn os_lock_event(&self) -> bool {
+        self.os_lock_event
     }
 }
 
@@ -105,10 +136,16 @@ pub struct HolmApp {
     screen: Screen,
     /// Argon2 costs for a new vault.
     kdf: KdfParams,
+    /// Set by [`lock`](Self::lock) for every reason: the next frame drops all text-edit
+    /// state (undo history) so typed text cannot come back through Cmd+Z after unlock,
+    /// and all scroll-area state, so the list reopens at the top.
+    forget_text_state: bool,
     /// The UI's clock.
     ui_clock: Box<dyn Clock>,
     /// The clipboard for copied secrets and pastes. The only clipboard the app uses.
     clipboard: Box<dyn SecretClipboard>,
+    /// The native file dialog. It blocks the main thread while it is open.
+    file_dialog: Box<dyn FileDialog>,
     /// Which kind of field had focus at the end of the last frame, for
     /// [`raw_input_hook`](eframe::App::raw_input_hook), which runs before the next one.
     focus: FieldFocus,
@@ -120,10 +157,26 @@ pub struct HolmApp {
     /// idle timer (monotonic part only) for the warning; the lock itself always asks
     /// the session.
     last_activity: Duration,
+    /// A copied password waiting for its clipboard clear.
+    pending_clear: Option<PendingClear>,
     /// Why the vault last locked, until the next unlock.
     lock_note: Option<LockNote>,
     /// The unlock screen's line for `lock_note`.
     lock_line: Option<String>,
+    /// The OS sleep, screen lock and logout observers; `None` in tests.
+    lock_events: Option<LockEvents>,
+    /// Both UI clocks as of the last frame, to see that the Mac slept since.
+    sleep_watch: SleepWatch,
+    /// The open vault's `lock_on_sleep`, as last read, for frames where the session
+    /// is on the worker. On until a vault says otherwise.
+    lock_on_sleep: bool,
+    /// A sleep was seen while the worker held the session; the vault locks as soon
+    /// as the job hands it back.
+    slept_while_working: bool,
+    /// A developer's password for one unlock try at start. Taken on the first try, so a
+    /// wrong password or a later lock never retries.
+    #[cfg(all(feature = "dev-unlock", debug_assertions))]
+    dev_password: Option<MasterPassword>,
 }
 
 impl fmt::Debug for HolmApp {
@@ -159,7 +212,10 @@ impl HolmApp {
             session_clock,
             ui_clock,
             clipboard,
+            file_dialog,
+            lock_events,
         } = config;
+        let sleep_watch = SleepWatch::new(&*ui_clock);
         let mut app = HolmApp {
             session: None,
             instance_lock: None,
@@ -167,12 +223,21 @@ impl HolmApp {
             kdf,
             ui_clock,
             clipboard,
+            file_dialog,
             focus: FieldFocus::None,
             vault_path: vault_path.clone(),
             spawner: spawn_worker,
             last_activity: Duration::ZERO,
+            pending_clear: None,
             lock_note: None,
+            forget_text_state: false,
             lock_line: None,
+            lock_events,
+            sleep_watch,
+            lock_on_sleep: true,
+            slept_while_working: false,
+            #[cfg(all(feature = "dev-unlock", debug_assertions))]
+            dev_password: None,
         };
         if let Err(e) = paths::ensure_vault_dir(&vault_path) {
             app.screen = Screen::Fatal(messages::dir_error(e));
@@ -199,6 +264,15 @@ impl HolmApp {
         app
     }
 
+    /// The session's password throttle (unlock, export and phrase checks share it). For
+    /// tests; built only with the `test-hooks` feature.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn throttle_status(&self) -> ThrottleStatus {
+        self.current_throttle()
+    }
+
     /// Replaces the worker spawner. For tests that need a worker that fails or waits;
     /// built only with the `test-hooks` feature.
     #[cfg(feature = "test-hooks")]
@@ -207,6 +281,30 @@ impl HolmApp {
     pub fn with_spawner(mut self, spawner: Spawner) -> HolmApp {
         self.spawner = spawner;
         self
+    }
+
+    /// Sets a password for one unlock try as soon as the unlock screen shows. Debug
+    /// builds with the `dev-unlock` feature only. It is used once: a wrong password or
+    /// a later lock does not try again, and the create screen ignores it.
+    #[cfg(all(feature = "dev-unlock", debug_assertions))]
+    #[must_use]
+    pub fn with_dev_password(mut self, password: MasterPassword) -> HolmApp {
+        self.dev_password = Some(password);
+        self
+    }
+
+    /// Drops every text-edit state (undo history) and scroll offset once after a lock. A
+    /// field keeps its id across lock and unlock, so without this its old history would
+    /// answer Cmd+Z.
+    fn apply_forget(&mut self, ctx: &egui::Context) {
+        if self.forget_text_state {
+            ctx.data_mut(|d| {
+                d.remove_by_type::<egui::text_edit::TextEditState>();
+                // The list reopens at the top, not where the user was.
+                d.remove_by_type::<egui::scroll_area::State>();
+            });
+            self.forget_text_state = false;
+        }
     }
 
     /// Locks the vault: the core wipes its keys and data, and the vault screen is
@@ -223,14 +321,73 @@ impl HolmApp {
             return;
         };
         let outcome = session.lock();
+        let clear_note = self.run_pending_clear();
         self.screen = Screen::Unlock(UnlockForm::new());
         self.focus = FieldFocus::None;
+        self.forget_text_state = true;
         let note = LockNote {
             reason,
             discarded_unsaved: outcome.discarded_unsaved,
         };
-        self.lock_line = Some(messages::lock_line(&note, auto_lock));
+        let mut line = messages::lock_line(&note, auto_lock);
+        // Only a failed clear matters here: the password is still on the clipboard.
+        // A clear that left someone else's copy alone is harmless.
+        if clear_note.as_deref() == Some(messages::CLIPBOARD_NOT_CLEARED) {
+            line.push(' ');
+            line.push_str(messages::CLIPBOARD_NOT_CLEARED);
+        }
+        self.lock_line = Some(line);
         self.lock_note = Some(note);
+    }
+
+    /// Opens the native file dialog and hands its answer to the vault screen. The dialog
+    /// blocks this thread, so the idle timer may run out meanwhile: the session is
+    /// checked right after, and when it locked the chosen path is dropped unread. A
+    /// copied secret waiting on the clipboard timer is cleared first, because the timer
+    /// cannot run while the dialog is open.
+    fn choose_file(&mut self, ctx: &egui::Context, kind: DialogKind) {
+        self.run_pending_clear();
+        let path = match kind {
+            DialogKind::Import => self.file_dialog.pick_import(),
+            DialogKind::Export => self.file_dialog.pick_save("holm-export.csv"),
+            DialogKind::Backup => self.file_dialog.pick_save("holm-backup"),
+        };
+        if self.session.as_ref().is_some_and(Session::idle_expired) {
+            self.lock(LockReason::Idle);
+        } else if let Screen::Vault(view) = &mut self.screen {
+            view.finish_choice(path);
+        }
+        ctx.request_discard("the file dialog closed");
+    }
+
+    /// Runs the waiting clipboard clear now, if any: clears the clipboard when it still
+    /// holds the copied password, leaves it alone when something else is there. The
+    /// vault screen, if showing, says so. Returns the line it computed, so a caller that
+    /// is about to drop the vault screen can still show it. Safe to call on any screen.
+    fn run_pending_clear(&mut self) -> Option<String> {
+        let pending = self.pending_clear.take()?;
+        let outcome = pending.run(&mut *self.clipboard);
+        let note = match outcome {
+            ClearOutcome::LeftAlone => Some(messages::CLIPBOARD_CHANGED.to_owned()),
+            // Same as the CLI, where this is an error: the password is still there.
+            // No retry: the value is wiped with the pending clear, and the line tells
+            // the user to replace the clipboard themselves.
+            ClearOutcome::StillThere => Some(messages::CLIPBOARD_NOT_CLEARED.to_owned()),
+            _ => None,
+        };
+        if let Screen::Vault(view) = &mut self.screen {
+            view.set_copy_note(note.clone());
+        }
+        note
+    }
+
+    /// The vault's clipboard time from its settings, clamped to the settings range.
+    fn clipboard_clear_secs(&self) -> u32 {
+        self.session
+            .as_ref()
+            .and_then(|s| s.settings().ok())
+            .map_or(CLIPBOARD_DEFAULT_SECS, |s| s.clipboard_clear_secs)
+            .clamp(CLIPBOARD_MIN_SECS, CLIPBOARD_MAX_SECS)
     }
 
     /// The vault's auto-lock time from its settings, clamped to the settings range as
@@ -255,27 +412,61 @@ impl HolmApp {
 
     /// Per-frame work before drawing. eframe runs it even while the window is hidden,
     /// so the idle lock never waits for a drawn frame. With the vault open it locks at
-    /// once when `window` says it is minimised (eframe's own field only when `window`
-    /// does not know), or when the session's idle timer has run out (which also covers
-    /// a Mac waking from sleep, through the wall-clock gap); otherwise it asks for a
-    /// frame every second. It also takes the worker's answer when it is there. It never
-    /// records activity: input seen here may be stale.
+    /// once, in this order: when `window` says it is minimised (eframe's own field only
+    /// when `window` does not know); when the Mac slept, the screen locked or the
+    /// session went inactive (an OS event from `window`, or the wall clock gaining on
+    /// the monotonic clock) and the vault's `lock_on_sleep` is on; or when the
+    /// session's idle timer has run out. Otherwise it asks for a frame every second. It
+    /// also takes the worker's answer when it is there; a sleep seen while the worker
+    /// ran locks as soon as the answer is in. It never records activity: input seen
+    /// here may be stale.
     pub fn tick(&mut self, ctx: &egui::Context, window: &dyn WindowState) {
+        self.apply_forget(ctx);
+        // Both checks run every frame, so an event or a gap is used once and never
+        // carried into a later frame.
+        let os_event = window.os_lock_event();
+        let slept = self.sleep_watch.slept(&*self.ui_clock);
+        self.sleep_watch.mark(&*self.ui_clock);
+        let sleep_seen = os_event || slept;
+        if let Some(settings) = self.session.as_ref().and_then(|s| s.settings().ok()) {
+            self.lock_on_sleep = settings.lock_on_sleep;
+        }
+        if let Some(pending) = &self.pending_clear {
+            if pending.is_due(&*self.ui_clock) {
+                self.run_pending_clear();
+            } else {
+                // The clear must not wait for input: ask for a frame at its deadline.
+                let left = pending
+                    .due()
+                    .saturating_sub(self.ui_clock.monotonic())
+                    .max(Duration::from_millis(50));
+                ctx.request_repaint_after(left.min(OPEN_TICK));
+            }
+        }
         if matches!(self.screen, Screen::Vault(_)) {
             let minimised = window
                 .minimised()
                 .or_else(|| ctx.input(|i| i.viewport().minimized));
             if minimised == Some(true) {
                 self.lock(LockReason::Minimised);
+            } else if sleep_seen && self.lock_on_sleep {
+                // `lock` runs the pending clipboard clear too.
+                self.lock(LockReason::Sleep);
             } else if self.session.as_ref().is_some_and(Session::idle_expired) {
                 self.lock(LockReason::Idle);
             }
+        } else if sleep_seen && self.lock_on_sleep {
+            if matches!(self.screen, Screen::Working { .. }) {
+                self.slept_while_working = true;
+            }
+            // Nothing is open to lock here, but a copied value still goes now.
+            self.run_pending_clear();
         }
-        let throttle_wait = self.throttle_status().retry_after;
+        let throttle_wait = self.current_throttle().retry_after;
         let polled = match &mut self.screen {
             Screen::Working { rx, .. } => Some(rx.try_recv()),
             Screen::Unlock(_) => {
-                if let Some(wait) = self.throttle_status().retry_after {
+                if let Some(wait) = self.current_throttle().retry_after {
                     ctx.request_repaint_after(until_next_second(wait));
                 }
                 None
@@ -295,6 +486,18 @@ impl HolmApp {
             None => {}
             Some(Ok(done)) => {
                 self.finish(done);
+                // The Mac slept while the job ran: lock before the vault is drawn, if
+                // the vault (now readable again) still asks for it.
+                if core::mem::take(&mut self.slept_while_working) {
+                    let on = self
+                        .session
+                        .as_ref()
+                        .and_then(|s| s.settings().ok())
+                        .map_or(self.lock_on_sleep, |s| s.lock_on_sleep);
+                    if on {
+                        self.lock(LockReason::Sleep);
+                    }
+                }
                 // The new screen may need checking at once (minimised or idle while the
                 // job ran), and a hidden window draws no frame of its own.
                 ctx.request_repaint();
@@ -311,32 +514,59 @@ impl HolmApp {
     /// Draws the current screen, and starts the worker when a form submits. With the
     /// vault open it first notes activity and handles Cmd+L.
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.apply_forget(ui.ctx());
+        #[cfg(all(feature = "dev-unlock", debug_assertions))]
+        {
+            if matches!(self.screen, Screen::Unlock(_))
+                && self.current_throttle().retry_after.is_none()
+                && let Some(pw) = self.dev_password.take()
+            {
+                self.start(ui.ctx(), Job::Unlock(pw));
+                ui.ctx().request_discard("dev unlock started");
+                return;
+            }
+        }
         if matches!(self.screen, Screen::Vault(_)) {
             self.record_activity(ui.ctx());
             if ui.ctx().input_mut(|i| i.consume_shortcut(&LOCK_SHORTCUT)) {
                 self.request_lock();
             }
         }
-        let throttle = self.throttle_status();
+        let throttle = self.current_throttle();
         let kdf = self.kdf;
         let now = self.ui_clock.monotonic();
         let idle_left = self.idle_left(now);
+        let clear_secs = self.clipboard_clear_secs();
         let screen = &mut self.screen;
         let session = self.session.as_ref();
         let lock_line = self.lock_line.as_deref();
         let mut io = FieldIo {
             clipboard: &mut *self.clipboard,
             focus: FieldFocus::None,
+            clear_secs,
+            copied: None,
         };
         if let Screen::Vault(view) = screen {
+            // The UTC day for the list badges, from the same wall time the session's
+            // clock gives `search`, so the badge and the Expiring chip agree.
+            view.set_today(from_unix_secs(self.ui_clock.now_unix().0));
+            // Wall time and the Mac's zone offset, for the cards' updated time only.
+            view.set_clock(
+                self.ui_clock.now_unix(),
+                holm_platform::window::utc_offset_secs(),
+            );
             let action = view.show(ui, session, now, idle_left, &throttle, &mut io);
             self.focus = io.focus;
+            if let Some(copied) = io.copied.take() {
+                self.pending_clear = Some(PendingClear::new(copied, clear_secs, &*self.ui_clock));
+            }
             match action {
                 None => return,
                 Some(VaultAction::Job(job)) => self.start(ui.ctx(), job),
                 Some(VaultAction::Lock) => self.request_lock(),
                 Some(VaultAction::SaveAndLock) => self.save_and_lock(),
                 Some(VaultAction::LockAnyway) => self.lock(LockReason::Manual),
+                Some(VaultAction::ChooseFile(kind)) => self.choose_file(ui.ctx(), kind),
             }
             // This pass drew the vault; if the screen changed, draw the new one instead.
             if !matches!(self.screen, Screen::Vault(_)) {
@@ -360,6 +590,8 @@ impl HolmApp {
                         JobKind::PreviewImport => "Reading the file.",
                         JobKind::Import => "Importing. This takes a moment.",
                         JobKind::Export => "Exporting. This takes a moment.",
+                        JobKind::Backup => "Writing the backup. This takes a moment.",
+                        JobKind::RevealPhrase => "Checking the password. This takes a moment.",
                     });
                     None
                 }
@@ -476,7 +708,7 @@ impl HolmApp {
     }
 
     /// The session's throttle status, or no failures while there is no session.
-    fn throttle_status(&self) -> ThrottleStatus {
+    fn current_throttle(&self) -> ThrottleStatus {
         self.session
             .as_ref()
             .map_or(NO_FAILURES, Session::throttle_status)
@@ -490,11 +722,15 @@ impl HolmApp {
             return;
         };
         let kind = job.kind();
-        let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
-        {
-            Screen::Vault(view) => Some(view),
-            _ => None,
-        };
+        let dirty = session.is_dirty();
+        let mut keep =
+            match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST)) {
+                Screen::Vault(view) => Some(view),
+                _ => None,
+            };
+        if let Some(view) = &mut keep {
+            view.note_job_start(dirty);
+        }
         let ctx = ctx.clone();
         let rx = (self.spawner)(session, job, Box::new(move || ctx.request_repaint()));
         self.screen = Screen::Working {
@@ -513,13 +749,18 @@ impl HolmApp {
             added,
             returned,
             transfer,
+            phrase,
         } = done;
         let keep = match core::mem::replace(&mut self.screen, Screen::Fatal(messages::WORKER_LOST))
         {
             Screen::Working { keep, .. } => keep,
             _ => None,
         };
-        if matches!(kind, JobKind::Add | JobKind::Update | JobKind::Save) || kind.is_transfer() {
+        if matches!(
+            kind,
+            JobKind::Add | JobKind::Update | JobKind::Save | JobKind::RevealPhrase
+        ) || kind.is_transfer()
+        {
             let mut view = keep.unwrap_or_else(VaultView::new);
             // `tick` skips the idle check while a job runs. Ask now, before the
             // finished job counts as activity, so an idle deadline or a sleep during
@@ -531,6 +772,10 @@ impl HolmApp {
             }
             view.on_done(kind, &result, added, returned, &session);
             view.on_transfer_done(kind, transfer, &session);
+            if kind == JobKind::RevealPhrase {
+                // A wrong password or a throttled try stays on the gate, never fatal.
+                view.on_phrase_done(&result, phrase, self.ui_clock.monotonic());
+            }
             self.screen = Screen::Vault(view);
             self.session = Some(session);
             if expired {
@@ -573,7 +818,9 @@ impl HolmApp {
                 | JobKind::Save
                 | JobKind::PreviewImport
                 | JobKind::Import
-                | JobKind::Export,
+                | JobKind::Export
+                | JobKind::Backup
+                | JobKind::RevealPhrase,
                 Err(_),
             ) => Screen::Fatal(messages::WORKER_LOST),
         };
@@ -610,8 +857,20 @@ fn is_paste_key(event: &egui::Event) -> bool {
 }
 
 impl eframe::App for HolmApp {
+    /// Quitting clears a waiting copied password first.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.run_pending_clear();
+    }
+
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.tick(ctx, &AppKitWindow(frame));
+        let os_lock_event = self.lock_events.as_ref().is_some_and(LockEvents::take);
+        self.tick(
+            ctx,
+            &AppKitWindow {
+                frame,
+                os_lock_event,
+            },
+        );
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

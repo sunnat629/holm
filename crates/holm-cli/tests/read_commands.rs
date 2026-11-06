@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `holm init`, `list`, `get` and `gen` against a vault in a temporary folder, with a
 //! fake terminal.
 
@@ -9,9 +10,15 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
-use common::{FakeTerminal, Kind, PW, init, run, session, usage, vault_dir};
+use common::{
+    FakeTerminal, Kind, PW, TestClock, env, init, run, run_env, session, usage, vault_dir,
+};
 use holm_cli::CliError;
 use holm_cli::vault::match_reference;
+use holm_core::clock::Clock;
+use holm_core::fields::{
+    CalendarDate, CustomField, FieldValue, from_unix_secs, parse_date, try_field,
+};
 use holm_core::item::{ItemData, ItemId, ItemInput};
 use holm_core::text::{GatedSecret, SecretText, Text};
 
@@ -23,8 +30,19 @@ fn st(s: &str) -> SecretText {
     SecretText::new(s.to_owned())
 }
 
+fn custom(label: &str, value: FieldValue, expiry: Option<CalendarDate>) -> CustomField {
+    try_field(Text::new(label.to_owned()), value, expiry).unwrap()
+}
+
+fn store(path: &Path, input: ItemInput) -> String {
+    let mut s = session(path);
+    let hex = s.add_item(input).unwrap().to_hex();
+    hex[..8].to_owned()
+}
+
 fn login(title: &str, user: &str, url: &str) -> ItemInput {
     ItemInput {
+        fields: Vec::new(),
         title: t(title),
         category: None,
         favourite: false,
@@ -71,6 +89,51 @@ fn init_then_list_empty() {
         term.prompts,
         vec![(Kind::Secret, "Master password: ".to_owned())]
     );
+}
+
+#[test]
+fn list_on_missing_folder_creates_nothing() {
+    let (dir, _) = vault_dir();
+    let folder = dir.path().join("missing").join("nested");
+    let path = folder.join("holm.vault");
+    let mut term = FakeTerminal::new(&[]);
+    let ran = run(&path, &["list"], &mut term);
+    assert_eq!(ran.code, ExitCode::FAILURE);
+    assert!(ran.err.contains(&CliError::NoVault.to_string()));
+    assert!(term.prompts.is_empty());
+    assert!(!dir.path().join("missing").exists());
+}
+
+#[test]
+fn gen_output_written_once() {
+    #[derive(Default)]
+    struct Output {
+        writes: usize,
+        flushes: usize,
+        bytes: zeroize::Zeroizing<Vec<u8>>,
+    }
+
+    impl std::io::Write for Output {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    use holm_cli::args::{GenArgs, GenKind};
+    for kind in [GenKind::Password, GenKind::Passphrase, GenKind::Username] {
+        let mut out = Output::default();
+        holm_cli::commands::read::gen_value(&GenArgs { kind, copy: false }, &mut out).unwrap();
+        assert_eq!((out.writes, out.flushes), (1, 1));
+        assert!(out.bytes.len() > 1);
+        assert_eq!(out.bytes.last(), Some(&b'\n'));
+    }
 }
 
 #[test]
@@ -128,6 +191,7 @@ fn list_search_filters_and_sorts() {
         zeta.favourite = true;
         s.add_item(zeta).unwrap();
         s.add_item(ItemInput {
+            fields: Vec::new(),
             title: t("Cold wallet"),
             category: None,
             favourite: false,
@@ -223,6 +287,7 @@ fn get_prints_no_secret_field() {
         ];
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Wallet"),
                 category: None,
                 favourite: true,
@@ -237,6 +302,7 @@ fn get_prints_no_secret_field() {
         );
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Seed"),
                 category: None,
                 favourite: false,
@@ -249,6 +315,7 @@ fn get_prints_no_secret_field() {
         );
         ids.push(
             s.add_item(ItemInput {
+                fields: Vec::new(),
                 title: t("Diary"),
                 category: None,
                 favourite: false,
@@ -470,4 +537,105 @@ fn env_is_never_read_for_secrets() {
             );
         }
     }
+}
+
+#[test]
+fn get_hides_custom_secrets() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let mut input = login("Mail", "me", "https://example.test");
+    input.fields = vec![custom(
+        "API token",
+        FieldValue::Secret(st("EXAMPLE-field-secret")),
+        None,
+    )];
+    let id = store(&path, input);
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run(&path, &["get", &id], &mut term);
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    assert!(ran.out.contains("field 1: API token (secret) = (hidden)"));
+    assert!(!ran.out.contains("EXAMPLE-field-secret"));
+    assert!(!ran.err.contains("EXAMPLE-field-secret"));
+}
+
+#[test]
+fn get_shows_custom_text_and_date() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let day = parse_date("2026-11-05").unwrap();
+    let mut input = login("Desk", "me", "https://example.test");
+    input.fields = vec![
+        custom("Seat", FieldValue::Text(t("desk-42")), None),
+        custom("Renews", FieldValue::Date(day), Some(day)),
+    ];
+    let id = store(&path, input);
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run(&path, &["get", &id], &mut term);
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    assert!(ran.out.contains("field 1: Seat (text) = desk-42"));
+    assert!(ran.out.contains("field 2: Renews (date) = 2026-11-05"));
+    assert!(ran.out.contains("field 2 expiry: 2026-11-05"));
+}
+
+#[test]
+fn list_stays_four_columns() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::new();
+    let now = clock.now_unix().0;
+    let soon = from_unix_secs(now + 30 * 86_400).unwrap();
+    let later = from_unix_secs(now + 31 * 86_400).unwrap();
+    let mut soon_item = login("Soon", "me", "https://example.test");
+    soon_item.fields = vec![custom("Reminder", FieldValue::Text(t("x")), Some(soon))];
+    let mut later_item = login("Later", "me", "https://example.test");
+    later_item.fields = vec![custom("Reminder", FieldValue::Text(t("x")), Some(later))];
+    store(&path, soon_item);
+    store(&path, later_item);
+    store(&path, login("Plain", "me", "https://example.test"));
+
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run(&path, &["list"], &mut term);
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    let lines: Vec<_> = ran.out.lines().collect();
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|line| line.matches('\t').count() == 3));
+
+    let mut env = env();
+    let clock = clock.clone();
+    env.clock = Box::new(move || Box::new(clock.clone()));
+    let mut term = FakeTerminal::new(&[PW]);
+    let ran = run_env(&path, &["list", "--expiring"], &mut term, &env);
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    assert!(ran.out.contains("Soon"));
+    assert!(!ran.out.contains("Later"));
+    assert!(!ran.out.contains("Plain"));
+    assert!(ran.out.lines().all(|line| line.matches('\t').count() == 3));
+}
+
+#[test]
+fn search_finds_label() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let mut input = login("Mail", "me", "https://example.test");
+    input.fields = vec![custom(
+        "API token",
+        FieldValue::Secret(st("EXAMPLE-field-secret")),
+        None,
+    )];
+    store(&path, input);
+
+    let mut term = FakeTerminal::new(&[PW]);
+    let hit = run(&path, &["list", "--search", "token"], &mut term);
+    assert_eq!(hit.code, ExitCode::SUCCESS, "{}", hit.err);
+    assert!(hit.out.contains("Mail"));
+
+    let mut term = FakeTerminal::new(&[PW]);
+    let miss = run(
+        &path,
+        &["list", "--search", "EXAMPLE-field-secret"],
+        &mut term,
+    );
+    assert_eq!(miss.code, ExitCode::SUCCESS, "{}", miss.err);
+    assert_eq!(miss.out, "");
+    assert!(!miss.err.contains("EXAMPLE-field-secret"));
 }

@@ -4,11 +4,41 @@
 //! `holm_platform::tty`. Tests use a fake that answers from a queue. Every command
 //! asks for input only through [`Terminal`], so no command can read a password from
 //! anywhere else.
+//!
+//! The `*_interruptible` methods take an [`Interrupt`] for one call: a check the
+//! terminal makes about every 0.1 s while it waits. `holm shell` uses it to stop a
+//! prompt and lock when the computer has slept. It is passed per call, not stored, so
+//! the terminal never keeps a closure that reaches into the shell.
 
 use std::time::Instant;
 
 use holm_platform::tty::{self, LineOpts, TtyError};
 use zeroize::Zeroizing;
+
+/// A check made while a prompt waits; when it returns true the prompt stops, wipes
+/// what was typed and answers `Ok(None)` (or false for a wait). `None` never stops.
+pub type Interrupt<'a> = Option<&'a dyn Fn() -> bool>;
+
+/// The device whose owner is the user at the Mac's screen.
+const CONSOLE: &str = "/dev/console";
+
+/// The user id that owns `/dev/console`, which macOS gives to the user at the screen:
+/// root at the login window, the other user after a fast user switch. A screen lock
+/// (Ctrl-Cmd-Q) keeps the same owner. None when it can't be read (missing, an error,
+/// or not Unix); the caller treats that as no change. Std only: one `stat`.
+#[must_use]
+pub fn console_owner() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(CONSOLE).ok().map(|m| m.uid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = CONSOLE;
+        None
+    }
+}
 
 /// Where Holm asks the user for input.
 pub trait Terminal {
@@ -52,6 +82,56 @@ pub trait Terminal {
     /// # Errors
     /// [`TtyError`].
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError>;
+
+    /// [`Terminal::secret_until`] that also stops when `interrupt` returns true.
+    ///
+    /// The default ignores the interrupt, so a terminal that can't poll still works.
+    ///
+    /// # Errors
+    /// As [`Terminal::secret`].
+    fn secret_interruptible(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let _ = interrupt;
+        self.secret_until(prompt, max_bytes, deadline)
+    }
+
+    /// [`Terminal::line`] that also stops when `interrupt` returns true.
+    ///
+    /// The default ignores the interrupt.
+    ///
+    /// # Errors
+    /// [`TtyError`].
+    fn line_interruptible(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let _ = interrupt;
+        self.line(prompt, max_bytes, deadline)
+    }
+
+    /// [`Terminal::wait_for_key`] that also stops, answering false, when `interrupt`
+    /// returns true.
+    ///
+    /// The default ignores the interrupt.
+    ///
+    /// # Errors
+    /// [`TtyError`].
+    fn wait_for_key_interruptible(
+        &mut self,
+        until: Instant,
+        interrupt: Interrupt<'_>,
+    ) -> Result<bool, TtyError> {
+        let _ = interrupt;
+        self.wait_for_key(until)
+    }
 }
 
 /// The controlling terminal (`/dev/tty`).
@@ -64,6 +144,7 @@ impl Terminal for RealTerminal {
             echo: false,
             max_bytes,
             deadline: None,
+            interrupt: None,
         };
         // With no deadline a line always comes back; `None` cannot happen, but it is
         // handled as a cancel rather than a panic.
@@ -76,12 +157,7 @@ impl Terminal for RealTerminal {
         max_bytes: usize,
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
-        let opts = LineOpts {
-            echo: false,
-            max_bytes,
-            deadline,
-        };
-        tty::read_line(prompt, opts)
+        self.secret_interruptible(prompt, max_bytes, deadline, None)
     }
 
     fn line(
@@ -90,15 +166,50 @@ impl Terminal for RealTerminal {
         max_bytes: usize,
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        self.line_interruptible(prompt, max_bytes, deadline, None)
+    }
+
+    fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
+        tty::wait_for_key(until, None)
+    }
+
+    fn secret_interruptible(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
         let opts = LineOpts {
-            echo: true,
+            echo: false,
             max_bytes,
             deadline,
+            interrupt,
         };
         tty::read_line(prompt, opts)
     }
 
-    fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
-        tty::wait_for_key(until)
+    fn line_interruptible(
+        &mut self,
+        prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        let opts = LineOpts {
+            echo: true,
+            max_bytes,
+            deadline,
+            interrupt,
+        };
+        tty::read_line(prompt, opts)
+    }
+
+    fn wait_for_key_interruptible(
+        &mut self,
+        until: Instant,
+        interrupt: Interrupt<'_>,
+    ) -> Result<bool, TtyError> {
+        tty::wait_for_key(until, interrupt)
     }
 }

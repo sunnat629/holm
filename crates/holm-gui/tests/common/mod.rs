@@ -22,7 +22,8 @@ use holm_core::session::Session;
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_gui::app::{AppConfig, HolmApp, WindowState};
-use holm_gui::clipboard::{ClipboardError, NoClipboard, SecretClipboard};
+use holm_gui::clipboard::{Clip, ClipCheck, ClipboardError, NoClipboard, SecretClipboard};
+use holm_gui::file_dialog::{FileDialog, NoDialog};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -55,6 +56,13 @@ impl TestClock {
         let secs = i64::try_from(by.as_secs()).unwrap();
         self.unix_secs.fetch_add(secs, Ordering::SeqCst);
     }
+
+    /// Moves only the wall clock forward by `by`, as a sleep does: on macOS the
+    /// monotonic clock stops while the Mac sleeps.
+    pub fn sleep(&self, by: Duration) {
+        let secs = i64::try_from(by.as_secs()).unwrap();
+        self.unix_secs.fetch_add(secs, Ordering::SeqCst);
+    }
 }
 
 impl Clock for TestClock {
@@ -70,17 +78,23 @@ impl Clock for TestClock {
 /// What a [`FakeClipboard`] saw and what it serves. Fake data only.
 #[derive(Default)]
 pub struct FakeClipboardState {
-    /// Every text passed to `set_secret`, in order (failed calls included).
+    /// Every text passed to `set`, in order (failed calls included).
     pub sets: Vec<Zeroizing<String>>,
     /// What `get_text` returns.
     pub paste: Option<String>,
     /// How many times `get_text` was called.
     pub gets: usize,
-    /// Whether `set_secret` fails.
+    /// Whether `set` fails.
     pub fail: bool,
+    /// What the clipboard holds now: the last good `set`, or what a test put there.
+    pub contents: Option<String>,
+    /// How many times `clear` was called.
+    pub clears: usize,
+    /// Whether `clear` does nothing, as a pasteboard that refuses to be emptied.
+    pub clear_sticks: bool,
 }
 
-/// A clipboard for tests: records `set_secret` calls and serves `paste`. Clones share
+/// A clipboard for tests: records `set` calls and serves `paste`. Clones share
 /// the same state, so the test keeps one and the app gets another.
 #[derive(Clone, Default)]
 pub struct FakeClipboard(pub Rc<RefCell<FakeClipboardState>>);
@@ -94,17 +108,36 @@ impl FakeClipboard {
     }
 }
 
-impl SecretClipboard for FakeClipboard {
-    fn set_secret(&mut self, text: &str) -> Result<(), ClipboardError> {
+impl Clip for FakeClipboard {
+    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
         let mut state = self.0.borrow_mut();
         state.sets.push(Zeroizing::new(text.to_owned()));
         if state.fail {
             Err(ClipboardError::Refused)
         } else {
+            state.contents = Some(text.to_owned());
             Ok(())
         }
     }
 
+    fn check(&mut self, text: &str) -> ClipCheck {
+        if self.0.borrow().contents.as_deref() == Some(text) {
+            ClipCheck::Holds
+        } else {
+            ClipCheck::Other
+        }
+    }
+
+    fn clear(&mut self) {
+        let mut state = self.0.borrow_mut();
+        state.clears += 1;
+        if !state.clear_sticks {
+            state.contents = None;
+        }
+    }
+}
+
+impl SecretClipboard for FakeClipboard {
     fn get_text(&mut self) -> Option<Zeroizing<String>> {
         let mut state = self.0.borrow_mut();
         state.gets += 1;
@@ -128,32 +161,74 @@ pub fn test_app_with_clipboard(
     dir: &Path,
     clipboard: Box<dyn SecretClipboard>,
 ) -> (HolmApp, TestClock) {
+    build_app(dir, clipboard, |_| Box::new(NoDialog::default()))
+}
+
+/// [`test_app`] with the file dialog `make` builds from the app's clock (so a fake
+/// dialog can move time while it is "open").
+pub fn test_app_with_dialog(
+    dir: &Path,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
+    build_app(dir, Box::new(NoClipboard), make)
+}
+
+/// [`test_app_with_dialog`] with `clipboard` instead of none.
+pub fn test_app_with_clipboard_and_dialog(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
+    build_app(dir, clipboard, make)
+}
+
+fn build_app(
+    dir: &Path,
+    clipboard: Box<dyn SecretClipboard>,
+    make: impl FnOnce(&TestClock) -> Box<dyn FileDialog>,
+) -> (HolmApp, TestClock) {
     let clock = TestClock::new();
+    let file_dialog = make(&clock);
     let app = HolmApp::new(AppConfig {
         vault_path: vault_path(dir),
         kdf: KdfParams::FLOOR,
         session_clock: Box::new(clock.clone()),
         ui_clock: Box::new(clock.clone()),
         clipboard,
+        file_dialog,
+        lock_events: None,
     });
     (app, clock)
 }
 
-/// A window whose minimised state the test sets by hand, in place of AppKit. Clones
-/// share the same state. Starts not minimised.
+/// A window whose minimised state and OS lock events the test sets by hand, in place
+/// of AppKit. Clones share the same state. Starts not minimised, with no event.
 #[derive(Clone, Default)]
-pub struct FakeWindow(Rc<Cell<bool>>);
+pub struct FakeWindow {
+    minimised: Rc<Cell<bool>>,
+    os_lock_event: Rc<Cell<bool>>,
+}
 
 impl FakeWindow {
     /// Minimises the window (`true`) or brings it back (`false`).
     pub fn set_minimised(&self, minimised: bool) {
-        self.0.set(minimised);
+        self.minimised.set(minimised);
+    }
+
+    /// Posts one OS lock event (sleep, screen lock or logout), as `LockEvents` would.
+    /// The next frame reads it, once.
+    pub fn post_os_lock_event(&self) {
+        self.os_lock_event.set(true);
     }
 }
 
 impl WindowState for FakeWindow {
     fn minimised(&self) -> Option<bool> {
-        Some(self.0.get())
+        Some(self.minimised.get())
+    }
+
+    fn os_lock_event(&self) -> bool {
+        self.os_lock_event.replace(false)
     }
 }
 
@@ -218,4 +293,41 @@ pub fn make_vault_with_auto_lock(dir: &Path, password: &str, auto_lock_secs: u32
     };
     // A longer time is a weaker setting, so it needs the password.
     session.update_settings(settings, Some(&password)).unwrap();
+}
+
+/// [`make_vault`], then sets the vault's clipboard-clear time to `clipboard_clear_secs`.
+pub fn make_vault_with_clipboard(dir: &Path, password: &str, clipboard_clear_secs: u32) {
+    make_vault(dir, password);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    let password = MasterPassword::new(password.to_owned());
+    session.unlock(&password).unwrap();
+    let settings = holm_core::settings::Settings {
+        clipboard_clear_secs,
+        ..session.settings().unwrap().clone()
+    };
+    // A shorter time is a stronger setting, so it needs no password.
+    session.update_settings(settings, None).unwrap();
+}
+
+/// [`make_vault`], then turns `lock_on_sleep` off and saves.
+pub fn make_vault_without_lock_on_sleep(dir: &Path, password: &str) {
+    make_vault(dir, password);
+    let mut session = Session::new(FsStore::new(vault_path(dir)), Box::new(SystemClock::new()));
+    let password = MasterPassword::new(password.to_owned());
+    session.unlock(&password).unwrap();
+    let settings = holm_core::settings::Settings {
+        lock_on_sleep: false,
+        ..session.settings().unwrap().clone()
+    };
+    // Turning it off is a weaker setting, so it needs the password.
+    session.update_settings(settings, Some(&password)).unwrap();
+}
+
+/// Opens the toolbar's New menu and picks Login, as the old "New login" button did.
+/// The caller runs the harness afterwards, as it did after the old click.
+pub fn new_login(harness: &mut egui_kittest::Harness<'static, holm_gui::app::HolmApp>) {
+    use egui_kittest::kittest::Queryable;
+    harness.get_by_label("New").click();
+    harness.run();
+    harness.get_by_label("Login").click();
 }

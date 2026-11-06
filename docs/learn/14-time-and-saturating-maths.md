@@ -6,7 +6,7 @@ Holm needs to measure two waits: the pause after failed unlocks, and the idle ti
 
 Honesty note: the throttle lives in memory, so restarting Holm resets it. It slows a person at the keyboard; the real defence against offline guessing is Argon2id (lesson 04 and the crypto crate).
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### `Duration`, and two kinds of clock
 
@@ -48,7 +48,7 @@ pub struct Throttle { failures: u32, not_before: Option<Duration> }
 ```
 
 - `#[derive(Default)]` fills every field with its own default: `0` and `None`. That is exactly "no failures, no wait", so `new()` is just `Self::default()`.
-- The fields are private. Outside code can only call `record_failure` and `record_success`, so it cannot set `failures` to 0 by hand.
+- The fields are private. Outside code can only call `attempt` and `status`, so it cannot set `failures` to 0 by hand.
 
 In Kotlin you'd write: a data class with default arguments, `data class Throttle(val failures: Int = 0, ...)`. That one has a public `copy(failures = 0)`; the Rust struct does not.
 
@@ -99,7 +99,7 @@ Every unlock error counts as a failure (F16), so a damaged file cannot be used t
 
 1. Run the clock and throttle tests.
    - Run: `cargo test -p holm-core --locked --lib -- throttle clock`
-   - Check: the last line says `21 passed; 0 failed`.
+   - Check: every `test result:` line says `ok.` with `0 failed`.
    - Undo: nothing to undo, it only reads.
 2. Break the cap and watch the table test catch it.
    - Run: `sed -i.bak 's/MAX_DELAY_SECS: u64 = 60/MAX_DELAY_SECS: u64 = 600/' crates/holm-core/src/throttle.rs && cargo test -p holm-core --locked --lib delay_table`
@@ -116,4 +116,6 @@ Every unlock error counts as a failure (F16), so a damaged file cannot be used t
 - [std::time::Duration](https://doc.rust-lang.org/std/time/struct.Duration.html), see `saturating_add` and `checked_add`.
 - [The Rust book, ch16-04: Send and Sync](https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html)
 
-Next lesson: [15, Generics and trait objects](15-generics-and-trait-objects.md).
+Previous lesson: [Lesson 13: Serde and a versioned binary format](13-serde-and-versioned-formats.md).
+Next lesson: [Lesson 15: Generics and trait objects](15-generics-and-trait-objects.md).
+All lessons: [the index](README.md).

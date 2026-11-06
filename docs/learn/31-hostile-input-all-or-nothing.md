@@ -72,6 +72,7 @@ immutable and the old one stays on the heap until the garbage collector runs.
 ```rust
 let start = data.items.len();
 for row in rows {
+    // ... turn `row` into an item `input` (trimmed) ...
     if let Err(e) = insert_new(data, input, now) {
         data.items.truncate(start);
         return Err(e);
@@ -119,18 +120,19 @@ A row says what it is (`type`), or Holm infers it from which secret column is fi
 means a recovery phrase, `address` means a crypto address, otherwise it is a login. A filled
 column that the row's type does not use (a `recovery` cell on a login, a `username` on a note)
 is an error for that row, not a silent drop. The user is told to delete the file afterwards, so
-a value Holm quietly left out would be gone.
+a value Holm quietly left out would be gone. A password is never moved into the phrase field
+"because the phrase was empty". If Holm guessed wrong, a seed phrase could end up in a field that
+is shown on screen.
 
 Duplicates follow the same rule. A row is skipped only if it matches an existing item in every
 field: type, title, username, URLs, chain, category and every secret. Two recovery phrases both
 called "Ledger" are two items. The title and other display fields go into a hash to find
-candidates; secrets are then compared in place, never hashed. A password is never moved into the phrase field "because the phrase was
-empty". If Holm guessed wrong, a seed phrase could end up in a field that is shown on screen.
+candidates; secrets are then compared in place, never hashed.
 
 Browser exports are logins only, and their extra columns (`guid`, `timeLastUsed`) are ignored by
 name. A Safari one-time-password secret is counted and dropped, never stored as a note.
 
-## Exercises
+## Try it
 
 1. Add a test that a Holm CSV with the header `title,URL,website` is refused with
    `ImportError::DuplicateColumn`. Check: `cargo test -p holm-core --locked import::tests`
@@ -145,4 +147,6 @@ name. A Safari one-time-password secret is counted and dropped, never stored as 
 
 - [std::mem::take](https://doc.rust-lang.org/std/mem/fn.take.html)
 - [std::collections::HashMap::insert](https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.insert)
-- [Lesson 30: Parsing untrusted text](30-parsing-untrusted-text.md)
+- Previous: [Lesson 30: Parsing untrusted text](30-parsing-untrusted-text.md)
+- Next: [Lesson 32: Building output safely](32-building-output-safely.md)
+- [The index](README.md)

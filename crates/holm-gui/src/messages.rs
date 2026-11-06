@@ -13,8 +13,11 @@ use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
 use holm_core::import::ImportError;
 use holm_core::rules::{Field, FieldError};
+use holm_core::settings::{CLIPBOARD_MAX_SECS, CLIPBOARD_MIN_SECS};
 use holm_core::store::StoreError;
 use holm_core::throttle::ThrottleStatus;
+
+use crate::rows::ExpiryBadge;
 
 /// A wrong password, or a vault file that was changed or damaged. The two cannot be
 /// told apart, so one line covers both.
@@ -87,10 +90,20 @@ pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on
 /// The stored password is longer than the edit form can hold.
 pub const SECRET_TOO_LONG: &str =
     "This password is too long to edit here, so it is shown read-only.";
-/// No login is selected.
-pub const SELECT_OR_ADD: &str = "Select a login, or add one.";
-/// The password was copied. Fixed text for Phase 3, which has no clipboard clearing.
-pub const COPIED: &str = "Password copied. Holm doesn't clear the clipboard yet, so copy something else when you're done.";
+/// No item is selected.
+pub const SELECT_OR_ADD: &str = "Select an item, or add a login.";
+/// The line after a copy, naming the vault's clipboard time. `secs` is clamped to the
+/// settings range, as the clear itself clamps it.
+#[must_use]
+pub fn copied_note(secs: u32) -> String {
+    let secs = secs.clamp(CLIPBOARD_MIN_SECS, CLIPBOARD_MAX_SECS);
+    format!("Copied. Holm clears the clipboard in {secs} seconds.")
+}
+/// The auto-clear found another app's copy on the clipboard and left it alone.
+pub const CLIPBOARD_CHANGED: &str = "The clipboard changed, so Holm left it alone.";
+/// The auto-clear ran but the password is still on the clipboard.
+pub const CLIPBOARD_NOT_CLEARED: &str =
+    "Holm couldn't clear the clipboard. Copy something else to replace it.";
 /// The clipboard did not take the password.
 pub const COPY_FAILED: &str = "Couldn't copy. Try again.";
 /// A paste would not fit the field, so nothing was pasted.
@@ -100,8 +113,14 @@ pub const PASTE_TOO_LONG: &str = "That's too long to paste here, so nothing was 
 pub const UNSAVED_ON_LOCK: &str =
     "Some changes are not saved yet. Locking now without saving discards them.";
 
+/// The typed path is empty or does not start at the top folder of the disk.
+pub const PATH_NOT_ABSOLUTE: &str = "Type the full path, from the top folder of the disk.";
 /// No file at the typed path, so nothing was read.
 pub const IMPORT_NOT_FOUND: &str = "Holm found no file at that path. Check the path and try again.";
+/// The path is a folder or another thing that is not a regular file.
+pub const IMPORT_NOT_A_FILE: &str = "That path is not a regular file, so Holm will not import it.";
+/// The system does not let Holm read the file.
+pub const IMPORT_NO_ACCESS: &str = "Holm is not allowed to read that file. Nothing was imported.";
 /// The file could not be read.
 pub const IMPORT_READ_FAILED: &str = "Holm could not read that file. Nothing was imported.";
 /// The file is bigger than the import limit.
@@ -140,9 +159,104 @@ pub const EXPORT_THROTTLED: &str = "Too many wrong passwords. Wait a little and 
 /// The export failed for another reason.
 pub const EXPORT_FAILED: &str = "The export did not finish. No file was written.";
 
+/// Label of the toolbar button that starts a backup. A button label, not a status line,
+/// so it stays out of `ALL`.
+pub const BACKUP_BUTTON: &str = "Back up\u{2026}";
+/// The backup file was written.
+pub const BACKUP_DONE: &str = "Backup saved. It opens with this vault's master password.";
+/// The backup failed after it started, so no file was written.
+pub const BACKUP_FAILED: &str = "The backup did not finish. No file was written.";
+
+/// Accessibility label of the press-and-hold eye on a password field. It is a button
+/// label, not a status line, so it stays out of `ALL` (which holds full sentences).
+pub const EYE_LABEL: &str = "Show password while held";
+
+/// Label of the password field that guards a recovery phrase. A field label, not a
+/// status line, so it stays out of `ALL`.
+pub const PHRASE_PASSWORD_LABEL: &str = "Master password to show the phrase";
+/// Shown in place of Edit for items the app can't edit yet.
+pub const EDIT_IN_CLI: &str = "Edit this item with the holm command for now.";
+/// The phrase could not be shown for a reason other than the password.
+pub const PHRASE_FAILED: &str = "Holm couldn't show this phrase.";
+/// The password typed at the phrase gate is not the master password. The vault is open,
+/// so this says nothing about a changed or damaged file.
+pub const PHRASE_WRONG_PASSWORD: &str = "That isn't the master password. The phrase stays hidden.";
+/// The unlock screen's line after a lock on sleep, screen lock or logout.
+pub const LOCKED_SLEEP: &str =
+    "Holm locked because the Mac slept, the screen locked or you logged out.";
+
+/// Label of the list chip that keeps items whose soonest reminder is within the
+/// expiring window, or already past. A chip label, so it has no full stop.
+pub const CHIP_EXPIRING: &str = "Expiring";
+
+/// The badge under a row's subtitle. It names a day count only, never a field label
+/// or value, so it is ordinary text that AccessKit may read.
+#[must_use]
+pub fn expiry_badge_line(badge: ExpiryBadge) -> String {
+    match badge {
+        ExpiryBadge::InDays(0) => "Expires today".to_owned(),
+        ExpiryBadge::InDays(1) => "Expires in 1 day".to_owned(),
+        ExpiryBadge::InDays(n) => format!("Expires in {n} days"),
+        ExpiryBadge::Expired => "Expired".to_owned(),
+    }
+}
+
+/// The badge under a row's subtitle when an item is nearly out of recovery codes. It
+/// names a count only, never a code.
+#[must_use]
+pub fn codes_badge_line(n: usize) -> String {
+    match n {
+        0 => "No codes left".to_owned(),
+        1 => "1 code left".to_owned(),
+        n => format!("{n} codes left"),
+    }
+}
+
+/// The line under an empty recovery codes box that holds the stored codes. `n` is how
+/// many are kept.
+#[must_use]
+pub fn codes_kept_line(n: usize) -> String {
+    if n == 1 {
+        "Keeps the current code. Paste new codes to replace it.".to_owned()
+    } else {
+        format!("Keeps the current {n} codes. Paste new codes to replace them.")
+    }
+}
+
+/// Button that adds a custom field. A label, so it has no closing period.
+pub const ADD_FIELD: &str = "Add field";
+/// Button that removes one custom field.
+pub const REMOVE_FIELD: &str = "Remove";
+/// Button that moves a custom field one place up.
+pub const MOVE_UP: &str = "Move up";
+/// Button that moves a custom field one place down.
+pub const MOVE_DOWN: &str = "Move down";
+/// Label of the preset picker for an item with no custom fields yet.
+pub const PRESET_LABEL: &str = "Preset";
+/// Name of a custom field's optional reminder date, kept apart from a `Date` value.
+pub const REMIND_ON: &str = "Remind on";
+/// Button that opens the custom field editor on an item whose built-in fields are
+/// edited with the holm command.
+pub const EDIT_FIELDS: &str = "Edit fields";
+
+/// The labels in `ALL`: plain text, but names rather than sentences, so they have no
+/// closing period.
+#[cfg(test)]
+const LABELS: [&str; 8] = [
+    CHIP_EXPIRING,
+    ADD_FIELD,
+    REMOVE_FIELD,
+    MOVE_UP,
+    MOVE_DOWN,
+    PRESET_LABEL,
+    REMIND_ON,
+    EDIT_FIELDS,
+];
+
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 50] = [
+const ALL: [&str; 68] = [
+    PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
     KDF_POLICY,
@@ -173,11 +287,14 @@ const ALL: [&str; 50] = [
     NOT_SAVED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
-    COPIED,
+    CLIPBOARD_CHANGED,
+    CLIPBOARD_NOT_CLEARED,
     COPY_FAILED,
     PASTE_TOO_LONG,
     UNSAVED_ON_LOCK,
     IMPORT_NOT_FOUND,
+    IMPORT_NOT_A_FILE,
+    IMPORT_NO_ACCESS,
     IMPORT_READ_FAILED,
     IMPORT_TOO_BIG,
     IMPORT_NOT_TEXT,
@@ -193,6 +310,20 @@ const ALL: [&str; 50] = [
     EXPORT_WRONG_PASSWORD,
     EXPORT_THROTTLED,
     EXPORT_FAILED,
+    BACKUP_DONE,
+    BACKUP_FAILED,
+    EDIT_IN_CLI,
+    PHRASE_FAILED,
+    PHRASE_WRONG_PASSWORD,
+    LOCKED_SLEEP,
+    CHIP_EXPIRING,
+    ADD_FIELD,
+    REMOVE_FIELD,
+    MOVE_UP,
+    MOVE_DOWN,
+    PRESET_LABEL,
+    REMIND_ON,
+    EDIT_FIELDS,
 ];
 
 /// Why the vault locked.
@@ -204,6 +335,9 @@ pub enum LockReason {
     Idle,
     /// The window was minimised.
     Minimised,
+    /// The Mac slept, its screens slept, the screen locked, or the user session went
+    /// inactive (fast user switching or logout).
+    Sleep,
 }
 
 /// What the unlock screen says about the last lock.
@@ -255,6 +389,12 @@ pub fn create_error(e: &CoreError) -> &'static str {
 #[must_use]
 pub fn field_error(e: &FieldError) -> &'static str {
     match e {
+        FieldError::Empty(Field::CustomLabel) => "The field name can't be empty",
+        FieldError::TooLong(Field::CustomValue) => "The field value is too long",
+        FieldError::BadDate => "That date is not a real calendar day",
+        FieldError::TooManyFields => "An item can have at most 10 custom fields",
+        FieldError::NoSuchIndex => "That field is not on the item",
+        FieldError::BadCodeCount => "A recovery code list holds 1 to 20 codes",
         FieldError::Empty(Field::Title) => TITLE_EMPTY,
         FieldError::Empty(_) => FIELD_EMPTY,
         FieldError::TooLong(_) => FIELD_TOO_LONG,
@@ -310,6 +450,21 @@ pub fn export_error(e: &CoreError) -> &'static str {
     }
 }
 
+/// The line under the phrase gate for a failed reveal. A wrong password says so without
+/// blaming the file, as the vault is already open; a throttled try names the wait (the
+/// live throttle line replaces it while the wait runs). Never fatal: the item view stays.
+#[must_use]
+pub fn phrase_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::WrongPassword | CoreError::Vault(VaultError::WrongPasswordOrCorrupt) => {
+            PHRASE_WRONG_PASSWORD
+        }
+        CoreError::Throttled { .. } => TOO_MANY_TRIES,
+        CoreError::Vault(VaultError::OutOfMemory) => NOT_ENOUGH_MEMORY,
+        _ => PHRASE_FAILED,
+    }
+}
+
 /// The start-up text for an error from `ensure_vault_dir`: [`DIR_PERMISSIONS`] for a
 /// folder open to other users, else [`DIR_ERROR`].
 #[must_use]
@@ -346,6 +501,7 @@ pub fn lock_line(note: &LockNote, auto_lock: Duration) -> String {
         LockReason::Manual => "Locked.".to_owned(),
         LockReason::Idle => format!("Locked after {} without use.", in_words(auto_lock)),
         LockReason::Minimised => "Locked when the window was minimised.".to_owned(),
+        LockReason::Sleep => LOCKED_SLEEP.to_owned(),
     };
     if note.discarded_unsaved {
         line.push_str(" Unsaved changes were discarded.");
@@ -377,6 +533,32 @@ fn ceil_secs(wait: Duration) -> u64 {
         .as_secs()
         .saturating_add(u64::from(wait.subsec_nanos() > 0));
     secs.max(1)
+}
+
+/// `1 login` or `12 logins`.
+#[must_use]
+pub fn login_count(n: usize) -> String {
+    if n == 1 {
+        "1 login".to_owned()
+    } else {
+        format!("{n} logins")
+    }
+}
+
+/// `1 other item` or `3 other items`.
+#[must_use]
+pub fn other_count(n: usize) -> String {
+    if n == 1 {
+        "1 other item".to_owned()
+    } else {
+        format!("{n} other items")
+    }
+}
+
+/// `, 4 shown`: the tail of the list footer while a search is on.
+#[must_use]
+pub fn shown_count(n: usize) -> String {
+    format!(", {n} shown")
 }
 
 #[cfg(test)]
@@ -503,10 +685,90 @@ mod tests {
     }
 
     #[test]
+    fn copied_note_names_the_clear_time_over_the_whole_range() {
+        for secs in CLIPBOARD_MIN_SECS..=CLIPBOARD_MAX_SECS {
+            let line = copied_note(secs);
+            assert_eq!(
+                line,
+                format!("Copied. Holm clears the clipboard in {secs} seconds.")
+            );
+            assert!(
+                !line.contains(['%', '<', '>', '/', '\\']),
+                "not plain text: {line}"
+            );
+        }
+        // Out-of-range times are clamped like the clear itself.
+        assert!(copied_note(0).contains(" 5 seconds"));
+        assert!(copied_note(u32::MAX).contains(" 90 seconds"));
+    }
+
+    #[test]
+    fn backup_button_is_plain_label() {
+        assert!(!BACKUP_BUTTON.is_empty());
+        assert!(!BACKUP_BUTTON.contains(['{', '}', '%', '<', '>', '/', '\\']));
+    }
+
+    #[test]
+    fn phrase_password_label_is_plain_text() {
+        assert!(!PHRASE_PASSWORD_LABEL.is_empty());
+        assert!(!PHRASE_PASSWORD_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
+    }
+
+    #[test]
+    fn phrase_errors_are_never_fatal() {
+        assert_eq!(
+            phrase_error(&CoreError::WrongPassword),
+            PHRASE_WRONG_PASSWORD
+        );
+        assert_eq!(
+            phrase_error(&CoreError::Throttled {
+                retry_after_secs: 2
+            }),
+            TOO_MANY_TRIES
+        );
+        assert_eq!(phrase_error(&CoreError::NotAPhrase), PHRASE_FAILED);
+        assert_eq!(phrase_error(&CoreError::Locked), PHRASE_FAILED);
+    }
+
+    #[test]
+    fn eye_label_is_plain_text() {
+        assert!(!EYE_LABEL.is_empty());
+        assert!(!EYE_LABEL.contains(['{', '}', '%', '<', '>', '/', '\\']));
+    }
+
+    #[test]
+    fn expiry_badge_lines() {
+        assert_eq!(expiry_badge_line(ExpiryBadge::InDays(0)), "Expires today");
+        assert_eq!(
+            expiry_badge_line(ExpiryBadge::InDays(1)),
+            "Expires in 1 day"
+        );
+        assert_eq!(
+            expiry_badge_line(ExpiryBadge::InDays(5)),
+            "Expires in 5 days"
+        );
+        assert_eq!(expiry_badge_line(ExpiryBadge::Expired), "Expired");
+        for badge in [
+            ExpiryBadge::InDays(0),
+            ExpiryBadge::InDays(2),
+            ExpiryBadge::InDays(u32::MAX),
+            ExpiryBadge::Expired,
+        ] {
+            let line = expiry_badge_line(badge);
+            assert!(
+                !line.contains(['{', '}', '%', '<', '>', '/', '\\']),
+                "not plain text: {line}"
+            );
+        }
+    }
+
+    #[test]
     fn messages_have_no_placeholders() {
         for line in ALL {
             assert!(!line.is_empty());
-            assert!(line.ends_with('.'), "{line}");
+            if !LABELS.contains(&line) {
+                assert!(line.ends_with('.'), "{line}");
+            }
             assert!(
                 !line.contains(['{', '}', '%', '<', '>', '/', '\\']),
                 "not plain text: {line}"
@@ -549,6 +811,15 @@ mod tests {
         assert_eq!(
             lock_line(&note(LockReason::Manual, true), five),
             "Locked. Unsaved changes were discarded."
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Sleep, false), five),
+            LOCKED_SLEEP
+        );
+        assert_eq!(
+            lock_line(&note(LockReason::Sleep, true), five),
+            "Holm locked because the Mac slept, the screen locked or you logged out. \
+             Unsaved changes were discarded."
         );
     }
 

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Smoke test: the binary runs and announces itself.
 
 use std::process::Command;

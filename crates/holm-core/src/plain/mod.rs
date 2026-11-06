@@ -12,7 +12,7 @@ mod csv;
 mod json;
 
 pub(crate) use csv::{CsvReader, ROW_END, push_quoted, quoted_len};
-pub(crate) use json::parse_json_rows;
+pub(crate) use json::{json_string_len, parse_json_rows, push_json_string};
 // Callers use these through method results and never name them; the tests do.
 #[cfg(test)]
 pub(crate) use csv::Record;

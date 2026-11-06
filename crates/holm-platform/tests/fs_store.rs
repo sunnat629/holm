@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `FsStore` against real files, each test in its own temporary directory.
 
 use std::fs;
@@ -319,12 +320,12 @@ mod unix {
         let mut s = FsStore::new(vault_in(&dir));
         s.create_new(b"old").unwrap();
         {
-            let _guard = DirMode::set(dir.path(), 0o555);
+            let _guard = DirMode::set(dir.path(), 0o500);
             // Root ignores directory permissions, so the test means nothing there.
             let probe = dir.path().join("probe");
             if fs::write(&probe, b"").is_ok() {
                 let _ = fs::remove_file(&probe);
-                println!("SKIP read_only_dir_keeps_old_file: running as root");
+                eprintln!("SKIP: running as root");
                 return;
             }
             assert_eq!(

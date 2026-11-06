@@ -13,9 +13,14 @@
 //! it.
 
 use crate::category::{Category, CategoryId, MAX_CATEGORIES, validate_category_name};
+use crate::fields::{
+    CalendarDate, CustomField, FieldValue, RecoveryCode, try_field, validate_fields,
+};
 use crate::generator::{PassphraseSpec, PasswordSpec, UsernameSpec};
 use crate::item::{Item, ItemData, ItemId, PhraseRule, Timestamp, validate_item};
-use crate::rules::{FieldError, MAX_ITEMS, MAX_NOTE_BYTES, MAX_URLS};
+use crate::rules::{
+    FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_NOTE_BYTES, MAX_RECOVERY_CODES, MAX_URLS,
+};
 use crate::settings::Settings;
 use crate::text::{GatedSecret, SecretText, Text};
 use core::fmt;
@@ -83,6 +88,10 @@ impl<T, const MAX: usize> BoundedVec<T, MAX> {
     pub(crate) fn into_inner(self) -> Vec<T> {
         self.0
     }
+
+    pub(crate) fn iter(&self) -> core::slice::Iter<'_, T> {
+        self.0.iter()
+    }
 }
 
 impl<'de, T: Deserialize<'de>, const MAX: usize> Deserialize<'de> for BoundedVec<T, MAX> {
@@ -113,6 +122,187 @@ impl<'de, T: Deserialize<'de>, const MAX: usize> Deserialize<'de> for BoundedVec
 }
 
 /// An item as written.
+#[cfg(test)]
+#[derive(Serialize)]
+pub(crate) struct ItemOutV1<'a> {
+    id: ItemId,
+    title: &'a str,
+    category: Option<CategoryId>,
+    favourite: bool,
+    created: Timestamp,
+    updated: Timestamp,
+    trashed: Option<Timestamp>,
+    data: DataOutV1<'a>,
+}
+
+#[cfg(test)]
+#[derive(Serialize)]
+enum DataOutV1<'a> {
+    Login {
+        username: &'a str,
+        password: &'a str,
+        urls: Vec<&'a str>,
+        notes: &'a str,
+    },
+    CryptoAddress {
+        chain: &'a str,
+        address: &'a str,
+        memo: &'a str,
+        notes: &'a str,
+    },
+    RecoveryPhrase {
+        phrase: &'a str,
+        notes: &'a str,
+    },
+    SecureNote {
+        body: &'a str,
+    },
+}
+
+#[cfg(test)]
+impl<'a> ItemOutV1<'a> {
+    /// Borrows `item` for writing.
+    pub(crate) fn new(item: &'a Item) -> ItemOutV1<'a> {
+        let data = match &item.data {
+            ItemData::Login {
+                username,
+                password,
+                urls,
+                notes,
+            } => DataOutV1::Login {
+                username: username.as_str(),
+                password: password.expose(),
+                urls: urls.iter().map(Text::as_str).collect(),
+                notes: notes.expose(),
+            },
+            ItemData::CryptoAddress {
+                chain,
+                address,
+                memo,
+                notes,
+            } => DataOutV1::CryptoAddress {
+                chain: chain.as_str(),
+                address: address.expose(),
+                memo: memo.expose(),
+                notes: notes.expose(),
+            },
+            ItemData::RecoveryPhrase { phrase, notes } => DataOutV1::RecoveryPhrase {
+                phrase: phrase.expose(),
+                notes: notes.expose(),
+            },
+            ItemData::SecureNote { body } => DataOutV1::SecureNote {
+                body: body.expose(),
+            },
+        };
+        ItemOutV1 {
+            id: item.id,
+            title: item.title.as_str(),
+            category: item.category,
+            favourite: item.favourite,
+            created: item.created,
+            updated: item.updated,
+            trashed: item.trashed,
+            data,
+        }
+    }
+}
+
+/// An item as read. Nothing here is trusted until [`ItemInV1::into_item`] returns `Ok`.
+#[derive(Deserialize)]
+pub(crate) struct ItemInV1 {
+    id: ItemId,
+    title: WireStr,
+    category: Option<CategoryId>,
+    favourite: bool,
+    created: Timestamp,
+    updated: Timestamp,
+    trashed: Option<Timestamp>,
+    data: DataInV1,
+}
+
+#[derive(Deserialize)]
+enum DataInV1 {
+    Login {
+        username: WireStr,
+        password: WireStr,
+        urls: BoundedVec<WireStr, MAX_URLS>,
+        notes: WireStr,
+    },
+    CryptoAddress {
+        chain: WireStr,
+        address: WireStr,
+        memo: WireStr,
+        notes: WireStr,
+    },
+    RecoveryPhrase {
+        phrase: WireStr,
+        notes: WireStr,
+    },
+    SecureNote {
+        body: WireStr,
+    },
+}
+
+impl DataInV1 {
+    fn into_data(self) -> ItemData {
+        match self {
+            DataInV1::Login {
+                username,
+                password,
+                urls,
+                notes,
+            } => ItemData::Login {
+                username: username.text(),
+                password: password.secret(),
+                urls: urls.into_inner().into_iter().map(WireStr::text).collect(),
+                notes: notes.secret(),
+            },
+            DataInV1::CryptoAddress {
+                chain,
+                address,
+                memo,
+                notes,
+            } => ItemData::CryptoAddress {
+                chain: chain.text(),
+                address: address.secret(),
+                memo: memo.secret(),
+                notes: notes.secret(),
+            },
+            DataInV1::RecoveryPhrase { phrase, notes } => ItemData::RecoveryPhrase {
+                phrase: GatedSecret::new(phrase.secret()),
+                notes: notes.secret(),
+            },
+            DataInV1::SecureNote { body } => ItemData::SecureNote {
+                body: body.secret(),
+            },
+        }
+    }
+}
+
+impl ItemInV1 {
+    /// Builds the item and runs every field rule on it.
+    ///
+    /// # Errors
+    /// Returns the first [`FieldError`] found.
+    pub(crate) fn into_item(self) -> Result<Item, FieldError> {
+        let title = self.title.text();
+        let data = self.data.into_data();
+        validate_item(&title, &data, PhraseRule::Required)?;
+        Ok(Item {
+            id: self.id,
+            title,
+            category: self.category,
+            favourite: self.favourite,
+            created: self.created,
+            updated: self.updated,
+            trashed: self.trashed,
+            data,
+            fields: Vec::new(),
+        })
+    }
+}
+
+/// An item as written.
 #[derive(Serialize)]
 pub(crate) struct ItemOut<'a> {
     id: ItemId,
@@ -123,6 +313,7 @@ pub(crate) struct ItemOut<'a> {
     updated: Timestamp,
     trashed: Option<Timestamp>,
     data: DataOut<'a>,
+    fields: Vec<CustomFieldOut<'a>>,
 }
 
 #[derive(Serialize)]
@@ -191,6 +382,10 @@ impl<'a> ItemOut<'a> {
             updated: item.updated,
             trashed: item.trashed,
             data,
+            fields: (0u8..)
+                .zip(&item.fields)
+                .map(|(position, field)| CustomFieldOut::new(position, field))
+                .collect(),
         }
     }
 }
@@ -206,6 +401,7 @@ pub(crate) struct ItemIn {
     updated: Timestamp,
     trashed: Option<Timestamp>,
     data: DataIn,
+    fields: BoundedVec<CustomFieldIn, MAX_CUSTOM_FIELDS>,
 }
 
 #[derive(Deserialize)]
@@ -268,6 +464,13 @@ impl DataIn {
 }
 
 impl ItemIn {
+    /// True when any custom field holds recovery codes, which schema 2 cannot hold.
+    pub(crate) fn has_recovery_codes(&self) -> bool {
+        self.fields
+            .iter()
+            .any(|field| matches!(field.value, CustomValueIn::RecoveryCodes(_)))
+    }
+
     /// Builds the item and runs every field rule on it.
     ///
     /// # Errors
@@ -276,6 +479,16 @@ impl ItemIn {
         let title = self.title.text();
         let data = self.data.into_data();
         validate_item(&title, &data, PhraseRule::Required)?;
+        let mut wire_fields = self.fields.into_inner();
+        wire_fields.sort_unstable_by_key(|field| field.position);
+        let mut fields = Vec::with_capacity(wire_fields.len());
+        for (position, field) in wire_fields.into_iter().enumerate() {
+            if usize::from(field.position) != position {
+                return Err(FieldError::NoSuchIndex);
+            }
+            fields.push(field.into_field()?);
+        }
+        validate_fields(&fields)?;
         Ok(Item {
             id: self.id,
             title,
@@ -285,7 +498,124 @@ impl ItemIn {
             updated: self.updated,
             trashed: self.trashed,
             data,
+            fields,
         })
+    }
+}
+
+/// The date wire order is part of schemas 2 and 3: year, month, day.
+#[derive(Serialize, Deserialize)]
+struct DateWire {
+    year: u16,
+    month: u8,
+    day: u8,
+}
+
+impl DateWire {
+    fn new(date: CalendarDate) -> Self {
+        let (year, month, day) = date.parts();
+        Self { year, month, day }
+    }
+
+    fn into_date(self) -> Result<CalendarDate, FieldError> {
+        CalendarDate::from_parts(self.year, self.month, self.day)
+    }
+}
+
+#[derive(Serialize)]
+struct RecoveryCodeOut<'a> {
+    code: &'a str,
+    used: bool,
+}
+
+#[derive(Deserialize)]
+struct RecoveryCodeIn {
+    code: WireStr,
+    used: bool,
+}
+
+/// Variant order is the postcard index. Index 4, `RecoveryCodes`, is new in schema 3.
+#[derive(Serialize)]
+enum CustomValueOut<'a> {
+    Text(&'a str),
+    Secret(&'a str),
+    MultilineSecret(&'a str),
+    Date(DateWire),
+    RecoveryCodes(Vec<RecoveryCodeOut<'a>>),
+}
+
+#[derive(Serialize)]
+struct CustomFieldOut<'a> {
+    position: u8,
+    label: &'a str,
+    value: CustomValueOut<'a>,
+    expiry: Option<DateWire>,
+}
+
+impl<'a> CustomFieldOut<'a> {
+    fn new(position: u8, field: &'a CustomField) -> Self {
+        let value = match field.value() {
+            FieldValue::Text(value) => CustomValueOut::Text(value.as_str()),
+            FieldValue::Secret(value) => CustomValueOut::Secret(value.expose()),
+            FieldValue::MultilineSecret(value) => CustomValueOut::MultilineSecret(value.expose()),
+            FieldValue::Date(date) => CustomValueOut::Date(DateWire::new(*date)),
+            FieldValue::RecoveryCodes(codes) => CustomValueOut::RecoveryCodes(
+                codes
+                    .iter()
+                    .map(|code| RecoveryCodeOut {
+                        code: code.code().expose(),
+                        used: code.used(),
+                    })
+                    .collect(),
+            ),
+        };
+        Self {
+            position,
+            label: field.label(),
+            value,
+            expiry: field.expiry().map(DateWire::new),
+        }
+    }
+}
+
+/// Variant order is the postcard index. Index 4, `RecoveryCodes`, is new in schema 3.
+#[derive(Deserialize)]
+enum CustomValueIn {
+    Text(WireStr),
+    Secret(WireStr),
+    MultilineSecret(WireStr),
+    Date(DateWire),
+    RecoveryCodes(BoundedVec<RecoveryCodeIn, MAX_RECOVERY_CODES>),
+}
+
+#[derive(Deserialize)]
+struct CustomFieldIn {
+    position: u8,
+    label: WireStr,
+    value: CustomValueIn,
+    expiry: Option<DateWire>,
+}
+
+impl CustomFieldIn {
+    fn into_field(self) -> Result<CustomField, FieldError> {
+        let value = match self.value {
+            CustomValueIn::Text(value) => FieldValue::Text(value.text()),
+            CustomValueIn::Secret(value) => FieldValue::Secret(value.secret()),
+            CustomValueIn::MultilineSecret(value) => FieldValue::MultilineSecret(value.secret()),
+            CustomValueIn::Date(date) => FieldValue::Date(date.into_date()?),
+            CustomValueIn::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+                codes
+                    .into_inner()
+                    .into_iter()
+                    .map(|code| RecoveryCode::new(code.code.secret(), code.used))
+                    .collect(),
+            ),
+        };
+        try_field(
+            self.label.text(),
+            value,
+            self.expiry.map(DateWire::into_date).transpose()?,
+        )
     }
 }
 
@@ -485,6 +815,27 @@ impl SettingsWire {
 }
 
 /// The whole body as written, after the 2-byte schema version. The field order is the
+/// format: [`BodyInV1`] must list the same fields in the same order.
+#[cfg(test)]
+#[derive(Serialize)]
+pub(crate) struct BodyOutV1<'a> {
+    pub(crate) settings: SettingsWire,
+    pub(crate) categories: Vec<CategoryOut<'a>>,
+    pub(crate) items: Vec<ItemOutV1<'a>>,
+    pub(crate) next_category_id: u32,
+}
+
+/// The whole body as read. Nothing here is trusted until [`crate::body`] has converted
+/// and checked it.
+#[derive(Deserialize)]
+pub(crate) struct BodyInV1 {
+    pub(crate) settings: SettingsWire,
+    pub(crate) categories: BoundedVec<CategoryIn, MAX_CATEGORIES>,
+    pub(crate) items: BoundedVec<ItemInV1, MAX_ITEMS>,
+    pub(crate) next_category_id: u32,
+}
+
+/// The whole body as written, after the 2-byte schema version. The field order is the
 /// format: [`BodyIn`] must list the same fields in the same order.
 #[derive(Serialize)]
 pub(crate) struct BodyOut<'a> {
@@ -517,6 +868,7 @@ mod tests {
     }
     fn item(data: ItemData) -> Item {
         Item {
+            fields: Vec::new(),
             id: ItemId::from_hex(&"ab".repeat(16)).unwrap(),
             title: t("Example Mail"),
             category: Some(CategoryId(2)),

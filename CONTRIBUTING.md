@@ -19,6 +19,23 @@ To check your setup without running the gates, use `bash scripts/ci-local.sh --p
 
 The script only passes on a clean working tree, so commit or stash first.
 
+## Dev unlock (debug builds only)
+
+To skip typing the master password while developing the GUI, set `HOLM_DEV_PASSWORD` and
+build with the `dev-unlock` feature:
+
+```sh
+HOLM_DEV_PASSWORD=... cargo run -p holm-gui --features dev-unlock -- --vault /tmp/dev/holm.vault
+```
+
+- Use it only with a throwaway test vault, never with your real master password.
+  Environment variables are visible to other processes of your user and can end up in
+  your shell history.
+- It unlocks an existing vault, once per start. A wrong password or a later lock does not
+  try again, and with no vault the create screen shows as usual.
+- Release builds refuse the feature (a `compile_error!`), and `scripts/ci-local.sh` greps
+  the release binary to check the variable name is not in it.
+
 ## Pull requests
 
 - Keep each pull request small and about one topic.

@@ -7,6 +7,7 @@
 //! and never carries the value.
 
 use crate::category::CategoryId;
+use crate::fields::{CustomField, validate_fields};
 use crate::rules::{
     Field, FieldError, MAX_LINE_BYTES, MAX_NOTE_BYTES, MAX_SECRET_BYTES, MAX_URLS, display_field,
     line_secret, multi_line, non_blank,
@@ -168,6 +169,7 @@ pub struct Item {
     pub(crate) updated: Timestamp,
     pub(crate) trashed: Option<Timestamp>,
     pub(crate) data: ItemData,
+    pub(crate) fields: Vec<CustomField>,
 }
 
 impl Item {
@@ -211,6 +213,11 @@ impl Item {
     pub fn data(&self) -> &ItemData {
         &self.data
     }
+    /// Custom fields in their stored order.
+    #[must_use]
+    pub fn fields(&self) -> &[CustomField] {
+        &self.fields
+    }
     /// The kind of this item.
     #[must_use]
     pub fn item_type(&self) -> ItemType {
@@ -237,6 +244,8 @@ pub struct ItemInput {
     pub favourite: bool,
     /// Kind-specific data.
     pub data: ItemData,
+    /// Custom fields in display order.
+    pub fields: Vec<CustomField>,
 }
 
 impl ItemInput {
@@ -245,13 +254,15 @@ impl ItemInput {
     /// # Errors
     /// Returns the first [`FieldError`] found.
     pub fn validate(&self) -> Result<(), FieldError> {
-        validate_item(&self.title, &self.data, PhraseRule::Required)
+        validate_item(&self.title, &self.data, PhraseRule::Required)?;
+        validate_fields(&self.fields)
     }
 
     /// Like [`ItemInput::validate`], but an empty phrase is allowed: it means "keep the
     /// stored phrase".
     pub(crate) fn validate_for_update(&self) -> Result<(), FieldError> {
-        validate_item(&self.title, &self.data, PhraseRule::EmptyKeeps)
+        validate_item(&self.title, &self.data, PhraseRule::EmptyKeeps)?;
+        validate_fields(&self.fields)
     }
 }
 
@@ -361,6 +372,7 @@ mod tests {
     }
     fn check(title: &str, data: ItemData) -> Result<(), FieldError> {
         ItemInput {
+            fields: Vec::new(),
             title: t(title),
             category: None,
             favourite: false,
@@ -378,6 +390,7 @@ mod tests {
     #[test]
     fn item_debug_has_no_text() {
         let item = Item {
+            fields: Vec::new(),
             id: ItemId([7; 16]),
             title: t("Example Mail"),
             category: Some(CategoryId(1)),
@@ -393,6 +406,29 @@ mod tests {
         assert!(!d.contains("EXAMPLE-pw"));
         assert!(d.contains("Login"));
         assert_eq!(item.title(), "Example Mail");
+    }
+
+    #[test]
+    fn custom_field_limit_checked_on_add_and_update() {
+        use crate::fields::{FieldValue, try_field};
+        use crate::rules::MAX_CUSTOM_FIELDS;
+
+        let mut input = ItemInput {
+            title: t("EXAMPLE"),
+            category: None,
+            favourite: false,
+            data: login(),
+            fields: (0..MAX_CUSTOM_FIELDS)
+                .map(|_| try_field(t("EXAMPLE"), FieldValue::Secret(st("EXAMPLE")), None).unwrap())
+                .collect(),
+        };
+        assert_eq!(input.validate(), Ok(()));
+        assert_eq!(input.validate_for_update(), Ok(()));
+        input
+            .fields
+            .push(try_field(t("EXAMPLE"), FieldValue::Text(t("")), None).unwrap());
+        assert_eq!(input.validate(), Err(FieldError::TooManyFields));
+        assert_eq!(input.validate_for_update(), Err(FieldError::TooManyFields));
     }
 
     #[test]
@@ -447,6 +483,7 @@ mod tests {
     #[test]
     fn empty_phrase_allowed_on_update() {
         let i = ItemInput {
+            fields: Vec::new(),
             title: t("P"),
             category: None,
             favourite: false,

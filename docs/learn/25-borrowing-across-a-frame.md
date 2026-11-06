@@ -6,18 +6,34 @@ An immediate-mode UI runs the whole screen function about sixty times a second, 
 
 ## What we built
 
-When the vault unlocks, the app builds a list of `ItemRow` values (id, title, username, web address) one time, on the next draw after the worker's result arrives, and the `VaultView` owns them. The list on the left and the detail pane on the right read those rows; neither touches the session. The login form uses fixed-size `LineBuf` buffers that wipe themselves, so typing never reallocates and leaves a copy behind. When a save job starts, the view is moved out of the screen with `mem::replace` and kept inside `Screen::Working`, so the screen shows "Saving." while the job runs and the form's buffers are gone before it starts. When the job finishes, `on_done` rebuilds the rows from the returned session.
+When the vault unlocks, the app builds a list of `ItemRow` values one time, on the next draw after the worker's result arrives, and the `VaultView` owns them. Each row holds the item's id, kind, title, a subtitle, its category, a reminder badge, a low-codes count and an "updated" label. The list on the left and the detail pane on the right read those rows; neither touches the session. The login form uses fixed-size `LineBuf` buffers that wipe themselves, so typing never reallocates and leaves a copy behind. When a save job starts, the view is moved out of the screen with `mem::replace` and kept inside `Screen::Working`, so the screen shows "Saving." while the job runs and the form's buffers are gone before it starts. When the job finishes, the rows are rebuilt from the returned session.
 
 ## Rust ideas in this task
 
 ### Build once, own it, borrow it per frame
 
+From `crates/holm-gui/src/rows.rs`, trimmed:
+
 ```rust
-pub struct ItemRow { pub id: ItemId, pub title: Text, pub subtitle: Text }
-pub fn build_rows<'a>(items: impl Iterator<Item = &'a Item>) -> Vec<ItemRow> { /* ... */ }
+pub struct ItemRow {
+    pub id: ItemId,
+    pub kind: ItemType,
+    pub title: Text,
+    pub subtitle: Text,
+    pub category: Option<Text>,
+    // ... badges and the "updated" label
+}
+
+pub fn build_rows(
+    summaries: &[ItemSummary<'_>],
+    categories: &[Category],
+    today: CalendarDate,
+    now: Timestamp,
+    utc_offset_secs: i32,
+) -> Vec<ItemRow> { /* ... */ }
 ```
 
-`ItemRow` holds only the non-secret fields, but they are still zeroizing `Text` values, not plain `String`: a row is a copy of vault data, and the habit is that every copy wipes on drop. The password is not in the row at all: the reveal fetches it from the session on demand. Each frame, `show_list` borrows `&self.rows` and draws one selectable label per row.
+`build_rows` reads `ItemSummary` values from `Session::search`, not whole items. The subtitle is never a secret: a login's username (else its first web address), a crypto address's chain, or a fixed word for a phrase or a note. The text fields are still zeroizing `Text` values, not plain `String`: a row is a copy of vault data, and the habit is that every copy wipes on drop. The password is not in the row at all: the reveal fetches it from the session on demand. Each frame, the list borrows the view's rows and draws one entry per row.
 
 In Kotlin you'd write a `data class ItemRow` inside a `StateFlow<List<ItemRow>>` and let Compose read it. The difference is that Rust makes you say who owns the list: here the view does, and a frame can only borrow it for as long as the frame lasts.
 
@@ -48,21 +64,24 @@ In Kotlin you'd write a `Row { Column(Modifier.width(240.dp)) {..}; Column(Modif
 
 ```rust
 struct LineBuf(Zeroizing<String>);
-impl egui::TextBuffer for LineBuf { /* insert_text stops at 1024 bytes */ }
+impl egui::TextBuffer for LineBuf { /* insert_text stops at the cap */ }
 ```
 
 A `String` that grows reallocates, and the old block is freed without being wiped. `LineBuf` reserves its whole capacity at creation and refuses input past the cap, so the buffer never moves and `Zeroizing` wipes the one block on drop. egui edits it through the `TextBuffer` trait, so no copy of the secret goes into a normal `String`.
 
 In Kotlin you'd write `CharArray(1024)` and `fill('\u0000')` yourself, because `String` is immutable and cannot be wiped at all.
 
-## Exercises
+## Try it
 
-1. Find `build_rows` and list which `Item` fields it copies. Confirm the password is not among them. Check: `grep -n "password" crates/holm-gui/src/rows.rs` should show no field copy.
+1. Read `build_rows` and list which `ItemSummary` fields it copies. Confirm no password is among them. Check: `grep -n "password" crates/holm-gui/src/rows.rs`. Every hit is inside the `tests` module, where a test item or a master password is built.
 2. Temporarily change `Panel::left` and `CentralPanel` in `show` so the central panel is added first. Run the tests and see what breaks, then undo. Check: `cargo test -p holm-gui --locked --test items`.
-3. Read the test `line_buf_never_grows_past_its_cap` and add a case for a multi-byte character that straddles the cap. Check: `cargo test -p holm-gui --locked line_buf`.
+3. In `rows.rs`, change `CODES_LOW_AT` from 2 to 3 and run the badge test. Which row now gets a badge it should not have? Undo the change. Check: `cargo test -p holm-gui --locked codes_badge_shows_at_two_or_fewer`.
 
 ## Read next
 
+- Previous: [Lesson 24](24-state-machines-and-worker-threads.md)
+- Next: [Lesson 26](26-the-clipboard-is-shared.md)
+- [The index](README.md)
 - [`std::mem::replace`](https://doc.rust-lang.org/std/mem/fn.replace.html)
 - [`egui::Panel`](https://docs.rs/egui/0.37.0/egui/containers/panel/struct.Panel.html)
 - [`egui::TextBuffer`](https://docs.rs/egui/0.37.0/egui/trait.TextBuffer.html)

@@ -8,8 +8,13 @@
 //! the allocation itself, with no copy.
 //!
 //! Only [`SecretInput::push_str`] (one whole UTF-8 character at a time) and
-//! [`SecretInput::from_secret`] (a whole `&str`) write bytes, so the contents are always
-//! valid UTF-8.
+//! [`SecretInput::from_secret`] / [`SecretInput::from_multiline_secret`] (a whole `&str`)
+//! write bytes, so the contents are always valid UTF-8.
+//!
+//! A buffer is single-line or multiline, fixed when it is made. Typing into a single-line
+//! buffer drops every control character. A multiline buffer keeps `\n` and `\r` and drops
+//! every other control, `\0` included. Taking or clearing the contents keeps the flag, so
+//! a refilled buffer follows the same rule.
 
 use core::fmt;
 
@@ -25,6 +30,10 @@ pub const MASTER_CAP: usize = 4 * holm_core::strength::MAX_MASTER_CHARS;
 /// [`holm_core::rules::MAX_SECRET_BYTES`].
 pub const ITEM_SECRET_CAP: usize = holm_core::rules::MAX_SECRET_BYTES;
 
+/// Capacity in bytes for a multiline custom secret (a private key, say), the core limit
+/// [`holm_core::rules::MAX_MULTILINE_SECRET_BYTES`].
+pub const MULTILINE_SECRET_CAP: usize = holm_core::rules::MAX_MULTILINE_SECRET_BYTES;
+
 /// A secret being typed: UTF-8 bytes in an allocation that never grows, wiped on
 /// [`clear`](SecretInput::clear) and on drop.
 ///
@@ -35,15 +44,30 @@ pub struct SecretInput {
     bytes: Vec<u8>,
     /// The most bytes this buffer may hold, fixed when it is made.
     cap: usize,
+    /// Whether typed `\n` and `\r` are kept. Fixed when the buffer is made.
+    multiline: bool,
 }
 
 impl SecretInput {
-    /// An empty buffer that holds up to `cap` bytes. The memory is reserved here, once.
+    /// An empty single-line buffer that holds up to `cap` bytes. The memory is reserved
+    /// here, once. Typing drops every control character, newlines included.
     #[must_use]
     pub fn with_capacity(cap: usize) -> SecretInput {
         SecretInput {
             bytes: Vec::with_capacity(cap),
             cap,
+            multiline: false,
+        }
+    }
+
+    /// An empty multiline buffer that holds up to `cap` bytes. Typing keeps `\n` and
+    /// `\r` and drops `\0` and every other control character.
+    #[must_use]
+    pub fn with_multiline_capacity(cap: usize) -> SecretInput {
+        SecretInput {
+            bytes: Vec::with_capacity(cap),
+            cap,
+            multiline: true,
         }
     }
 
@@ -58,19 +82,41 @@ impl SecretInput {
         if text.len() > cap {
             return None;
         }
-        let mut buf = SecretInput::with_capacity(cap);
-        buf.bytes.extend_from_slice(text.as_bytes());
-        Some(buf)
+        Some(SecretInput::with_capacity(cap).filled_with(text))
     }
 
-    /// Appends `s`, one character at a time. Control characters are skipped. It stops at
-    /// the first character that would take the buffer past its capacity, so it never
-    /// reallocates. Each character passes through a 4-byte scratch that is wiped on every
-    /// path, including a panic.
+    /// A multiline buffer of capacity `cap` holding exactly `text`, for editing a stored
+    /// multiline secret. Byte-exact like [`from_secret`](SecretInput::from_secret), and
+    /// the result keeps `\n` and `\r` on later typing, so a reload does not change the
+    /// rule. Returns `None`, and allocates nothing, when `text` is longer than `cap`.
+    #[must_use]
+    pub fn from_multiline_secret(text: &str, cap: usize) -> Option<SecretInput> {
+        if text.len() > cap {
+            return None;
+        }
+        Some(SecretInput::with_multiline_capacity(cap).filled_with(text))
+    }
+
+    /// Copies `text` into this empty buffer. The caller has checked that it fits.
+    fn filled_with(mut self, text: &str) -> SecretInput {
+        self.bytes.extend_from_slice(text.as_bytes());
+        self
+    }
+
+    /// Whether typing keeps `c`: never a control character, except `\n` and `\r` in a
+    /// multiline buffer.
+    fn keeps(&self, c: char) -> bool {
+        !c.is_control() || (self.multiline && matches!(c, '\n' | '\r'))
+    }
+
+    /// Appends `s`, one character at a time. Control characters are skipped (a multiline
+    /// buffer keeps `\n` and `\r`). It stops at the first character that would take the
+    /// buffer past its capacity, so it never reallocates. Each character passes through a
+    /// 4-byte scratch that is wiped on every path, including a panic.
     pub fn push_str(&mut self, s: &str) {
         let mut scratch = Zeroizing::new([0u8; 4]);
         for c in s.chars() {
-            if c.is_control() {
+            if !self.keeps(c) {
                 continue;
             }
             let encoded = c.encode_utf8(&mut scratch[..]);
@@ -91,7 +137,7 @@ impl SecretInput {
     pub fn try_push_str(&mut self, s: &str) -> bool {
         let needed: usize = s
             .chars()
-            .filter(|c| !c.is_control())
+            .filter(|c| self.keeps(*c))
             .map(char::len_utf8)
             .sum();
         if needed > self.cap - self.bytes.len() {
@@ -116,6 +162,15 @@ impl SecretInput {
     #[must_use]
     pub fn char_count(&self) -> usize {
         self.bytes.iter().filter(|b| !is_continuation(**b)).count()
+    }
+
+    /// The secret as text, for painting it while the user holds the eye button.
+    ///
+    /// Borrowed, never copied here. The caller must paint it and drop it in the same
+    /// frame, and must not store it.
+    #[must_use]
+    pub(crate) fn expose_for_paint(&self) -> &str {
+        core::str::from_utf8(&self.bytes).unwrap_or("")
     }
 
     /// True when nothing has been typed.
@@ -367,5 +422,51 @@ mod tests {
     fn caps_match_core_limits() {
         assert_eq!(MASTER_CAP, 4 * holm_core::strength::MAX_MASTER_CHARS);
         assert_eq!(ITEM_SECRET_CAP, holm_core::rules::MAX_SECRET_BYTES);
+        assert_eq!(
+            MULTILINE_SECRET_CAP,
+            holm_core::rules::MAX_MULTILINE_SECRET_BYTES
+        );
+    }
+
+    #[test]
+    fn multiline_keeps_newlines() {
+        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nEXAMPLE\n";
+        let mut buf = SecretInput::with_multiline_capacity(MULTILINE_SECRET_CAP);
+        let ptr = buf.bytes.as_ptr();
+        assert!(buf.try_push_str(pem));
+        assert_eq!(buf.bytes, pem.as_bytes());
+        // CR and LF stay; NUL, tab, DEL and NEL are dropped.
+        buf.push_str("a\r\nb\0c\td\u{7f}e\u{85}f");
+        let expected = format!("{pem}a\r\nbcdef");
+        assert_eq!(buf.expose_for_paint(), expected);
+        assert_eq!(buf.bytes.as_ptr(), ptr, "no reallocation");
+
+        // The take hands the text over whole, and the buffer stays multiline.
+        let text = buf.take_secret_text();
+        assert_eq!(text.expose(), expected);
+        assert!(buf.is_empty());
+        assert!(buf.multiline);
+        buf.push_str("\n");
+        assert_eq!(buf.bytes, b"\n");
+        buf.clear();
+        assert!(buf.multiline);
+
+        // A single-line buffer still drops newlines.
+        let mut line = SecretInput::with_capacity(ITEM_SECRET_CAP);
+        line.push_str(pem);
+        assert_eq!(
+            line.expose_for_paint(),
+            "-----BEGIN OPENSSH PRIVATE KEY-----EXAMPLE"
+        );
+
+        // A reload keeps the rule of the buffer it came from.
+        let mut reloaded =
+            SecretInput::from_multiline_secret(pem, MULTILINE_SECRET_CAP).expect("fits");
+        assert!(reloaded.multiline);
+        reloaded.push_str("x\n");
+        assert_eq!(reloaded.expose_for_paint(), format!("{pem}x\n"));
+        let single = SecretInput::from_secret("EXAMPLE", ITEM_SECRET_CAP).expect("fits");
+        assert!(!single.multiline);
+        assert!(SecretInput::from_multiline_secret(pem, 4).is_none());
     }
 }

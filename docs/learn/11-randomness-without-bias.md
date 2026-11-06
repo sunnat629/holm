@@ -82,13 +82,19 @@ In Kotlin you'd write: `val words by lazy { resource("words.txt").lines() }`. `l
 
 ### `f64::log2` for entropy
 
+From `PasswordSpec::validate`:
+
 ```rust
-let bits = valid_count.log2();
+let (valid, total) = self.counts();
+if valid.log2() < MIN_ENTROPY_BITS {
+    return Err(GeneratorError::BelowEntropyFloor);
+}
 ```
 
 - Entropy in bits `b` means an attacker needs up to 2^`b` guesses: a pool of 94 characters gives `log2(94)`, about 6.55 bits per character.
-- `f64::from(u16)` converts without loss. Turning a `usize` into `f64` needs `as`, which clippy flags, so we allow it on that one line.
-- `length * log2(pool)` is only right with no minimums. With "at least 1 digit" we redraw until it holds, so the real count is the number of strings that meet the minimums, and its `log2` is slightly lower (about 130.93 bits for the default, not 131.09). We count them with a small sum in `f64`; 94^128 is about 2^839 and fits. `entropy_bits` returns 0.0 for a length outside 12 to 128 or minimums above the length, so it never builds a big table for bad input.
+- `counts()` returns two `f64` values: how many strings meet the minimums, and how many strings the pool can make at all.
+- `f64::from(u16)` converts without loss. Turning a `usize` into `f64` needs `as`, which clippy flags, so that cast lives in one small helper, `as_f64`, with the lint allowed on it alone.
+- `length * log2(pool)` is only right with no minimums. With "at least 1 digit" we redraw until it holds, so the real count is the number of strings that meet the minimums, and its `log2` is slightly lower (about 130.93 bits for the default, not 131.09). We count them with a small sum in `f64`; 94^128 is about 2^839 and fits. `entropy_bits` returns 0.0 for a length outside 12 to 128, minimums above the length, no character sets, or a minimum for a set that is switched off, so it never builds a big table for bad input.
 - A spec below 64 bits by that exact count is refused. A spec whose minimums would make all 10 000 tries fail with more than a 1 in a billion chance is refused too.
 
 In Kotlin you'd write: `kotlin.math.log2(94.0)`.
@@ -101,7 +107,7 @@ A biased generator gives an attacker a shortcut, and the bias never shows up in 
 
 1. Run the generator tests.
    - Run: `cargo test -p holm-core --locked generator`
-   - Check: the `test result:` line says `ok.` with 0 failed.
+   - Check: every `test result:` line says `ok.` with 0 failed.
    - Undo: nothing to undo, it only reads.
 2. Make the bias come back. In `uniform_below` in `crates/holm-core/src/generator.rs`, change `if x < bound {` to `if true {`.
    - Run: `cargo test -p holm-core --locked uniform_below_rejects_biased_tail`
@@ -114,8 +120,9 @@ A biased generator gives an attacker a shortcut, and the bias never shows up in 
 
 ## Read next
 
+- Previous: [Lesson 10, Enums, newtypes and validation](10-enums-newtypes-and-validation.md).
+- Next: [Lesson 12, Owning the check instead of wrapping a library](12-owning-the-strength-check.md).
+- All lessons: [the index](README.md).
 - [The Rust book, ch10-02: traits](https://doc.rust-lang.org/book/ch10-02-traits.html), for `trait` and `dyn`.
 - [std::sync::OnceLock](https://doc.rust-lang.org/std/sync/struct.OnceLock.html)
 - [std::num::NonZeroU32](https://doc.rust-lang.org/std/num/type.NonZeroU32.html)
-
-Next lesson: [12, Owning the check instead of wrapping a library](12-owning-the-strength-check.md).

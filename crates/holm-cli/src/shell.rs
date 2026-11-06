@@ -15,18 +15,36 @@
 //! passes, the command is cancelled and the shell idle-locks before the line counts
 //! as activity.
 //!
+//! The shell also locks when the computer has slept (the vault's `lock_on_sleep`,
+//! on by default). A [`SleepWatch`] notes both clocks; on macOS the monotonic clock
+//! stops during sleep, so a wall clock that gained more than a few seconds on it means
+//! the computer slept. Every prompt that has something to protect (an open vault or a
+//! clipboard value) is given an interrupt that asks the watch about every 0.1 s, so
+//! the lock comes on waking, not at the next Enter. A line typed before the sleep is
+//! wiped and never runs.
+//!
+//! The same interrupt also reads the owner of `/dev/console`, at most once a second.
+//! Fast user switching and the login window hand the console to another user (root
+//! for the login window), so a new owner locks the shell just as a sleep does. The
+//! owner is noted at shell start and again at each unlock; an owner that can't be
+//! read is no change. The shell has no event loop, so it can't hear a screen lock
+//! (Ctrl-Cmd-Q) that neither sleeps nor switches users; the GUI can
+//! (`docs/CRYPTO.md`).
+//!
 //! Typed lines can hold secrets by mistake, so there is no history, and every line
 //! and word lives in a buffer that is wiped when dropped. Passwords are never read
 //! from a line: the commands ask for them at hidden prompts, as one-shot commands do.
 
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use holm_core::clock::Clock;
+use holm_core::clock::{Clock, SleepWatch};
 use holm_core::rules::MAX_LINE_BYTES;
 use holm_core::session::Session;
 use holm_core::settings::{
@@ -41,9 +59,10 @@ use crate::args::{Command, CopyField, TOO_MANY, UsageError, parse_command};
 use crate::commands::copy::{self, Clip};
 use crate::commands::{read, transfer, write};
 use crate::output::CliError;
-use crate::term::Terminal;
+use crate::term::{Interrupt, Terminal};
 use crate::vault::{self, WRONG_PASSWORD};
 use crate::{Env, USAGE};
+use holm_platform::clip_clear::PendingClear;
 
 /// The prompt while the vault is open.
 pub const PROMPT: &str = "holm> ";
@@ -65,6 +84,12 @@ const NOT_IN_SHELL: &str = "That command doesn't run inside the shell.";
 const DISCARD_PROMPT: &str = "Type discard to lock without saving: ";
 /// Added to a lock message when unsaved changes were dropped.
 const DISCARDED: &str = " Unsaved changes were discarded.";
+/// The lock message after the computer slept.
+const SLEEP_LOCKED: &str = "Locked because the computer slept.";
+/// The lock message after another user (or the login window) took the screen.
+const USER_LOCKED: &str = "Locked because the Mac switched to another user or the login window.";
+/// A waiting prompt reads `/dev/console`'s owner at most this often.
+const CONSOLE_EVERY: Duration = Duration::from_secs(1);
 /// A deadline is never closer than this, so a clock that lags by a moment can't
 /// make the prompt spin.
 const MIN_WAIT: Duration = Duration::from_millis(200);
@@ -77,7 +102,7 @@ Commands in the shell:
   exit, quit                Lock the vault and leave. Ctrl-D (or Ctrl-C) at
                             the prompt does the same.
   help                      Show this help.
-  list, get, gen, add, edit, rm, passwd, import, export, version
+  list, get, gen, add, edit, rm, restore, empty-trash, passwd, import, export, version
                             As below, without holm and --vault.
 
 The vault locks itself after its auto-lock time without use. Quote a word that
@@ -193,19 +218,122 @@ impl Drop for Words {
 
 // ----- prompts inside a command -----
 
+/// Why the shell locks on its own, apart from the idle time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Away {
+    /// The computer slept.
+    Slept,
+    /// `/dev/console` changed owner: fast user switching or the login window.
+    UserChanged,
+}
+
+/// What a waiting prompt asks to tell that the user went away: the sleep watch and
+/// the owner of `/dev/console`. No `Debug`: it holds closures, not data worth showing.
+#[derive(Clone)]
+struct AwayCheck {
+    clock: Rc<dyn Clock>,
+    /// Both clocks as of the last wake.
+    watch: SleepWatch,
+    /// Reads `/dev/console`'s owner; None when it can't be read.
+    console: Rc<dyn Fn() -> Option<u32>>,
+    /// The owner as of shell start or the last unlock; None when it couldn't be read,
+    /// and then no owner change is ever seen.
+    owner: Option<u32>,
+}
+
+impl AwayCheck {
+    /// Both checks, now. For the moment after a prompt returns.
+    fn now(&self) -> Option<Away> {
+        if self.watch.slept(self.clock.as_ref()) {
+            return Some(Away::Slept);
+        }
+        self.user_changed().then_some(Away::UserChanged)
+    }
+
+    /// Both checks, for an interrupt asked about every 0.1 s: the console is read at
+    /// most once per [`CONSOLE_EVERY`], counted from `last` (the first ask reads it).
+    fn poll(&self, last: &Cell<Option<Duration>>) -> Option<Away> {
+        if self.watch.slept(self.clock.as_ref()) {
+            return Some(Away::Slept);
+        }
+        let mono = self.clock.monotonic();
+        if last
+            .get()
+            .is_some_and(|then| mono.saturating_sub(then) < CONSOLE_EVERY)
+        {
+            return None;
+        }
+        last.set(Some(mono));
+        self.user_changed().then_some(Away::UserChanged)
+    }
+
+    /// Whether `/dev/console` has another owner now. An owner that can't be read,
+    /// then or now, is no change: an error never locks.
+    fn user_changed(&self) -> bool {
+        let Some(was) = self.owner else {
+            return false;
+        };
+        (self.console)().is_some_and(|now| now != was)
+    }
+}
+
+/// Runs `ask` with an interrupt made from `away` (none if `away` is None). Returns
+/// its answer and why the interrupt fired, if it did.
+fn ask_with_away<T>(
+    away: Option<&AwayCheck>,
+    ask: impl FnOnce(Interrupt<'_>) -> T,
+) -> (T, Option<Away>) {
+    let fired = Cell::new(None);
+    let last = Cell::new(None);
+    let check = || match away.and_then(|a| a.poll(&last)) {
+        Some(why) => {
+            fired.set(Some(why));
+            true
+        }
+        None => false,
+    };
+    let interrupt: Interrupt<'_> = if away.is_some() { Some(&check) } else { None };
+    let answer = ask(interrupt);
+    (answer, fired.get())
+}
+
 /// The terminal as a command inside the shell sees it. While the vault is open,
 /// every prompt gives up after the auto-lock time, counted from when the prompt
-/// starts, so a user who keeps answering is never cut off. No `Debug`: it is only a
-/// view of the terminal.
+/// starts, so a user who keeps answering is never cut off. While lock-on-sleep is
+/// armed, every prompt also stops when the computer has slept or another user took
+/// the screen. No `Debug`: it is only a view of the terminal.
 struct IdleTerm<'t> {
     term: &'t mut dyn Terminal,
     /// The auto-lock time while the vault is open; None while it is locked.
     limit: Option<Duration>,
     /// Set when a prompt's idle deadline passed. The command saw a cancel.
     timed_out: bool,
+    /// The sleep and console checks; None when lock-on-sleep is not armed for this
+    /// line.
+    away: Option<AwayCheck>,
+    /// Set when a prompt stopped because the user went away. The command saw a
+    /// cancel.
+    went_away: Option<Away>,
 }
 
 impl IdleTerm<'_> {
+    /// Runs `ask` with this line's away interrupt (if armed). Returns its answer and
+    /// why the interrupt fired, if it did.
+    fn with_interrupt<T>(
+        &mut self,
+        ask: impl FnOnce(&mut dyn Terminal, Interrupt<'_>) -> T,
+    ) -> (T, Option<Away>) {
+        let term = &mut *self.term;
+        ask_with_away(self.away.as_ref(), |interrupt| ask(term, interrupt))
+    }
+
+    /// The away interrupt fired: note why and cancel the command. Whatever came back
+    /// is dropped (and wiped).
+    fn away_cancel<T>(&mut self, why: Away) -> Result<T, TtyError> {
+        self.went_away = Some(why);
+        Err(TtyError::Cancelled)
+    }
+
     /// The idle deadline for a prompt that starts now.
     fn idle_deadline(&self) -> Option<Instant> {
         self.limit.map(|limit| Instant::now() + limit)
@@ -242,10 +370,15 @@ impl Terminal for IdleTerm<'_> {
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
         let idle = self.idle_deadline();
-        let answer = self
-            .term
-            .secret_until(prompt, max_bytes, earlier(deadline, idle))?;
-        self.ended(answer, deadline, idle)
+        let until = earlier(deadline, idle);
+        let (answer, fired) = self.with_interrupt(|term, interrupt| {
+            term.secret_interruptible(prompt, max_bytes, until, interrupt)
+        });
+        if let Some(why) = fired {
+            drop(answer);
+            return self.away_cancel(why);
+        }
+        self.ended(answer?, deadline, idle)
     }
 
     fn line(
@@ -255,12 +388,24 @@ impl Terminal for IdleTerm<'_> {
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
         let idle = self.idle_deadline();
-        let answer = self.term.line(prompt, max_bytes, earlier(deadline, idle))?;
-        self.ended(answer, deadline, idle)
+        let until = earlier(deadline, idle);
+        let (answer, fired) = self.with_interrupt(|term, interrupt| {
+            term.line_interruptible(prompt, max_bytes, until, interrupt)
+        });
+        if let Some(why) = fired {
+            drop(answer);
+            return self.away_cancel(why);
+        }
+        self.ended(answer?, deadline, idle)
     }
 
     fn wait_for_key(&mut self, until: Instant) -> Result<bool, TtyError> {
-        self.term.wait_for_key(until)
+        let (pressed, fired) = self
+            .with_interrupt(|term, interrupt| term.wait_for_key_interruptible(until, interrupt));
+        if let Some(why) = fired {
+            return self.away_cancel(why);
+        }
+        pressed
     }
 }
 
@@ -273,11 +418,9 @@ fn earlier(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
 
 /// A copied value waiting to be cleared from the clipboard. No `Debug`: it holds the
 /// value.
-struct PendingClear {
+struct Pending {
     clip: Box<dyn Clip>,
-    value: Zeroizing<String>,
-    /// When to clear it, on the shell's clock.
-    at: Duration,
+    clear: PendingClear,
 }
 
 /// What the loop does after a line.
@@ -300,13 +443,19 @@ enum LockReason {
 /// The shell's state. No `Debug`: it holds the session and maybe a copied value.
 struct Shell<'a> {
     session: Session<FsStore>,
-    /// The shell's own clock, for prompt deadlines. The session keeps its own and
-    /// decides on its own whether the idle time has passed.
-    clock: Box<dyn Clock>,
+    /// The shell's own clock, for prompt deadlines and the sleep check. The session
+    /// keeps its own and decides on its own whether the idle time has passed. Shared
+    /// with each line's [`IdleTerm`], which asks it while a prompt waits.
+    clock: Rc<dyn Clock>,
+    /// Both clocks as of the last wake, to tell that the computer slept since.
+    watch: SleepWatch,
+    /// `/dev/console`'s owner at shell start or the last unlock; None if it couldn't
+    /// be read.
+    console_owner: Option<u32>,
     env: &'a Env,
     /// When the last line was read, on the shell's clock.
     last_active: Duration,
-    pending: Option<PendingClear>,
+    pending: Option<Pending>,
 }
 
 /// Runs `holm shell` on the vault at `path` and returns the exit code: 0 after
@@ -337,10 +486,12 @@ pub(crate) fn shell(
     if !vault::exists(path) {
         return Err(CliError::NoVault);
     }
-    let clock = (env.clock)();
+    let clock: Rc<dyn Clock> = Rc::from((env.clock)());
     let mut sh = Shell {
         session: Session::new(FsStore::new(path), (env.clock)()),
         last_active: clock.monotonic(),
+        watch: SleepWatch::new(clock.as_ref()),
+        console_owner: (env.console_owner)(),
         clock,
         env,
         pending: None,
@@ -367,8 +518,15 @@ impl Shell<'_> {
             } else {
                 LOCKED_PROMPT
             };
-            let read = term.line(prompt, MAX_SHELL_LINE_BYTES, self.deadline());
-            self.on_wake(err)?;
+            let away = self.sleep_armed().then(|| self.away_check());
+            let deadline = self.deadline();
+            let (read, fired) = ask_with_away(away.as_ref(), |interrupt| {
+                term.line_interruptible(prompt, MAX_SHELL_LINE_BYTES, deadline, interrupt)
+            });
+            // A sleep or user switch lock, an idle lock or a clipboard clear, before
+            // the line counts. A line stopped by the away check came back as `Ok(None)`
+            // and was already wiped.
+            self.on_wake(err, fired)?;
             let line = match read {
                 // The deadline passed; `on_wake` did what was due.
                 Ok(None) => continue,
@@ -449,7 +607,15 @@ impl Shell<'_> {
             },
         };
         let failed = result.is_err();
-        if term.timed_out {
+        if let Some(why) = term.went_away {
+            // The computer slept or another user took the screen at one of the
+            // command's prompts. Lock now; the lock message says why the command
+            // stopped, so its cancel is not printed.
+            self.away_lock(why, err)?;
+            if !matches!(result, Err(CliError::Cancelled)) {
+                report(result, err)?;
+            }
+        } else if term.timed_out {
             // The user walked away at one of the command's prompts. Lock now, before
             // `after_line` counts the line as activity. The lock message says why
             // the command stopped, so its cancel is not printed.
@@ -507,6 +673,8 @@ impl Shell<'_> {
             Command::Add(args) => write::add_to(session, args, term, out),
             Command::Edit(args) => write::edit_in(session, args, term, out),
             Command::Rm(args) => write::rm_in(session, &args, term, out),
+            Command::Restore(args) => write::restore_in(session, &args, out),
+            Command::EmptyTrash => write::empty_trash_in(session, term, out),
             Command::Passwd => write::passwd_in(session, self.env, term, out, err),
             Command::Import(args) => {
                 let batch = transfer::read_import(&args)?;
@@ -514,7 +682,7 @@ impl Shell<'_> {
             }
             Command::Export(args) => {
                 let file = transfer::export_target(&args)?;
-                transfer::export_to(session, &file, args.backup, term, out, err)
+                transfer::export_to(session, &file, args.backup, args.format, term, out, err)
             }
         }
     }
@@ -532,6 +700,10 @@ impl Shell<'_> {
         }
         if vault::unlock_once(&mut self.session, term)? {
             self.last_active = self.clock.monotonic();
+            // A sleep before this unlock has nothing left to lock, and whoever owns
+            // the console now is the one the password was typed for.
+            self.watch.mark(self.clock.as_ref());
+            self.console_owner = (self.env.console_owner)();
         } else {
             writeln!(err, "{WRONG_PASSWORD}")?;
         }
@@ -553,7 +725,15 @@ impl Shell<'_> {
         }
         if self.session.is_dirty() && self.session.save().is_err() {
             writeln!(err, "holm: {}", CliError::NotSaved)?;
-            match term.line(DISCARD_PROMPT, MAX_LINE_BYTES, None) {
+            let answer = term.line(DISCARD_PROMPT, MAX_LINE_BYTES, None);
+            if let Some(why) = term.went_away {
+                // The computer slept or another user took the screen at this prompt:
+                // an away lock, which discards without asking.
+                drop(answer);
+                self.away_lock(why, err)?;
+                return Ok(true);
+            }
+            match answer {
                 Ok(Some(typed)) if typed.trim() == "discard" => {}
                 // Nobody answered within the auto-lock time: an idle lock, which
                 // discards without asking.
@@ -582,16 +762,26 @@ impl Shell<'_> {
         Ok(true)
     }
 
-    /// After a prompt returns: an idle lock if the time has passed, then a clipboard
-    /// clear if one is due.
-    fn on_wake(&mut self, err: &mut dyn Write) -> Result<(), CliError> {
+    /// After a prompt returns: an away lock if the prompt's interrupt `fired` (its
+    /// answer counts, even if the clocks no longer show the sleep) or, if it didn't,
+    /// if the computer slept or the console changed owner since (and `lock_on_sleep`
+    /// is on); then an idle lock if the time has passed; then a clipboard clear if one
+    /// is due.
+    fn on_wake(&mut self, err: &mut dyn Write, fired: Option<Away>) -> Result<(), CliError> {
+        let why = fired.or_else(|| self.away_check().now());
+        self.watch.mark(self.clock.as_ref());
+        if let Some(why) = why
+            && self.lock_on_sleep()
+        {
+            self.away_lock(why, err)?;
+        }
         if self.session.idle_expired() {
             self.idle_lock(err)?;
         }
         if self
             .pending
             .as_ref()
-            .is_some_and(|p| self.clock.monotonic() >= p.at)
+            .is_some_and(|p| p.clear.is_due(self.clock.as_ref()))
         {
             self.clear_clipboard(err)?;
         }
@@ -617,8 +807,46 @@ impl Shell<'_> {
         Ok(())
     }
 
+    /// The away lock, after a sleep or a user switch: clears the clipboard, then locks
+    /// and says why. Like the idle lock, it never waits and never asks; unsaved changes
+    /// are dropped. A locked vault only has its clipboard value cleared.
+    fn away_lock(&mut self, why: Away, err: &mut dyn Write) -> Result<(), CliError> {
+        self.watch.mark(self.clock.as_ref());
+        self.clear_clipboard(err)?;
+        if !self.session.is_unlocked() {
+            return Ok(());
+        }
+        let outcome = self.session.lock();
+        let tail = if outcome.discarded_unsaved {
+            DISCARDED
+        } else {
+            ""
+        };
+        let message = match why {
+            Away::Slept => SLEEP_LOCKED,
+            Away::UserChanged => USER_LOCKED,
+        };
+        writeln!(err, "{message}{tail}")?;
+        Ok(())
+    }
+
+    /// The vault's `lock_on_sleep`. While locked the setting can't be read, so it
+    /// counts as on: then the sleep check can only clear a waiting clipboard value.
+    fn lock_on_sleep(&self) -> bool {
+        self.session.settings().map_or(true, |s| s.lock_on_sleep)
+    }
+
+    /// Whether prompts should stop when the computer has slept: `lock_on_sleep` is
+    /// on and there is something to protect (an open vault or a clipboard value).
+    /// Otherwise a prompt waits as before, and a sleep is still noticed on the next
+    /// line.
+    fn sleep_armed(&self) -> bool {
+        self.lock_on_sleep() && (self.session.is_unlocked() || self.pending.is_some())
+    }
+
     /// `term` for a command's own prompts: while the vault is open, each one gives
-    /// up after the auto-lock time.
+    /// up after the auto-lock time, and while lock-on-sleep is armed, each one stops
+    /// when the computer has slept.
     fn idle_term<'t>(&self, term: &'t mut dyn Terminal) -> IdleTerm<'t> {
         let limit = self
             .session
@@ -628,6 +856,18 @@ impl Shell<'_> {
             term,
             limit,
             timed_out: false,
+            away: self.sleep_armed().then(|| self.away_check()),
+            went_away: None,
+        }
+    }
+
+    /// The sleep and console checks as of now, for one prompt or one line.
+    fn away_check(&self) -> AwayCheck {
+        AwayCheck {
+            clock: Rc::clone(&self.clock),
+            watch: self.watch,
+            console: Rc::clone(&self.env.console_owner),
+            owner: self.console_owner,
         }
     }
 
@@ -670,10 +910,9 @@ impl Shell<'_> {
         err: &mut dyn Write,
     ) -> Result<(), CliError> {
         clip.set(&value).map_err(|_| CliError::CopyFailed)?;
-        self.pending = Some(PendingClear {
+        self.pending = Some(Pending {
             clip,
-            value,
-            at: self.clock.monotonic() + Duration::from_secs(u64::from(secs)),
+            clear: PendingClear::new(value, secs, self.clock.as_ref()),
         });
         writeln!(err, "Copied. Holm clears the clipboard in {secs} seconds.")?;
         Ok(())
@@ -685,7 +924,7 @@ impl Shell<'_> {
         let Some(mut p) = self.pending.take() else {
             return Ok(());
         };
-        match copy::clear_copied(p.clip.as_mut(), &p.value) {
+        match copy::clear_copied(p.clip.as_mut(), p.clear.value()) {
             Ok(said) => writeln!(err, "{said}")?,
             Err(e) => writeln!(err, "holm: {e}")?,
         }
@@ -707,7 +946,7 @@ impl Shell<'_> {
             .session
             .is_unlocked()
             .then(|| self.last_active + Duration::from_secs(u64::from(self.auto_lock_secs())));
-        let clear = self.pending.as_ref().map(|p| p.at);
+        let clear = self.pending.as_ref().map(|p| p.clear.due());
         // The earlier of the two, or None if neither is set.
         let target = idle.into_iter().chain(clear).min()?;
         let wait = target.saturating_sub(self.clock.monotonic()).max(MIN_WAIT);
@@ -763,7 +1002,85 @@ fn span(secs: u32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use holm_core::item::Timestamp;
+
     use super::*;
+
+    /// A clock whose two halves move together by hand (no sleep), in milliseconds.
+    #[derive(Clone, Default)]
+    struct StepClock(Arc<AtomicU64>);
+
+    impl StepClock {
+        fn advance_ms(&self, ms: u64) {
+            self.0.fetch_add(ms, Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for StepClock {
+        fn now_unix(&self) -> Timestamp {
+            let secs = self.0.load(Ordering::SeqCst) / 1000;
+            Timestamp(1_800_000_000 + i64::try_from(secs).unwrap())
+        }
+
+        fn monotonic(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::SeqCst))
+        }
+    }
+
+    fn check(clock: &StepClock, reads: &Rc<Cell<u32>>, owner: u32) -> AwayCheck {
+        let reads = Rc::clone(reads);
+        let console: Rc<dyn Fn() -> Option<u32>> = Rc::new(move || {
+            reads.set(reads.get() + 1);
+            Some(owner)
+        });
+        AwayCheck {
+            clock: Rc::new(clock.clone()),
+            watch: SleepWatch::new(clock),
+            console,
+            owner: Some(501),
+        }
+    }
+
+    #[test]
+    fn poll_reads_the_console_at_most_once_a_second() {
+        let clock = StepClock::default();
+        let reads = Rc::new(Cell::new(0));
+        let away = check(&clock, &reads, 501);
+        let last = Cell::new(None);
+        // Ten polls 0.1 s apart: one read at the first, none after.
+        for _ in 0..10 {
+            assert_eq!(away.poll(&last), None);
+            clock.advance_ms(100);
+        }
+        assert_eq!(reads.get(), 1);
+        // A second after the first read, it reads again.
+        assert_eq!(away.poll(&last), None);
+        assert_eq!(reads.get(), 2);
+    }
+
+    #[test]
+    fn poll_sees_a_new_console_owner() {
+        let clock = StepClock::default();
+        let reads = Rc::new(Cell::new(0));
+        let away = check(&clock, &reads, 0);
+        assert_eq!(away.poll(&Cell::new(None)), Some(Away::UserChanged));
+        assert_eq!(away.now(), Some(Away::UserChanged));
+    }
+
+    #[test]
+    fn unreadable_owner_at_start_never_changes() {
+        let clock = StepClock::default();
+        let reads = Rc::new(Cell::new(0));
+        let away = AwayCheck {
+            owner: None,
+            ..check(&clock, &reads, 0)
+        };
+        assert_eq!(away.now(), None);
+        assert_eq!(reads.get(), 0);
+    }
 
     #[test]
     fn span_reads_as_minutes_when_whole() {

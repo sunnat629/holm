@@ -4,10 +4,18 @@
 //! [`RowProblem`], which names the problem and never a value. Holm never guesses
 //! where a secret goes: a phrase comes only from the `recovery` column, and a secret
 //! cell the row's type does not use is an error, not silently dropped.
+//!
+//! Custom fields are four cells a slot (`label`, `kind`, `value`, `expiry`), packed
+//! from slot 1. A later slot filled while an earlier one is empty is a row problem.
+//! Kind and date cells are trimmed, then checked. A text or secret value is moved
+//! out of its cell with no second copy.
 
+use crate::fields::{
+    CalendarDate, CustomField, FieldKind, FieldValue, codes_from_cell, parse_date, try_field,
+};
 use crate::item::{ItemData, ItemInput, Timestamp};
 use crate::plain::Cell;
-use crate::rules::MAX_URLS;
+use crate::rules::{MAX_CUSTOM_FIELDS, MAX_URLS};
 use crate::text::{GatedSecret, SecretText, Text};
 
 use super::{Dialect, ImportRow, RowProblem};
@@ -29,10 +37,54 @@ pub(super) enum Col {
     Favourite,
     Created,
     Updated,
+    Field1Label,
+    Field1Kind,
+    Field1Value,
+    Field1Expiry,
+    Field2Label,
+    Field2Kind,
+    Field2Value,
+    Field2Expiry,
+    Field3Label,
+    Field3Kind,
+    Field3Value,
+    Field3Expiry,
+    Field4Label,
+    Field4Kind,
+    Field4Value,
+    Field4Expiry,
+    Field5Label,
+    Field5Kind,
+    Field5Value,
+    Field5Expiry,
+    Field6Label,
+    Field6Kind,
+    Field6Value,
+    Field6Expiry,
+    Field7Label,
+    Field7Kind,
+    Field7Value,
+    Field7Expiry,
+    Field8Label,
+    Field8Kind,
+    Field8Value,
+    Field8Expiry,
+    Field9Label,
+    Field9Kind,
+    Field9Value,
+    Field9Expiry,
+    Field10Label,
+    Field10Kind,
+    Field10Value,
+    Field10Expiry,
 }
 
-/// How many Holm columns there are.
-const COLS: usize = 14;
+/// How many Holm columns there are. The first 14 stay the built-in columns.
+const COLS: usize = 54;
+
+const _: () = assert!(COLS <= super::MAX_IMPORT_COLUMNS);
+const _: () = assert!((Col::Field1Label as usize) == 14);
+const _: () = assert!((Col::Field10Expiry as usize) == COLS - 1);
 
 /// Every header name Holm reads, with its aliases. `canonical` is the name the
 /// header map is keyed by, so `url` and `website` are the same column.
@@ -58,7 +110,7 @@ const fn browser(name: &'static str) -> Name {
     }
 }
 
-const NAMES: [Name; 26] = [
+const NAMES: [Name; 66] = [
     holm("title", "title", Col::Title),
     holm("username", "username", Col::Username),
     holm("password", "password", Col::Password),
@@ -76,6 +128,46 @@ const NAMES: [Name; 26] = [
     holm("favourite", "favourite", Col::Favourite),
     holm("created", "created", Col::Created),
     holm("updated", "updated", Col::Updated),
+    holm("field1_label", "field1_label", Col::Field1Label),
+    holm("field1_kind", "field1_kind", Col::Field1Kind),
+    holm("field1_value", "field1_value", Col::Field1Value),
+    holm("field1_expiry", "field1_expiry", Col::Field1Expiry),
+    holm("field2_label", "field2_label", Col::Field2Label),
+    holm("field2_kind", "field2_kind", Col::Field2Kind),
+    holm("field2_value", "field2_value", Col::Field2Value),
+    holm("field2_expiry", "field2_expiry", Col::Field2Expiry),
+    holm("field3_label", "field3_label", Col::Field3Label),
+    holm("field3_kind", "field3_kind", Col::Field3Kind),
+    holm("field3_value", "field3_value", Col::Field3Value),
+    holm("field3_expiry", "field3_expiry", Col::Field3Expiry),
+    holm("field4_label", "field4_label", Col::Field4Label),
+    holm("field4_kind", "field4_kind", Col::Field4Kind),
+    holm("field4_value", "field4_value", Col::Field4Value),
+    holm("field4_expiry", "field4_expiry", Col::Field4Expiry),
+    holm("field5_label", "field5_label", Col::Field5Label),
+    holm("field5_kind", "field5_kind", Col::Field5Kind),
+    holm("field5_value", "field5_value", Col::Field5Value),
+    holm("field5_expiry", "field5_expiry", Col::Field5Expiry),
+    holm("field6_label", "field6_label", Col::Field6Label),
+    holm("field6_kind", "field6_kind", Col::Field6Kind),
+    holm("field6_value", "field6_value", Col::Field6Value),
+    holm("field6_expiry", "field6_expiry", Col::Field6Expiry),
+    holm("field7_label", "field7_label", Col::Field7Label),
+    holm("field7_kind", "field7_kind", Col::Field7Kind),
+    holm("field7_value", "field7_value", Col::Field7Value),
+    holm("field7_expiry", "field7_expiry", Col::Field7Expiry),
+    holm("field8_label", "field8_label", Col::Field8Label),
+    holm("field8_kind", "field8_kind", Col::Field8Kind),
+    holm("field8_value", "field8_value", Col::Field8Value),
+    holm("field8_expiry", "field8_expiry", Col::Field8Expiry),
+    holm("field9_label", "field9_label", Col::Field9Label),
+    holm("field9_kind", "field9_kind", Col::Field9Kind),
+    holm("field9_value", "field9_value", Col::Field9Value),
+    holm("field9_expiry", "field9_expiry", Col::Field9Expiry),
+    holm("field10_label", "field10_label", Col::Field10Label),
+    holm("field10_kind", "field10_kind", Col::Field10Kind),
+    holm("field10_value", "field10_value", Col::Field10Value),
+    holm("field10_expiry", "field10_expiry", Col::Field10Expiry),
     // Browser columns that are not Holm columns.
     browser("name"),
     browser("note"),
@@ -107,9 +199,16 @@ pub(super) fn holm_col(name: &str) -> Option<Col> {
 
 /// The cells of one row, one per Holm column, moved out of the reader's buffer.
 /// Empty cells are empty strings. No `Debug`: it holds secrets.
-#[derive(Default)]
 pub(super) struct RawRow {
     cells: [Cell; COLS],
+}
+
+impl Default for RawRow {
+    fn default() -> Self {
+        Self {
+            cells: core::array::from_fn(|_| Cell::default()),
+        }
+    }
 }
 
 impl RawRow {
@@ -210,6 +309,125 @@ const FIELD_COLS: [Col; 8] = [
     Col::Memo,
     Col::Recovery,
 ];
+
+/// Custom-field cells in slot order: label, kind, value, expiry, slots 1 through 10.
+const FIELD_PARTS: [Col; MAX_CUSTOM_FIELDS * 4] = [
+    Col::Field1Label,
+    Col::Field1Kind,
+    Col::Field1Value,
+    Col::Field1Expiry,
+    Col::Field2Label,
+    Col::Field2Kind,
+    Col::Field2Value,
+    Col::Field2Expiry,
+    Col::Field3Label,
+    Col::Field3Kind,
+    Col::Field3Value,
+    Col::Field3Expiry,
+    Col::Field4Label,
+    Col::Field4Kind,
+    Col::Field4Value,
+    Col::Field4Expiry,
+    Col::Field5Label,
+    Col::Field5Kind,
+    Col::Field5Value,
+    Col::Field5Expiry,
+    Col::Field6Label,
+    Col::Field6Kind,
+    Col::Field6Value,
+    Col::Field6Expiry,
+    Col::Field7Label,
+    Col::Field7Kind,
+    Col::Field7Value,
+    Col::Field7Expiry,
+    Col::Field8Label,
+    Col::Field8Kind,
+    Col::Field8Value,
+    Col::Field8Expiry,
+    Col::Field9Label,
+    Col::Field9Kind,
+    Col::Field9Value,
+    Col::Field9Expiry,
+    Col::Field10Label,
+    Col::Field10Kind,
+    Col::Field10Value,
+    Col::Field10Expiry,
+];
+
+/// `text`, `secret`, `multiline`, `date` or `codes`, any ASCII case. Anything else is
+/// absent.
+fn field_kind(cell: &str) -> Option<FieldKind> {
+    const KINDS: [(&str, FieldKind); 5] = [
+        ("text", FieldKind::Text),
+        ("secret", FieldKind::Secret),
+        ("multiline", FieldKind::MultilineSecret),
+        ("date", FieldKind::Date),
+        ("codes", FieldKind::RecoveryCodes),
+    ];
+    let cell = cell.trim();
+    KINDS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(cell))
+        .map(|(_, kind)| *kind)
+}
+
+/// Blank (after trim) is no reminder. Anything else must be `YYYY-MM-DD`.
+fn field_expiry(cell: &str) -> Result<Option<CalendarDate>, RowProblem> {
+    let cell = cell.trim();
+    if cell.is_empty() {
+        return Ok(None);
+    }
+    parse_date(cell).map(Some).ok_or(RowProblem::BadDate)
+}
+
+/// A date value must be `YYYY-MM-DD` after trim. An empty value is a bad date.
+fn date_value(cell: &str) -> Result<CalendarDate, RowProblem> {
+    parse_date(cell.trim()).ok_or(RowProblem::BadDate)
+}
+
+/// Packed custom fields for a Holm row. Browser rows do not call this.
+///
+/// An empty slot (no cell has anything but whitespace) is absent. A filled slot
+/// after an empty one is [`RowProblem::FieldGap`]. A missing or unknown kind is
+/// [`RowProblem::BadFieldKind`] before the value is moved. Text and secret bytes
+/// are moved as stored. They are not trimmed.
+fn field_slots(raw: &mut RawRow) -> Result<Vec<CustomField>, RowProblem> {
+    let mut out = Vec::new();
+    let mut gap = false;
+    for slot in 0..MAX_CUSTOM_FIELDS {
+        let base = slot * 4;
+        let label_col = FIELD_PARTS[base];
+        let kind_col = FIELD_PARTS[base + 1];
+        let value_col = FIELD_PARTS[base + 2];
+        let expiry_col = FIELD_PARTS[base + 3];
+        let any = raw.filled(label_col)
+            || raw.filled(kind_col)
+            || raw.filled(value_col)
+            || raw.filled(expiry_col);
+        if !any {
+            gap = true;
+            continue;
+        }
+        if gap {
+            return Err(RowProblem::FieldGap);
+        }
+        let kind = field_kind(raw.get(kind_col)).ok_or(RowProblem::BadFieldKind)?;
+        let expiry = field_expiry(raw.get(expiry_col))?;
+        let value = match kind {
+            FieldKind::Date => FieldValue::Date(date_value(raw.get(value_col))?),
+            FieldKind::Text => FieldValue::Text(raw.text(value_col)),
+            FieldKind::Secret => FieldValue::Secret(raw.secret(value_col)),
+            FieldKind::MultilineSecret => FieldValue::MultilineSecret(raw.secret(value_col)),
+            // Each code moves into its own `SecretText`. The raw cell is wiped on drop.
+            FieldKind::RecoveryCodes => FieldValue::RecoveryCodes(
+                codes_from_cell(raw.get(value_col)).map_err(RowProblem::Field)?,
+            ),
+        };
+        let label = raw.text(label_col);
+        out.push(try_field(label, value, expiry).map_err(RowProblem::Field)?);
+    }
+    Ok(out)
+}
 
 /// `true`, `false` (ASCII case-insensitive) or blank (= false).
 fn favourite(s: &str) -> Result<bool, RowProblem> {
@@ -333,7 +551,13 @@ pub(super) fn build(mut raw: RawRow, dialect: Dialect) -> Result<ImportRow, RowP
             body: raw.secret(Col::Notes),
         },
     };
+    let fields = if dialect == Dialect::Holm {
+        field_slots(&mut raw)?
+    } else {
+        Vec::new()
+    };
     let input = ItemInput {
+        fields,
         title,
         category: None,
         favourite,

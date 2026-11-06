@@ -14,26 +14,9 @@
 
 use core::fmt;
 
-/// Why the clipboard can't be used. No library text is kept.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClipboardError {
-    /// There is no clipboard to talk to on this system, or it could not be opened.
-    Unavailable,
-    /// The clipboard was there but did not take the text.
-    Refused,
-}
+use crate::clip_clear::Clip;
 
-/// What [`ConcealedClipboard::check`] found on the clipboard.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClipCheck {
-    /// Exactly the text asked about.
-    Holds,
-    /// Other text, something that is not text, or nothing.
-    Other,
-    /// The clipboard could not be read, so what it holds is unknown. A caller that
-    /// put a secret there clears it anyway.
-    Unreadable,
-}
+pub use crate::clip_clear::{ClipCheck, ClipboardError};
 
 /// The open system clipboard.
 pub struct ConcealedClipboard {
@@ -96,6 +79,13 @@ mod imp {
             }
         }
 
+        /// The clipboard's text, in a buffer that wipes itself when dropped. `None`
+        /// when it is empty, holds no text, or cannot be read. The `String` moves
+        /// into the buffer with no copy in between.
+        pub fn get_text(&mut self) -> Option<Zeroizing<String>> {
+            self.inner.get().text().ok().map(Zeroizing::new)
+        }
+
         /// Empties the clipboard. A failure is not reported here; callers check
         /// [`ConcealedClipboard::check`] afterwards.
         pub fn clear(&mut self) {
@@ -106,6 +96,8 @@ mod imp {
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
+    use zeroize::Zeroizing;
+
     use super::{ClipCheck, ClipboardError, ConcealedClipboard};
 
     impl ConcealedClipboard {
@@ -131,9 +123,28 @@ mod imp {
         }
 
         /// Never called: no value of this type exists here.
+        pub fn get_text(&mut self) -> Option<Zeroizing<String>> {
+            match self.never {}
+        }
+
+        /// Never called: no value of this type exists here.
         pub fn clear(&mut self) {
             match self.never {}
         }
+    }
+}
+
+impl Clip for ConcealedClipboard {
+    fn set(&mut self, text: &str) -> Result<(), ClipboardError> {
+        ConcealedClipboard::set(self, text)
+    }
+
+    fn check(&mut self, text: &str) -> ClipCheck {
+        ConcealedClipboard::check(self, text)
+    }
+
+    fn clear(&mut self) {
+        ConcealedClipboard::clear(self);
     }
 }
 

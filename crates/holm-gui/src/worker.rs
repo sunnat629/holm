@@ -13,17 +13,16 @@ use std::thread;
 
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::import::{
-    ImportBatch, ImportError, ImportFormat, ImportPreview, ImportReport, MAX_IMPORT_BYTES,
-};
+use holm_core::fields::{CustomField, FieldValue, RecoveryCode, try_field};
+use holm_core::import::{ImportBatch, ImportPreview, ImportReport};
 use holm_core::item::{ItemData, ItemId, ItemInput};
+use holm_core::rules::FieldError;
 use holm_core::session::Session;
-use holm_core::store::StoreError;
-use holm_core::text::SecretText;
+use holm_core::text::{SecretText, Text};
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
 use holm_platform::fs_store::FsStore;
-use holm_platform::private_file::{read_capped, write_new_private_file};
+use holm_platform::transfer::{self, TransferError};
 
 /// One piece of work for the worker. `Debug` names the kind only.
 pub enum Job {
@@ -33,8 +32,11 @@ pub enum Job {
     Unlock(MasterPassword),
     /// Add this item and save. The input moves in and is wiped on the worker.
     Add(ItemInput),
-    /// Replace this item's fields and save.
+    /// Replace this item's fields, custom fields included, and save.
     Update(ItemId, ItemInput),
+    /// Replace only this item's custom fields, and save. The fields move in and are
+    /// wiped on the worker.
+    SetFields(ItemId, Vec<CustomField>),
     /// Write the unsaved changes to disk.
     Save,
     /// Read and parse the import file at this path, and preview it. Nothing is added.
@@ -48,6 +50,18 @@ pub enum Job {
         /// The master password, checked on the worker and wiped there.
         password: MasterPassword,
     },
+    /// Write an encrypted backup of the vault to a new file.
+    Backup {
+        /// Where to write. It must not exist.
+        path: PathBuf,
+    },
+    /// Check the password, then hand back a copy of this recovery phrase.
+    RevealPhrase {
+        /// The recovery phrase item.
+        id: ItemId,
+        /// The master password, checked on the worker and wiped there.
+        password: MasterPassword,
+    },
 }
 
 impl Job {
@@ -58,11 +72,13 @@ impl Job {
             Job::Create(..) => JobKind::Create,
             Job::Unlock(_) => JobKind::Unlock,
             Job::Add(_) => JobKind::Add,
-            Job::Update(..) => JobKind::Update,
+            Job::Update(..) | Job::SetFields(..) => JobKind::Update,
             Job::Save => JobKind::Save,
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
             Job::Export { .. } => JobKind::Export,
+            Job::Backup { .. } => JobKind::Backup,
+            Job::RevealPhrase { .. } => JobKind::RevealPhrase,
         }
     }
 }
@@ -74,11 +90,14 @@ impl fmt::Debug for Job {
                 write!(f, "Job::{:?}(<password hidden>)", self.kind())
             }
             Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
+            Job::SetFields(..) => write!(f, "Job::SetFields(<item hidden>)"),
             Job::Save => write!(f, "Job::Save"),
             Job::PreviewImport(_) | Job::Import(_) => {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
             }
             Job::Export { .. } => write!(f, "Job::Export(<path and password hidden>)"),
+            Job::Backup { .. } => write!(f, "Job::Backup(<path hidden>)"),
+            Job::RevealPhrase { .. } => write!(f, "Job::RevealPhrase(<password hidden>)"),
         }
     }
 }
@@ -102,6 +121,10 @@ pub enum JobKind {
     Import,
     /// Writing the export file.
     Export,
+    /// Writing the encrypted backup file.
+    Backup,
+    /// Checking the password to show a recovery phrase.
+    RevealPhrase,
 }
 
 impl JobKind {
@@ -111,28 +134,9 @@ impl JobKind {
     pub fn is_transfer(self) -> bool {
         matches!(
             self,
-            JobKind::PreviewImport | JobKind::Import | JobKind::Export
+            JobKind::PreviewImport | JobKind::Import | JobKind::Export | JobKind::Backup
         )
     }
-}
-
-/// Why an import or export did not happen. A fixed shape: no path, no file content.
-#[derive(Debug, PartialEq, Eq)]
-pub enum TransferFail {
-    /// The import file does not exist.
-    NotFound,
-    /// The export path already exists, so nothing was written.
-    Exists,
-    /// The import file could not be read.
-    ReadFailed,
-    /// The export file could not be written.
-    WriteFailed,
-    /// The file is over the import size limit.
-    TooLarge,
-    /// The file was read but refused as a whole.
-    Import(ImportError),
-    /// The session refused (wrong password, throttled, locked, too many items, save error).
-    Core(CoreError),
 }
 
 /// How an import or export went. `Debug` shows counts only.
@@ -143,8 +147,10 @@ pub enum TransferResult {
     Imported(ImportReport),
     /// The export file was written.
     Exported,
+    /// The encrypted backup file was written.
+    BackedUp,
     /// It did not happen.
-    Failed(TransferFail),
+    Failed(TransferError),
 }
 
 impl fmt::Debug for TransferResult {
@@ -153,6 +159,7 @@ impl fmt::Debug for TransferResult {
             TransferResult::Previewed(..) => write!(f, "Previewed"),
             TransferResult::Imported(r) => write!(f, "Imported({})", r.imported),
             TransferResult::Exported => write!(f, "Exported"),
+            TransferResult::BackedUp => write!(f, "BackedUp"),
             TransferResult::Failed(e) => write!(f, "Failed({e:?})"),
         }
     }
@@ -173,6 +180,9 @@ pub struct WorkDone {
     pub returned: Option<ItemInput>,
     /// The outcome of an import or export job. `None` for every other kind.
     pub transfer: Option<TransferResult>,
+    /// The recovery phrase a successful reveal hands back. Wipes itself on drop.
+    /// `None` for every other kind and for a failed reveal. Never in `Debug`.
+    pub phrase: Option<SecretText>,
 }
 
 impl fmt::Debug for WorkDone {
@@ -213,6 +223,7 @@ pub fn spawn(
             let mut added = None;
             let mut returned = None;
             let mut transfer = None;
+            let mut phrase = None;
             let result = match job {
                 Job::Create(password, params) => {
                     let result = session.create(&password, &params);
@@ -230,11 +241,30 @@ pub fn spawn(
                     keep_on_too_large(&result, backup, &mut returned);
                     result
                 }
-                Job::Update(id, input) => {
+                Job::Update(id, mut input) => {
+                    // The backup is taken first, so it holds the custom fields too.
                     let backup = backup_login(&input);
-                    let result = session.update_item(id, input);
+                    // `update_item` ignores `input.fields`: they are set afterwards.
+                    let fields = core::mem::take(&mut input.fields);
+                    let result = session.update_item(id, input).and_then(|()| {
+                        session.set_custom_fields(id, fields)?;
+                        if session.is_dirty() {
+                            session.save()
+                        } else {
+                            Ok(())
+                        }
+                    });
                     keep_on_too_large(&result, backup, &mut returned);
                     result
+                }
+                Job::SetFields(id, fields) => {
+                    session.set_custom_fields(id, fields).and_then(|()| {
+                        if session.is_dirty() {
+                            session.save()
+                        } else {
+                            Ok(())
+                        }
+                    })
                 }
                 Job::Save => session.save(),
                 Job::PreviewImport(path) => {
@@ -244,14 +274,34 @@ pub fn spawn(
                 Job::Import(batch) => {
                     transfer = Some(match session.import(*batch) {
                         Ok(report) => TransferResult::Imported(report),
-                        Err(e) => TransferResult::Failed(TransferFail::Core(e)),
+                        Err(e) => TransferResult::Failed(TransferError::Core(e)),
                     });
                     Ok(())
                 }
                 Job::Export { path, password } => {
-                    transfer = Some(export_file(&mut session, &path, &password));
+                    transfer = Some(
+                        match transfer::export_plain(&mut session, &password, &path) {
+                            Ok(_) => TransferResult::Exported,
+                            Err(e) => TransferResult::Failed(e),
+                        },
+                    );
                     drop(password);
                     Ok(())
+                }
+                Job::Backup { path } => {
+                    transfer = Some(match transfer::export_backup(&mut session, &path) {
+                        Ok(()) => TransferResult::BackedUp,
+                        Err(e) => TransferResult::Failed(e),
+                    });
+                    Ok(())
+                }
+                Job::RevealPhrase { id, password } => {
+                    // A wrong password counts toward the throttle inside the core.
+                    let result = session
+                        .reveal_phrase(id, &password)
+                        .map(|words| phrase = Some(SecretText::new(words.to_owned())));
+                    drop(password);
+                    result
                 }
             };
             // A send fails only if the app is gone; the session then drops here,
@@ -263,6 +313,7 @@ pub fn spawn(
                 added,
                 returned,
                 transfer,
+                phrase,
             });
         });
     // On a spawn error the closure, and with it `tx`, is already dropped.
@@ -270,54 +321,22 @@ pub fn spawn(
     rx
 }
 
-/// Reads the file (size capped before reading), parses it by extension and previews it.
+/// Reads and parses the file through the shared flow, then previews it.
 fn preview_file(session: &Session<FsStore>, path: &std::path::Path) -> TransferResult {
-    let fail = |e| TransferResult::Failed(e);
-    let bytes = match read_capped(path, MAX_IMPORT_BYTES) {
+    let batch = match transfer::read_import(path, None) {
         Ok(b) => b,
-        Err(StoreError::NotFound) => return fail(TransferFail::NotFound),
-        Err(StoreError::TooLarge) => return fail(TransferFail::TooLarge),
-        Err(_) => return fail(TransferFail::ReadFailed),
+        Err(e) => return TransferResult::Failed(e),
     };
-    let is_json = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
-    let format = if is_json {
-        ImportFormat::Json
-    } else {
-        ImportFormat::Csv
-    };
-    let batch = match holm_core::import::parse(&bytes, format) {
-        Ok(b) => b,
-        Err(e) => return fail(TransferFail::Import(e)),
-    };
-    drop(bytes);
     match session.preview_import(&batch) {
         Ok(preview) => TransferResult::Previewed(Box::new(batch), preview),
-        Err(e) => fail(TransferFail::Core(e)),
+        Err(e) => TransferResult::Failed(TransferError::Core(e)),
     }
 }
 
-/// Checks the password, builds the CSV and writes it to a new 0600 file.
-fn export_file(
-    session: &mut Session<FsStore>,
-    path: &std::path::Path,
-    password: &MasterPassword,
-) -> TransferResult {
-    let csv = match session.export_csv(password) {
-        Ok(c) => c,
-        Err(e) => return TransferResult::Failed(TransferFail::Core(e)),
-    };
-    match write_new_private_file(path, csv.expose()) {
-        Ok(()) => TransferResult::Exported,
-        Err(StoreError::AlreadyExists) => TransferResult::Failed(TransferFail::Exists),
-        Err(_) => TransferResult::Failed(TransferFail::WriteFailed),
-    }
-}
-
-/// A zeroizing copy of a login input, so it survives core consuming the original.
-/// `None` for other item kinds (the GUI only builds logins).
+/// A zeroizing copy of a login input, custom fields included, so it survives core
+/// consuming the original. `None` for other item kinds (the GUI only builds logins), and
+/// when a custom field breaks a field rule (core then refuses the input before any
+/// `TooLargeToSave`, so the backup would never be handed back).
 fn backup_login(input: &ItemInput) -> Option<ItemInput> {
     let ItemData::Login {
         username,
@@ -328,7 +347,14 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
     else {
         return None;
     };
+    let fields = input
+        .fields
+        .iter()
+        .map(copy_field)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
     Some(ItemInput {
+        fields,
         title: input.title.clone(),
         category: input.category,
         favourite: input.favourite,
@@ -339,6 +365,43 @@ fn backup_login(input: &ItemInput) -> Option<ItemInput> {
             notes: SecretText::new(notes.expose().to_owned()),
         },
     })
+}
+
+/// A wiping copy of one custom field. `CustomField` has no `Clone`, so the copy is
+/// rebuilt through `try_field`; a secret goes straight into a new `SecretText`.
+fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
+    copy_field_flipping(field, None)
+}
+
+/// [`copy_field`], with the `used` flag of the recovery code at `flip` inverted. `None`,
+/// or a field that holds no such code, gives an exact copy.
+pub(crate) fn copy_field_flipping(
+    field: &CustomField,
+    flip: Option<usize>,
+) -> Result<CustomField, FieldError> {
+    let value = match field.value() {
+        FieldValue::Text(text) => FieldValue::Text(text.clone()),
+        FieldValue::Secret(secret) => {
+            FieldValue::Secret(SecretText::new(secret.expose().to_owned()))
+        }
+        FieldValue::MultilineSecret(secret) => {
+            FieldValue::MultilineSecret(SecretText::new(secret.expose().to_owned()))
+        }
+        FieldValue::Date(date) => FieldValue::Date(*date),
+        FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+            codes
+                .iter()
+                .enumerate()
+                .map(|(i, code)| {
+                    RecoveryCode::new(
+                        SecretText::new(code.code().expose().to_owned()),
+                        code.used() ^ (flip == Some(i)),
+                    )
+                })
+                .collect(),
+        ),
+    };
+    try_field(Text::new(field.label().to_owned()), value, field.expiry())
 }
 
 /// Hands the backup back only when the change was undone for being too large. In every
@@ -380,6 +443,15 @@ mod tests {
             KdfParams::FLOOR,
         );
         assert_eq!(format!("{job:?}"), "Job::Create(<password hidden>)");
+        let job = Job::RevealPhrase {
+            id: ItemId::random().unwrap(),
+            password: MasterPassword::new("EXAMPLE-pw".to_owned()),
+        };
+        assert_eq!(format!("{job:?}"), "Job::RevealPhrase(<password hidden>)");
+        assert!(!job.kind().is_transfer());
+        let job = Job::SetFields(ItemId::random().unwrap(), Vec::new());
+        assert_eq!(format!("{job:?}"), "Job::SetFields(<item hidden>)");
+        assert_eq!(job.kind(), JobKind::Update);
     }
 
     #[test]
@@ -415,6 +487,7 @@ mod tests {
         use holm_core::item::ItemData;
         use holm_core::text::{SecretText, Text};
         ItemInput {
+            fields: Vec::new(),
             title: Text::new(title.to_owned()),
             category: None,
             favourite: false,
@@ -425,6 +498,61 @@ mod tests {
                 notes: SecretText::new(String::new()),
             },
         }
+    }
+
+    #[test]
+    fn backup_login_keeps_custom_fields() {
+        use holm_core::fields::{FieldValue, parse_date, try_field};
+        use holm_core::text::{SecretText, Text};
+
+        let mut input = login("With fields");
+        input.fields = vec![
+            try_field(
+                Text::new("PIN".to_owned()),
+                FieldValue::Secret(SecretText::new("EXAMPLE-field-secret".to_owned())),
+                parse_date("2026-11-05"),
+            )
+            .unwrap(),
+            try_field(
+                Text::new("SSH private key".to_owned()),
+                FieldValue::MultilineSecret(SecretText::new(
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nEXAMPLE\n".to_owned(),
+                )),
+                None,
+            )
+            .unwrap(),
+            try_field(
+                Text::new("Account".to_owned()),
+                FieldValue::Text(Text::new("public-note-EXAMPLE".to_owned())),
+                None,
+            )
+            .unwrap(),
+            try_field(
+                Text::new("Expiry".to_owned()),
+                FieldValue::Date(parse_date("2027-01-31").unwrap()),
+                None,
+            )
+            .unwrap(),
+        ];
+
+        let backup = backup_login(&input).expect("a login has a backup");
+        assert_eq!(backup.fields.len(), input.fields.len());
+        for (copy, original) in backup.fields.iter().zip(&input.fields) {
+            assert_eq!(copy.label(), original.label());
+            assert_eq!(copy.kind(), original.kind());
+            assert_eq!(copy.expiry(), original.expiry());
+            let same = match (copy.value(), original.value()) {
+                (FieldValue::Text(a), FieldValue::Text(b)) => a.as_str() == b.as_str(),
+                (FieldValue::Secret(a), FieldValue::Secret(b))
+                | (FieldValue::MultilineSecret(a), FieldValue::MultilineSecret(b)) => {
+                    a.expose() == b.expose()
+                }
+                (FieldValue::Date(a), FieldValue::Date(b)) => a == b,
+                _ => false,
+            };
+            assert!(same, "field {} changed", copy.label());
+        }
+        assert!(!format!("{:?}", backup.fields).contains("EXAMPLE"));
     }
 
     fn run(session: Session<FsStore>, job: Job) -> WorkDone {
@@ -459,5 +587,65 @@ mod tests {
             format!("{:?}", Job::Add(login("Secret title"))),
             "Job::Add(<item hidden>)"
         );
+    }
+
+    #[test]
+    fn update_job_keeps_and_sets_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Holm").join("holm.vault");
+        holm_platform::paths::ensure_vault_dir(&path).unwrap();
+        let mut session = Session::new(FsStore::new(path), Box::new(SystemClock::new()));
+        let password = MasterPassword::new("correct-Horse-battery-staple-EXAMPLE-9".to_owned());
+        session.create(&password, &KdfParams::FLOOR).unwrap();
+
+        let done = run(session, Job::Add(login("Server")));
+        let id = done.added.expect("an add returns the new id");
+
+        // An update sets new custom fields.
+        let mut input = login("Server");
+        input.fields = vec![
+            try_field(
+                Text::new("PIN".to_owned()),
+                FieldValue::Secret(SecretText::new("EXAMPLE-field-secret".to_owned())),
+                None,
+            )
+            .unwrap(),
+        ];
+        let done = run(done.session, Job::Update(id, input));
+        assert_eq!(done.kind, JobKind::Update);
+        assert_eq!(done.result, Ok(()));
+        assert!(done.returned.is_none());
+        assert!(!done.session.is_dirty(), "the fields are saved");
+        {
+            let item = done.session.item(id).unwrap();
+            assert_eq!(item.fields().len(), 1);
+            assert_eq!(item.fields()[0].label(), "PIN");
+            assert!(matches!(
+                item.fields()[0].value(),
+                FieldValue::Secret(s) if s.expose() == "EXAMPLE-field-secret"
+            ));
+        }
+
+        // An edit that sends the stored fields back keeps them.
+        let kept = done
+            .session
+            .item(id)
+            .unwrap()
+            .fields()
+            .iter()
+            .map(|f| copy_field(f).unwrap())
+            .collect::<Vec<_>>();
+        let mut input = login("Renamed");
+        input.fields = kept;
+        let done = run(done.session, Job::Update(id, input));
+        assert_eq!(done.result, Ok(()));
+        assert!(!done.session.is_dirty());
+        let item = done.session.item(id).unwrap();
+        assert_eq!(item.title(), "Renamed");
+        assert_eq!(item.fields().len(), 1, "an edit never drops a stored field");
+        assert!(matches!(
+            item.fields()[0].value(),
+            FieldValue::Secret(s) if s.expose() == "EXAMPLE-field-secret"
+        ));
     }
 }

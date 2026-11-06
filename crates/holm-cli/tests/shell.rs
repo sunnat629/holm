@@ -1,13 +1,16 @@
+#![forbid(unsafe_code)]
 //! `holm shell`: one unlocked session in one process, with idle auto-lock, one
 //! throttle and a clipboard clear that runs from the prompt's deadline.
 //!
 //! The fake terminal answers from a queue of steps. A `Deadline` step moves the fake
 //! clock forward and answers `Ok(None)`, as the real terminal does when the prompt's
-//! deadline passes before Enter.
+//! deadline passes before Enter. A `Sleep` step moves only the wall clock (the Mac
+//! slept, so the monotonic clock stood still), then asks the prompt's interrupt once,
+//! as the real terminal does on its next 0.1 s poll.
 
 mod common;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::Path;
@@ -20,10 +23,12 @@ use std::time::{Duration, Instant};
 use common::{ClipState, PW, Ran, env_with_clip, init, session, vault_dir};
 use holm_cli::Env;
 use holm_cli::shell::tokenize;
-use holm_cli::term::Terminal;
+use holm_cli::term::{Interrupt, Terminal};
 use holm_core::clock::Clock;
 use holm_core::item::{ItemData, ItemId, ItemInput, Timestamp};
+use holm_core::settings::Settings;
 use holm_core::text::{GatedSecret, SecretText, Text};
+use holm_crypto::MasterPassword;
 use holm_platform::tty::TtyError;
 use zeroize::Zeroizing;
 
@@ -32,6 +37,8 @@ const IDLE_LOCKED: &str = "Locked after 5 minutes without use.";
 const WRONG: &str = "That password didn't open this vault.";
 const PROMPT: &str = "holm> ";
 const LOCKED_PROMPT: &str = "holm (locked)> ";
+const SLEEP_LOCKED: &str = "Locked because the computer slept.";
+const USER_LOCKED: &str = "Locked because the Mac switched to another user or the login window.";
 
 /// A clock the test moves by hand. Clones share the same time, so the shell and its
 /// session see one clock.
@@ -46,6 +53,18 @@ impl TestClock {
         self.mono_secs.fetch_add(secs, Ordering::SeqCst);
         self.unix
             .fetch_add(i64::try_from(secs).unwrap(), Ordering::SeqCst);
+    }
+
+    /// Moves only the wall clock, as a sleep does: the monotonic clock stops.
+    fn sleep(&self, secs: u64) {
+        self.unix
+            .fetch_add(i64::try_from(secs).unwrap(), Ordering::SeqCst);
+    }
+
+    /// Moves only the wall clock back, as a clock correction does.
+    fn set_back(&self, secs: u64) {
+        self.unix
+            .fetch_sub(i64::try_from(secs).unwrap(), Ordering::SeqCst);
     }
 }
 
@@ -69,6 +88,18 @@ enum Step {
     Run(Box<dyn FnOnce()>),
     /// Ctrl-C at the prompt.
     CtrlC,
+    /// The computer sleeps this many seconds while the prompt waits with nothing
+    /// typed. If the prompt's interrupt fires, it answers `Ok(None)`; if not, the
+    /// next step answers, typed after waking.
+    Sleep(u64),
+    /// This text is typed (no Enter yet), then the computer sleeps this many seconds.
+    /// If the interrupt fires, the text is dropped and the prompt answers `Ok(None)`;
+    /// if not, Enter is pressed after waking and the text is the line.
+    TypedThenSleep(String, u64),
+    /// The computer sleeps this many seconds at a prompt with nothing typed, the
+    /// interrupt fires, and then the wall clock is set back by as much before the
+    /// prompt returns `Ok(None)`. Panics if the interrupt does not fire.
+    SleepThenSetBack(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +118,8 @@ struct ShellTerm {
     deadlines: Vec<Option<Instant>>,
     /// The deadline of every hidden prompt that was given one.
     secret_deadlines: Vec<Option<Instant>>,
+    /// How many prompts an interrupt stopped.
+    interrupted: usize,
 }
 
 impl ShellTerm {
@@ -97,6 +130,53 @@ impl ShellTerm {
             prompts: Vec::new(),
             deadlines: Vec::new(),
             secret_deadlines: Vec::new(),
+            interrupted: 0,
+        }
+    }
+
+    /// The answer to a prompt with this deadline and interrupt.
+    fn answer(
+        &mut self,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        loop {
+            match self.next() {
+                Some(Step::Text(t)) => return Ok(Some(Zeroizing::new(t))),
+                Some(Step::Deadline(secs)) => {
+                    assert!(deadline.is_some(), "a deadline step needs a deadline");
+                    self.clock.advance(secs);
+                    return Ok(None);
+                }
+                Some(Step::Sleep(secs)) => {
+                    self.clock.sleep(secs);
+                    if interrupt.is_some_and(|fired| fired()) {
+                        self.interrupted += 1;
+                        return Ok(None);
+                    }
+                }
+                Some(Step::SleepThenSetBack(secs)) => {
+                    self.clock.sleep(secs);
+                    assert!(
+                        interrupt.is_some_and(|fired| fired()),
+                        "the interrupt did not fire"
+                    );
+                    self.interrupted += 1;
+                    self.clock.set_back(secs);
+                    return Ok(None);
+                }
+                Some(Step::TypedThenSleep(typed, secs)) => {
+                    let typed = Zeroizing::new(typed);
+                    self.clock.sleep(secs);
+                    if interrupt.is_some_and(|fired| fired()) {
+                        self.interrupted += 1;
+                        return Ok(None);
+                    }
+                    return Ok(Some(typed));
+                }
+                Some(Step::CtrlC) => return Err(TtyError::Cancelled),
+                Some(Step::Run(_)) | None => return Err(TtyError::EndOfInput),
+            }
         }
     }
 
@@ -133,6 +213,9 @@ impl Terminal for ShellTerm {
         match self.next() {
             Some(Step::Text(t)) => Ok(Zeroizing::new(t)),
             Some(Step::Deadline(_)) => panic!("a secret prompt has no deadline"),
+            Some(Step::Sleep(_) | Step::TypedThenSleep(..) | Step::SleepThenSetBack(_)) => {
+                panic!("a plain secret prompt can't be interrupted")
+            }
             Some(Step::CtrlC) => Err(TtyError::Cancelled),
             Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
         }
@@ -141,47 +224,61 @@ impl Terminal for ShellTerm {
     fn secret_until(
         &mut self,
         prompt: &str,
-        _max_bytes: usize,
+        max_bytes: usize,
         deadline: Option<Instant>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
-        self.prompts.push((Kind::Secret, prompt.to_owned()));
-        self.secret_deadlines.push(deadline);
-        match self.next() {
-            Some(Step::Text(t)) => Ok(Some(Zeroizing::new(t))),
-            Some(Step::Deadline(secs)) => {
-                assert!(deadline.is_some(), "a deadline step needs a deadline");
-                self.clock.advance(secs);
-                Ok(None)
-            }
-            Some(Step::CtrlC) => Err(TtyError::Cancelled),
-            Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
-        }
+        self.secret_interruptible(prompt, max_bytes, deadline, None)
     }
 
     fn line(
         &mut self,
         prompt: &str,
+        max_bytes: usize,
+        deadline: Option<Instant>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        self.line_interruptible(prompt, max_bytes, deadline, None)
+    }
+
+    fn secret_interruptible(
+        &mut self,
+        prompt: &str,
         _max_bytes: usize,
         deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
+    ) -> Result<Option<Zeroizing<String>>, TtyError> {
+        self.prompts.push((Kind::Secret, prompt.to_owned()));
+        self.secret_deadlines.push(deadline);
+        self.answer(deadline, interrupt)
+    }
+
+    fn line_interruptible(
+        &mut self,
+        prompt: &str,
+        _max_bytes: usize,
+        deadline: Option<Instant>,
+        interrupt: Interrupt<'_>,
     ) -> Result<Option<Zeroizing<String>>, TtyError> {
         self.prompts.push((Kind::Line, prompt.to_owned()));
         self.deadlines.push(deadline);
-        match self.next() {
-            Some(Step::Text(t)) => Ok(Some(Zeroizing::new(t))),
-            Some(Step::Deadline(secs)) => {
-                assert!(deadline.is_some(), "a deadline step needs a deadline");
-                self.clock.advance(secs);
-                Ok(None)
-            }
-            Some(Step::CtrlC) => Err(TtyError::Cancelled),
-            Some(Step::Run(_)) | None => Err(TtyError::EndOfInput),
-        }
+        self.answer(deadline, interrupt)
     }
 
     fn wait_for_key(&mut self, _until: Instant) -> Result<bool, TtyError> {
         self.prompts.push((Kind::Wait, String::new()));
         Ok(false)
     }
+}
+
+/// Turns `lock_on_sleep` off in the vault at `path`. It is a weaker setting, so the
+/// master password goes with it.
+fn no_lock_on_sleep(path: &Path) {
+    let mut s = session(path);
+    let settings = Settings {
+        lock_on_sleep: false,
+        ..s.settings().unwrap().clone()
+    };
+    s.update_settings(settings, Some(&MasterPassword::new(PW.to_owned())))
+        .unwrap();
 }
 
 fn t(s: &str) -> Step {
@@ -199,6 +296,25 @@ fn shell_env(clock: &TestClock, clip: &Rc<RefCell<ClipState>>) -> Env {
         clock: Box::new(move || Box::new(clock.clone())),
         ..env_with_clip(clip)
     }
+}
+
+/// [`shell_env`] whose `/dev/console` owner the test sets through `console`.
+fn shell_env_console(
+    clock: &TestClock,
+    clip: &Rc<RefCell<ClipState>>,
+    console: &Rc<Cell<Option<u32>>>,
+) -> Env {
+    let console = Rc::clone(console);
+    Env {
+        console_owner: Rc::new(move || console.get()),
+        ..shell_env(clock, clip)
+    }
+}
+
+/// A step that hands the Mac's screen to `uid` (None: the owner can't be read).
+fn console_to(console: &Rc<Cell<Option<u32>>>, uid: Option<u32>) -> Step {
+    let console = Rc::clone(console);
+    Step::Run(Box::new(move || console.set(uid)))
 }
 
 /// Runs `holm --vault <path> shell` with `term`.
@@ -233,6 +349,7 @@ fn ok(ran: &Ran) {
 fn add_login(path: &Path, title: &str, password: &str) -> ItemId {
     let mut s = session(path);
     s.add_item(ItemInput {
+        fields: Vec::new(),
         title: Text::new(title.to_owned()),
         category: None,
         favourite: false,
@@ -691,6 +808,7 @@ fn passwd_and_phrase_copy_ask_again_and_others_do_not() {
     let phrase = {
         let mut s = session(&path);
         s.add_item(ItemInput {
+            fields: Vec::new(),
             title: Text::new("Wallet".to_owned()),
             category: None,
             favourite: false,
@@ -782,6 +900,29 @@ fn bad_lines_do_not_end_the_shell() {
     assert_eq!(term.count(Kind::Secret), 1);
 }
 
+/// Checks whether this process must obey directory write permissions.
+#[cfg(unix)]
+fn read_only_permissions_apply(folder: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let probe = folder.join("root-probe");
+    let created = std::fs::File::create(&probe);
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    match created {
+        Ok(file) => {
+            drop(file);
+            std::fs::remove_file(probe).unwrap();
+            eprintln!("SKIP: running as root");
+            false
+        }
+        Err(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            true
+        }
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn lock_with_an_unsaved_change_asks_first() {
@@ -789,6 +930,9 @@ fn lock_with_an_unsaved_change_asks_first() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1002,6 +1146,9 @@ fn ctrl_c_at_the_discard_prompt_keeps_the_change() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1051,6 +1198,9 @@ fn end_of_input_at_the_discard_prompt_discards() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1091,6 +1241,9 @@ fn idle_at_the_discard_prompt_locks() {
 
     let (dir, path) = vault_dir();
     init(&path);
+    if !read_only_permissions_apply(dir.path()) {
+        return;
+    }
     let clock = TestClock::default();
     let clip = clip_state();
     let env = shell_env(&clock, &clip);
@@ -1166,4 +1319,383 @@ fn lock_while_locked_clears_the_clipboard() {
         ran.err
     );
     assert_eq!(clip.borrow().clears, 1);
+}
+
+/// The computer sleeps while the shell waits at its prompt: the prompt stops, the
+/// clipboard is cleared, and the vault locks before anything else runs.
+#[test]
+fn shell_locks_on_sleep_at_prompt() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-1");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t(&format!("get {} --copy password", short(id))),
+            // Two minutes asleep: under the auto-lock time, so only the sleep locks.
+            Step::Sleep(120),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(ran.err.matches(SLEEP_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains(IDLE_LOCKED), "{}", ran.err);
+    // The clipboard is cleared first, then the lock is reported.
+    let cleared = ran.err.find("Clipboard cleared.").expect("cleared");
+    assert!(cleared < ran.err.find(SLEEP_LOCKED).unwrap(), "{}", ran.err);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, PROMPT, LOCKED_PROMPT, LOCKED_PROMPT]
+    );
+    assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    let state = clip.borrow();
+    assert_eq!(state.clears, 1);
+    assert_eq!(state.contents, None);
+    assert!(!ran.err.contains("EXAMPLE-sleep-pw-1"));
+}
+
+/// The computer sleeps at a hidden prompt inside a command: the command stops
+/// without its cancel message, and the vault locks.
+#[test]
+fn shell_locks_on_sleep_inside_inner_prompt() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-2");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t(&format!("get {} --copy password", short(id))),
+            t("add note --title Nap"),
+            // The lid closes at the hidden "Note: " prompt.
+            Step::Sleep(120),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(term.texts(Kind::Secret), ["Master password: ", "Note: "]);
+    assert_eq!(ran.err.matches(SLEEP_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains("Cancelled."), "{}", ran.err);
+    assert!(!ran.err.contains(IDLE_LOCKED), "{}", ran.err);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, PROMPT, LOCKED_PROMPT, LOCKED_PROMPT]
+    );
+    assert!(!ran.out.contains("Added "), "{}", ran.out);
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    let state = clip.borrow();
+    assert_eq!(state.clears, 1);
+    assert_eq!(state.contents, None);
+    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+}
+
+/// A line typed before the sleep, with no Enter yet, is held only until the lock:
+/// it is wiped and never runs.
+#[test]
+fn shell_keeps_typed_line_until_sleep_lock() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-3");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            Step::TypedThenSleep("list".to_owned(), 120),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(ran.err.matches(SLEEP_LOCKED).count(), 1, "{}", ran.err);
+    // `list` never ran: not open (no titles) and not locked (no locked message).
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    assert!(!ran.err.contains(LOCKED), "{}", ran.err);
+    assert_eq!(term.texts(Kind::Line), [PROMPT, LOCKED_PROMPT]);
+}
+
+/// With `lock_on_sleep` off, a sleep neither stops the prompt nor locks.
+#[test]
+fn shell_lock_on_sleep_false_stays_open() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-4");
+    no_lock_on_sleep(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            Step::Sleep(120),
+            t("list"),
+            Step::TypedThenSleep("list".to_owned(), 120),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 0);
+    assert!(!ran.err.contains(SLEEP_LOCKED), "{}", ran.err);
+    assert!(!ran.err.contains(IDLE_LOCKED), "{}", ran.err);
+    assert_eq!(ran.out.matches("Example Mail").count(), 2, "{}", ran.out);
+    assert_eq!(term.texts(Kind::Line), [PROMPT, PROMPT, PROMPT]);
+}
+
+/// A sleep while the vault is already locked (and nothing waits to be cleared) has
+/// nothing to lock, and does not lock the vault again right after the next unlock.
+#[test]
+fn sleep_while_locked_then_unlock_stays_open() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-5");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t("lock"),
+            // At the locked prompt there is nothing to protect, so no interrupt.
+            Step::Sleep(120),
+            t("unlock"),
+            t(PW),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 0);
+    assert!(!ran.err.contains(SLEEP_LOCKED), "{}", ran.err);
+    assert_eq!(ran.out.matches("Example Mail").count(), 1, "{}", ran.out);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, LOCKED_PROMPT, PROMPT, PROMPT]
+    );
+}
+
+/// A sleep longer than the auto-lock time is still reported as a sleep: the sleep
+/// check runs before the idle check.
+#[test]
+fn shell_long_sleep_says_slept_not_idle() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-6");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            // Ten minutes asleep: past the five-minute auto-lock time too.
+            Step::Sleep(600),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(ran.err.matches(SLEEP_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains(IDLE_LOCKED), "{}", ran.err);
+    assert_eq!(term.texts(Kind::Line), [PROMPT, LOCKED_PROMPT]);
+}
+
+/// The interrupt's answer is what locks: a wall clock set back after it fired (so
+/// the watch no longer sees a sleep) still locks.
+#[test]
+fn shell_locks_on_fired_interrupt_even_if_clock_set_back() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-sleep-pw-7");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let env = shell_env(&clock, &clip);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![t(PW), Step::SleepThenSetBack(120), t("list"), t("exit")],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(ran.err.matches(SLEEP_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.out.contains("Example Mail"), "{}", ran.out);
+    assert_eq!(
+        term.texts(Kind::Line),
+        [PROMPT, LOCKED_PROMPT, LOCKED_PROMPT]
+    );
+}
+
+/// Fast user switching or the login window hands `/dev/console` to another user:
+/// the shell locks as for a sleep, clears the clipboard and drops the half-typed
+/// line.
+#[test]
+fn shell_locks_when_console_user_changes() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let id = add_login(&path, "Example Mail", "EXAMPLE-switch-pw-1");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let console = Rc::new(Cell::new(Some(501)));
+    let env = shell_env_console(&clock, &clip, &console);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t(&format!("get {} --copy password", short(id))),
+            // The login window takes the screen (root owns the console) while
+            // "list" is half typed; no time passes, so no sleep is seen.
+            console_to(&console, Some(0)),
+            Step::TypedThenSleep("list".to_owned(), 0),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(ran.err.matches(USER_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains(SLEEP_LOCKED), "{}", ran.err);
+    let cleared = ran.err.find("Clipboard cleared.").expect("cleared");
+    assert!(cleared < ran.err.find(USER_LOCKED).unwrap(), "{}", ran.err);
+    assert!(
+        !ran.out.contains("Example Mail"),
+        "the half-typed line never ran"
+    );
+    assert_eq!(term.texts(Kind::Line), [PROMPT, PROMPT, LOCKED_PROMPT]);
+    let state = clip.borrow();
+    assert_eq!(state.clears, 1);
+    assert_eq!(state.contents, None);
+}
+
+/// A console owner change at a prompt inside a command stops the command and locks.
+#[test]
+fn shell_locks_on_console_change_inside_inner_prompt() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let console = Rc::new(Cell::new(Some(501)));
+    let env = shell_env_console(&clock, &clip, &console);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            t("add note --title Switch"),
+            // Another user takes the screen at the hidden "Note: " prompt.
+            console_to(&console, Some(502)),
+            Step::Sleep(0),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 1);
+    assert_eq!(term.texts(Kind::Secret), ["Master password: ", "Note: "]);
+    assert_eq!(ran.err.matches(USER_LOCKED).count(), 1, "{}", ran.err);
+    assert!(!ran.err.contains("Cancelled."), "{}", ran.err);
+    assert!(!ran.out.contains("Added "), "{}", ran.out);
+    assert_eq!(term.texts(Kind::Line), [PROMPT, LOCKED_PROMPT]);
+}
+
+/// With `lock_on_sleep` off, a console owner change does not lock either.
+#[test]
+fn shell_console_change_ignored_when_lock_on_sleep_off() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-switch-pw-2");
+    no_lock_on_sleep(&path);
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let console = Rc::new(Cell::new(Some(501)));
+    let env = shell_env_console(&clock, &clip, &console);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            console_to(&console, Some(0)),
+            Step::Sleep(0),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 0);
+    assert!(!ran.err.contains(USER_LOCKED), "{}", ran.err);
+    assert_eq!(ran.out.matches("Example Mail").count(), 1, "{}", ran.out);
+}
+
+/// A console owner that can't be read (an error) is no change: no lock.
+#[test]
+fn shell_unreadable_console_is_no_change() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-switch-pw-3");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let console = Rc::new(Cell::new(Some(501)));
+    let env = shell_env_console(&clock, &clip, &console);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            t(PW),
+            console_to(&console, None),
+            Step::Sleep(0),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 0);
+    assert!(!ran.err.contains(USER_LOCKED), "{}", ran.err);
+    assert_eq!(ran.out.matches("Example Mail").count(), 1, "{}", ran.out);
+}
+
+/// Unlocking counts the console's owner again: a user who unlocks with the password
+/// while another user owns the console (say over SSH) is not locked out at once.
+#[test]
+fn shell_unlock_takes_the_console_owner_again() {
+    let (_dir, path) = vault_dir();
+    init(&path);
+    add_login(&path, "Example Mail", "EXAMPLE-switch-pw-4");
+    let clock = TestClock::default();
+    let clip = clip_state();
+    let console = Rc::new(Cell::new(Some(501)));
+    let env = shell_env_console(&clock, &clip, &console);
+    let mut term = ShellTerm::new(
+        &clock,
+        vec![
+            console_to(&console, Some(502)),
+            t(PW),
+            Step::Sleep(0),
+            t("list"),
+            t("exit"),
+        ],
+    );
+    let ran = shell(&path, &mut term, &env);
+    ok(&ran);
+    assert_eq!(term.interrupted, 0);
+    assert!(!ran.err.contains(USER_LOCKED), "{}", ran.err);
+    assert_eq!(ran.out.matches("Example Mail").count(), 1, "{}", ran.out);
 }

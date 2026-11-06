@@ -19,6 +19,9 @@ workspace = true
 # Test-only hooks (`HolmApp::with_spawner`). Enabled for this crate's own tests through
 # the self dev-dependency below; a normal or release build never turns it on.
 test-hooks = []
+# Debug builds only: unlock an existing vault from HOLM_DEV_PASSWORD at start.
+# A release build with this feature stops with a compile_error!.
+dev-unlock = []
 
 [dependencies]
 holm-core.workspace = true
@@ -30,7 +33,8 @@ zeroize.workspace = true
 # a binary that says the window is macOS-only for now (Phase 3).
 [target.'cfg(target_os = "macos")'.dependencies]
 eframe.workspace = true
-arboard.workspace = true
+holm-platform = { workspace = true, features = ["clipboard"] }
+rfd.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 egui_kittest.workspace = true

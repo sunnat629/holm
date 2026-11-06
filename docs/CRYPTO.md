@@ -235,6 +235,7 @@ attacker who tries repeats would find it sooner; the 1,024-character limit caps 
 
 The padded plaintext is the body: inside the padding, a `u16` little-endian schema
 version (1), then the `postcard` encoding of the settings, the categories, the items and the next category id.
+Holm still reads this schema, but it now writes schema 3 (next section).
 `VaultData::decode` treats it as hostile even though the AEAD has authenticated it,
 because a buggy or newer writer is enough to produce bad bytes:
 
@@ -253,6 +254,118 @@ because a buggy or newer writer is enough to produce bad bytes:
 refuse to open. A property test (`body_roundtrip_any`) checks that any valid body
 survives `decode(encode())`, and the `decode_body` and `open_fixed_key` fuzz targets
 run the decoder on hostile bytes with a 64 MiB per-allocation limit.
+
+## The vault body (schema v3)
+
+Holm writes schema 3 and reads schemas 1, 2 and 3. The header, the envelope, the KDF and
+the padding do not change. `FORMAT_VERSION` stays 1 and the header stays 164 bytes.
+Only the bytes inside the padding change.
+
+- The first two bytes are the body version, a `u16` little-endian. `BODY_SCHEMA_VERSION`
+  is 3, `BODY_SCHEMA_V2` is 2 and `BODY_SCHEMA_V1` is 1. The `postcard` encoding follows.
+- Version 1 is read with the original wire structs, kept unchanged under a `V1` name.
+  Its items get an empty list of custom fields. The next save writes version 3. Holm
+  never writes version 1 or 2 again.
+- Version 2 uses a second set of wire structs. Each item is the version-1 item with one
+  more value at the end: its list of custom fields.
+- Version 3 is the version-2 layout with one more custom value variant appended: tag 4,
+  `RecoveryCodes`. Versions 2 and 3 share one set of wire structs. Appending at the end
+  keeps every schema-2 byte decodable, because postcard writes an enum tag as the variant
+  index, so tags 0 to 3 mean what they always meant. A schema-2 body that holds tag 4 is
+  `Malformed`, because an old Holm could not have written it.
+- A version above 3 is `NewerSchema`, and the file is not rewritten, so the fields of a
+  newer Holm are not lost. Version 0 is `UnknownSchema`. A Holm built before schema 3
+  refuses a schema-3 vault with `NewerSchema(3)`.
+- Why two structs and not `#[serde(default)]`: postcard writes values in order, with no
+  field names and no marker for a missing value. A default on the old struct would read
+  the next real value as the new field.
+
+A custom field on the wire is, in this order:
+
+| Part | Encoding | Rule after parsing |
+|---|---|---|
+| position | `u8` | the positions on one item are exactly `0..len`, with no duplicate and no gap |
+| label | string | not blank, at most `MAX_LABEL_CHARS` (64) characters, no control or bidi character |
+| value | enum tag, then the value: 0 `Text`, 1 `Secret`, 2 `MultilineSecret`, 3 `Date`, 4 `RecoveryCodes` | see below |
+| expiry | `Option` of a date | absent, or a real day |
+
+A date is `year: u16`, `month: u8`, `day: u8`, in that order. It must be a real Gregorian
+day in years 1 through 9999 (leap years: divisible by 4, not by 100, unless by 400).
+
+Value rules:
+
+- `Text`: one line, at most `MAX_SECRET_BYTES` (4096), no control and no bidi character.
+- `Secret`: one line, at most 4096 bytes, no NUL, CR or LF.
+- `MultilineSecret`: at most `MAX_MULTILINE_SECRET_BYTES` (16384), newlines allowed, no NUL.
+- `Date`: a real day, as above.
+- `RecoveryCodes`: a list written as a postcard length, then each entry as
+  `{code: string, used: bool}`. It holds 1 to `MAX_RECOVERY_CODES` (20) codes. More than
+  20 fails while parsing, before anything is reserved: `Malformed`. An empty list is
+  `Invalid`. Each code is one line, not blank, at most `MAX_RECOVERY_CODE_BYTES` (64)
+  bytes, already trimmed, must not start with `*`, and has no control or bidi character.
+  Each code is a `SecretText`, wiped on drop. `Debug` shows only `used`.
+
+What the decoder refuses, and how:
+
+- More than `MAX_CUSTOM_FIELDS` (10) fields on one item, an unknown value tag, or a
+  string over the 64 KiB wire cap fails while parsing: `Malformed`. The count is checked
+  before anything is reserved.
+- A label or value that parses but breaks its rule, a date that is not a real day, or a
+  duplicate or missing position: `Invalid`.
+- Fields that arrive in another order, with exactly the positions `0..len`, are sorted
+  into position order before the body is returned, so the next encode is stable.
+- The string cap, the trailing-byte rule, the count caps and the cross-checks of schema
+  1 are unchanged. `encode` runs the same field rules first, so Holm never writes a field
+  it would refuse to read.
+
+A custom `Secret` or `MultilineSecret` value is a `SecretText`: wiped on drop and
+`[REDACTED]` in `Debug`. `CustomField` and `FieldValue` have no `Clone` and no serde.
+Their `Debug` prints the kind, the label length, and whether an expiry is set. It
+never prints the label, the value, or the value's length. Search reads labels only.
+
+**Size.** The worst single item is a login with every cap reached: title 1024 bytes,
+username 1024, password 4096, 32 URLs of 1024 (32768), notes 65536, ten labels of 64
+four-byte characters (2560) and ten multiline values of 16384 (163840). That is 270848
+bytes of text. Framing adds about 220 bytes. `maxed_login_with_ten_keys_fits_one_body`
+checks that a body holding that one item encodes to between 270849 and 272000 bytes.
+`MAX_BODY_LEN` holds 246 such items. A change that goes past it is `TooLargeToSave` and
+is undone in memory.
+
+**Dates.** An expiry is a date with no time and no offset. "Today" is the UTC day of
+`Clock::now_unix`, converted by `from_unix_secs` and passed into pure helpers. Core
+reads no timezone, so near local midnight the badge can be one day early or late. There
+are no notifications. The list badge and the Expiring filter (`EXPIRING_WITHIN_DAYS` =
+30, past dates included) are the whole reminder.
+
+**The empty vault, byte for byte.** A new vault encodes to these 51 bytes under
+version 1. `default_body_golden` holds them as `V1_DEFAULT_GOLDEN` and checks the
+test-only version-1 writer against them, byte for byte:
+
+```
+1, 0                          schema version 1, little-endian
+172, 2, 30, 1                 auto-lock 300 (varint), clipboard 30, lock on sleep
+20, 1, 1, 1, 1, 0, 1, 1       password: length 20, sets, no look-alike filter, minimums
+6, 1, 45, 0, 0                passphrase: 6 words, separator "-", flags
+2, 3                          username: 2 words, 3 digits
+3                             3 categories
+1, 8, "Personal"
+2, 4, "Work"
+3, 9, "Community"
+0                             no items
+4                             next category id
+```
+
+The current encoding of a new vault is the same 51 bytes with byte 0 set to 3
+(`current_default_golden_is_v1_with_version_byte_3`). An empty vault has no item, so the
+fields list never appears. If either test fails, the body format changed, and that
+needs a schema bump, not an edit to the test.
+
+**The sealed golden stays schema 1.** `tests/golden_vault.rs` seals the schema-1 default
+body with fixed key material, and it must still open. It is the proof that a file
+written before schema 2 opens. A vault that is opened and saved becomes schema 3. The
+golden test never saves. The `decode_body` fuzz seeds include a version-1 body with
+items (`v1_items`), a version-2 body with fields (`v2_fields`) and a version-3 body with
+recovery codes (`v3_codes`).
 
 ## Storing the file
 
@@ -359,10 +472,11 @@ Known gaps:
   and a paste into a plain field becomes an egui `Event::Paste(String)`.
 - Typed text arrives from winit as `Event::Text(String)` before `SecretField` copies it
   into its buffer; those event strings are not wiped.
-- No clipboard auto-clear yet. A copied password stays on the clipboard until something
-  else is copied, and macOS Universal Clipboard (Handoff) can carry it to the user's
-  other Apple devices. The copy is marked `org.nspasteboard.ConcealedType`, which
-  clipboard managers may honour; that is a request, not a control. Phase 5.
+- The GUI clears a copied value after the vault's clipboard time, on every lock and on
+  quit, if the clipboard still holds Holm's value (or cannot be read back). If Holm is
+  killed first, the value stays, and macOS Universal Clipboard (Handoff) may already
+  have carried it to the user's other Apple devices. The copy is marked `org.nspasteboard.ConcealedType`, which
+  clipboard managers may honour; that is a request, not a control.
 - Holm does not turn on macOS Secure Event Input while a password field has focus, so
   an app with input-monitoring permission can read the keystrokes. Phase 5.
 - The vault folder check refuses a folder that group or others can write, but checks
@@ -411,9 +525,21 @@ does its work and locks the vault on exit. There is no background agent.
   same path.
 - `get` prints every secret field as `(hidden)`, never its value or length. Display text
   goes through a filter that replaces control characters (Unicode `Cc`) and the bidi
-  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It does
-  not replace U+2028/U+2029 or zero-width characters; core already refuses control and
-  bidi characters in display fields, and widening the filter is in `BACKLOG.md`.
+  marks and overrides (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069). It also
+  drops U+2028/U+2029, U+200B-U+200D, U+2060 and U+FEFF. Core already refuses control
+  and bidi characters in display fields; this output filter also covers separators
+  and invisible characters.
+- In polling mode (`VMIN = 0`, `VTIME = 1`), a zero-byte read normally means a
+  roughly 100 ms timeout. Three consecutive zero-byte reads taking less than 50 ms
+  each mean a closed terminal (`Stop::Closed`, then `EndOfInput`). A slower zero,
+  a byte, or an interrupted read resets the count. This bounds a hangup spin without
+  ending an idle prompt on a real poll timeout. Outside polling mode, one zero-byte
+  read means closed. Reader and clock seams cover these cases without sleeps.
+- `gen` writes the value and newline from one pre-sized `Zeroizing<Vec<u8>>` with
+  `write_all`, then flushes. The terminal and OS may still retain their own copies.
+- `passwd` verifies the current password through `Session::verify_password` before
+  asking for a new one. It shares the session throttle and leaves keys, data, dirty
+  state and idle time unchanged. Read and password-check errors make no save claim.
 - Messages are fixed text: never a path, a value or a library message.
 
 `holm shell` keeps one unlocked session in one process, for many commands:
@@ -457,11 +583,21 @@ Known gaps:
 - The terminal driver, the shell's line discipline before raw mode starts, and the
   kernel's tty buffers can hold typed bytes Holm cannot wipe.
 - `tty` is not built on Windows yet; there every prompt fails with fixed text. Phase 5.
-- `holm shell` does not lock on OS sleep, screen lock or logout yet; after a wake the
-  first line is checked against the idle time (wall clock included) before it runs.
-  Phase 5.
-- Command arguments (titles, usernames, web addresses, paths) are copied into plain
-  `String`s by the parser and are not wiped. They are public fields, never secrets.
+- `holm shell` locks on sleep (with `lock_on_sleep` on) by watching the wall clock gain
+  on the monotonic clock while it waits at a prompt; a partly typed line is wiped, not
+  run. It also locks when `/dev/console` gets a new owner (fast user switching, or the
+  login window, which root owns), read with `std::fs::metadata` at most once a second
+  while it waits; the owner is taken at shell start and at each unlock, and an owner
+  that can't be read is no change, so an error never locks. It has no run loop, so it
+  cannot see a screen lock (Ctrl-Cmd-Q) that neither sleeps nor switches users; there
+  the idle lock is the guard. A sleep shorter than
+  `SLEEP_GAP_SECS` (5 s) with no notification is missed, in the shell and in the GUI
+  alike (the GUI still gets the OS notification). A wall clock moved forward by more
+  than 5 s locks too, which errs on the safe side.
+- Parsed `AddArgs` and `EditArgs` text lives in `Zeroizing<String>`, including each
+  URL and named category. Fields move into vault text without another copy. Paths
+  and other command references still use ordinary `PathBuf` and `String` values;
+  operating-system argument storage is outside this wiping guarantee.
 
 ## Import and export (Phase 4)
 
@@ -469,19 +605,50 @@ Known gaps:
   buffers that are sized once and never reallocate. The file is read through a capped
   reader (16 MiB, regular files only, no FIFO, no growing file). A bad file fails
   whole, with fixed text and a line number, never a cell value. Rows with problems are
-  skipped and reported by row number only.
-- Export writes plaintext CSV: every password, in the clear. The file is created new
-  (never over an existing file or through a symlink) with mode 0600 on Unix. If the
-  write or its sync fails, the partial file is first truncated to zero bytes and synced
-  through the open handle, then removed. The remove is best effort (it can fail on the
-  same flaky or removable volume, or if the path was swapped meanwhile); the truncate
-  means a failed remove leaves an empty file, not partial plaintext. The truncate is
-  best effort too: if the volume refuses it as well, some of the plaintext can stay on
-  disk. The master password is asked again first and `EXPORT_WARNING` is shown before
-  any byte is written.
+  skipped and reported by row number only. Imported creation and update times are
+  clamped to `[0, now_unix]`; a pre-epoch local clock uses zero as the upper bound.
+- Export writes plaintext CSV or JSON: every password, in the clear. The file is created new
+  (never over an existing file or through a symlink) with mode 0600 on Unix. The
+  data is synced before the parent folder is synced on Unix. A volume that cannot
+  sync a directory follows the vault store's unsupported-directory rule; other
+  parent-sync errors fail the export. There is no portable directory sync elsewhere.
+  On any write or sync failure, Holm tries to truncate, sync and remove the file.
+  All cleanup steps are best effort and may leave plaintext. APFS may retain freed
+  blocks or snapshots even if cleanup succeeds; this is not secure erasure. The
+  master password is asked again first and `EXPORT_WARNING` is shown before any
+  byte is written.
 - Export does not escape cells that start with `=`, `+`, `-` or `@`. Escaping would
   change the stored value, so a re-import would not match byte for byte. The warning
   names spreadsheets instead, because that is where formula injection happens.
+- Custom fields (body schema 2) travel as flat cells. The 14 earlier columns keep their
+  names and order. Ten slots of four columns follow: `field1_label`, `field1_kind`,
+  `field1_value`, `field1_expiry`, and so on through `field10_expiry`. That makes 54
+  columns, under `MAX_IMPORT_COLUMNS` (64). Slot N holds the field at position N - 1.
+- The kind cell is `text`, `secret`, `multiline` or `date` on export. Import accepts
+  any ASCII case. A date value and an expiry are `YYYY-MM-DD`, never Unix seconds. An
+  empty expiry means no reminder.
+- On import, a slot whose four cells are all empty is absent. Slots are packed from 1:
+  a filled slot after an empty one is `FieldGap`. If any cell of a slot is filled, the
+  label and the kind are required. An unknown kind is `BadFieldKind`. A date value or an
+  expiry that is not a real `YYYY-MM-DD` day is `BadDate`. Text, secret and multiline
+  values may be empty. Like every row problem, these carry the row number only, never a
+  cell.
+- A Holm file with only the 14 earlier columns imports with no custom fields. Columns
+  are matched by name, not by position. A duplicate header is still `DuplicateColumn`.
+  Chrome, Firefox and Safari files gain no columns.
+- The duplicate check compares custom fields too: label bytes, kind, value bytes and
+  expiry. A row that differs from an item only in a custom field is not a duplicate.
+  The dedup hash key does not include any secret.
+- `Session::export_json` writes the same rows as one JSON array of flat objects. Keys
+  are `EXPORT_COLUMNS` in order, and every value is a string. An empty cell is `""`.
+  Import reads `null` as an empty cell. There is no nested object and no array value.
+  It has the same throttled password check, the same Trash exclusion, the same title
+  order and the same `EXPORT_WARNING` as CSV. The writer is hand-written next to the
+  JSON reader, not `serde_json`.
+- Both writers measure the whole text first, then fill one buffer of exactly that size,
+  so a growing `String` never leaves a copy of a secret behind. A custom secret is
+  borrowed for the fill, not copied. A custom secret is in the clear in both formats,
+  because the user asked for the file.
 - The GUI takes the file path as typed text (no file dialog, so no new crate). The path
   sits in a plain egui `TextEdit`, so it stays in that widget's undo history until the
   app closes. It is a display field, not a secret. The vault search box is a plain

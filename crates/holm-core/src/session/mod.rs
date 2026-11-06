@@ -352,6 +352,17 @@ impl<S: VaultStore> Session<S> {
         &self.store
     }
 
+    /// Checks the password without changing the open vault or its idle timer.
+    ///
+    /// Uses the same throttle as unlocking and other password checks.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::Throttled`], [`CoreError::WrongPassword`],
+    /// or [`CoreError::Vault`].
+    pub fn verify_password(&mut self, password: &MasterPassword) -> Result<(), CoreError> {
+        self.check_password(password)
+    }
+
     /// Checks `password` against the open vault, through the throttle.
     ///
     /// Every error counts as a failure (F16); success resets the count.
@@ -665,6 +676,33 @@ mod tests {
     }
 
     #[test]
+    fn verify_password_keeps_the_open_session() {
+        let (mut s, clock) = created();
+        let before = s.store.read().unwrap();
+        let data = s.unlocked().unwrap().data.encode().unwrap();
+        clock.advance(secs(300));
+        assert!(s.idle_expired());
+        for _ in 0..3 {
+            assert_eq!(s.verify_password(&pw(WRONG)), Err(CoreError::WrongPassword));
+        }
+        assert!(matches!(
+            s.verify_password(&pw(PW)),
+            Err(CoreError::Throttled { .. })
+        ));
+        clock.advance(secs(2));
+        assert_eq!(s.verify_password(&pw(PW)), Ok(()));
+        assert_eq!(failures(&s), 0);
+        assert!(s.is_unlocked());
+        assert!(!s.is_dirty());
+        assert!(s.idle_expired());
+        assert_eq!(s.store.read().unwrap(), before);
+        assert!(s.unlocked().unwrap().data.encode().unwrap().expose() == data.expose());
+        s.lock();
+        assert_eq!(s.verify_password(&pw(PW)), Err(CoreError::Locked));
+        assert_eq!(failures(&s), 0);
+    }
+
+    #[test]
     fn missing_file_is_no_vault_and_not_counted() {
         let (mut s, _) = session();
         for _ in 0..5 {
@@ -722,11 +760,11 @@ mod tests {
     #[test]
     fn newer_body_schema_reported() {
         let (mut s, _) = session();
-        let (_, file) = envelope::create(&pw(PW), &FLOOR, &[2, 0]).unwrap();
+        let (_, file) = envelope::create(&pw(PW), &FLOOR, &[4, 0]).unwrap();
         s.store.bytes = Some(file);
         assert_eq!(
             s.unlock(&pw(PW)),
-            Err(CoreError::Body(crate::body::BodyError::NewerSchema(2)))
+            Err(CoreError::Body(crate::body::BodyError::NewerSchema(4)))
         );
         assert_eq!(failures(&s), 1);
         assert!(!s.is_unlocked());

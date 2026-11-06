@@ -6,7 +6,7 @@
 
 The parser reads hostile input, because anyone who can edit the file can edit the header.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### 1. `get` instead of indexing
 
@@ -83,7 +83,7 @@ In Kotlin you'd write: `val n = bodyLen.toInt()`, which silently wraps for big v
 
 ### 5. `match` on enums
 
-`parse` returns `Result<_, FormatError>`, and `FormatError` is an enum with one variant per failure. A caller (the UI, later) will look at which variant came back with `match`. This is an illustrative example, not code from `format.rs`, because the library itself only builds the errors:
+`parse` returns `Result<_, FormatError>`, and `FormatError` is an enum with one variant per failure. A caller such as the UI looks at which variant came back with `match`. This is an illustrative example, not code from `format.rs`, because the library itself only builds the errors:
 
 ```rust
 fn user_message(err: &FormatError) -> &'static str {
@@ -150,20 +150,22 @@ In Kotlin you'd write: `fun parse(file: ByteArray): Pair<Header, ByteArray>` wit
 
 Run each one from the repo root. Undo after each: `git checkout crates/holm-core/src/format.rs`
 
-1. In `format.rs`, change `FORMAT_VERSION` to `2` and run `cargo test -p holm-core format`.
+1. In `format.rs`, change `FORMAT_VERSION` to `2` and run `cargo test -p holm-core format::tests`.
    Check: 3 tests fail: `golden_bytes_encode`, `golden_bytes_parse` and `unsupported_version_rejected`. The round trip still passes, since encode and parse share the constant. Only the fixed golden bytes and the "version 2 is invalid" test catch the change.
 2. Replace `let head = file.get(..HEADER_LEN).ok_or(FormatError::TooShort)?;` in `parse` with `let head = &file[..HEADER_LEN];` and run `cargo test -p holm-core truncated_header`.
    Check: the test panics with `range end index 164 out of range for slice of length 0`. This one guard is what makes every later read in `parse` safe, so removing it turns hostile input into a crash.
-3. Add this test at the end of `mod tests` and run `cargo test -p holm-core reserved_byte_14`:
+3. Add this test at the end of `mod tests` and run `cargo test -p holm-core flags_before_kdf_id`:
 
    ```rust
    #[test]
-   fn reserved_byte_14_rejected() {
-       assert_eq!(parse_err(&with_byte(14, 1)), FormatError::ReservedNotZero);
+   fn flags_before_kdf_id() {
+       let mut f = with_byte(10, 1); // a flag bit set
+       f[12] = 9; // and an unknown KDF id
+       assert_eq!(parse_err(&f), FormatError::BadFlags);
    }
    ```
 
-   Check: it passes. Now delete the `if reserved != [0; 3] { ... }` block in `parse` and run it again. It now fails with `must be rejected: (Header { kdf: KdfParams { ... }, ... }, [9, 9, ...])`: `parse` returned `Ok` where the test expected an error, so the file was accepted. Undo as above.
+   Check: it passes, because `parse` checks the flags before the KDF id. Now move the two KDF id lines (`let [kdf_id] = ...` and its `if`) above the flags `if` in `parse`, and run it again. It fails with `left: UnknownKdf(9)` and `right: BadFlags`. The order of the checks is part of the parser's behaviour, and this test pins it. Undo as above.
 
 ## Read next
 
@@ -171,4 +173,5 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
 - [Chapter 9.2, Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html)
 - [Chapter 10.3, Validating References with Lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html)
 
-Next: [Lesson 07, modules and encapsulation](07-modules-and-encapsulation.md).
+Previous: [Lesson 05](05-slices-and-borrowing.md). Next: [Lesson 07, modules and encapsulation](07-modules-and-encapsulation.md).
+Back to [the index](README.md).

@@ -15,6 +15,7 @@ use common::{
 use eframe::egui::{Event, Key};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
+use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
 use holm_gui::app::{HolmApp, ScreenKind};
 use holm_gui::messages;
 
@@ -79,7 +80,7 @@ fn run_flow(dir: &Path) {
     assert!(harness.state().is_unlocked());
 
     // Add the Task 4 login.
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Username", USERNAME);
@@ -96,10 +97,13 @@ fn run_flow(dir: &Path) {
     harness.run();
     {
         let state = fake.0.borrow();
-        assert_eq!(state.sets.len(), 1, "one set_secret call");
+        assert_eq!(state.sets.len(), 1, "one set call");
         assert_eq!(state.sets[0].as_str(), SECRET);
     }
-    assert_shown(&harness, messages::COPIED);
+    assert_shown(
+        &harness,
+        messages::copied_note(CLIPBOARD_DEFAULT_SECS).as_str(),
+    );
 
     // Lock with the button.
     harness.get_by_label("Lock").click();
@@ -221,4 +225,48 @@ fn collect_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
             out.push(path);
         }
     }
+}
+
+/// A fresh vault, unlocked headless, standing on the vault screen.
+fn open_vault(dir: &Path) -> Harness<'static, HolmApp> {
+    common::make_vault(dir, PASSWORD);
+    let (app, _clock) = test_app_with_clipboard(dir, Box::new(FakeClipboard::default()));
+    let mut harness = common::harness(app);
+    harness.run();
+    try_unlock(&mut harness, PASSWORD);
+    assert_eq!(harness.state().screen_kind(), ScreenKind::Vault);
+    harness
+}
+
+/// The toolbar buttons today. A later task adds "Back up" to this list.
+const TOOLBAR_LABELS: [&str; 4] = ["Lock", "Import...", "Export...", "New"];
+
+#[test]
+fn toolbar_is_one_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    let tops: Vec<f32> = TOOLBAR_LABELS
+        .iter()
+        .map(|label| harness.get_by_label(label).rect().min.y)
+        .collect();
+    for top in &tops {
+        assert!(
+            (top - tops[0]).abs() <= 2.0,
+            "toolbar buttons are not on one row: {tops:?}"
+        );
+    }
+}
+
+#[test]
+fn no_holm_heading_in_toolbar() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    assert_eq!(harness.query_all_by_label("Holm").count(), 0);
+}
+
+#[test]
+fn new_login_button_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = open_vault(dir.path());
+    assert_eq!(harness.query_all_by_label("New").count(), 1);
 }

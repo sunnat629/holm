@@ -83,6 +83,12 @@ Enter, Ctrl-C and a changed clipboard
 - [ ] While a copy waits, `holm list` in a second terminal opens the vault (the folder
   lock was released before the wait).
 
+Export permissions
+
+- [ ] On macOS check `ls -le` on the export folder for inherited ACLs. Confirm no
+  inherited entry gives another user read access to the exported file, even when
+  its Unix mode is 0600. Use fake data and delete the export after checking.
+
 Other copies
 
 - [ ] `holm gen --copy`: no password is printed; a paste gives a new password; it

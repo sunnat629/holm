@@ -2,7 +2,7 @@
 
 ## Why this matters
 
-Before this task Holm's shipped code pulled in a few dozen crates, and every one of them was audited or trusted. A GUI toolkit brings more than two hundred new crates into the lockfile, and each one runs with the same rights as the code that holds your passwords. If we let them in carelessly, the effort spent on the vault format counts for little. This task adds a window, and keeps that new code fenced, counted and dated.
+Before the GUI, Holm's shipped code pulled in a few dozen crates, and every one of them was audited or trusted. A GUI toolkit brings more than two hundred new crates into the lockfile, and each one runs with the same rights as the code that holds your passwords. If we let them in carelessly, the effort spent on the vault format counts for little. This lesson adds a window, and keeps that new code fenced, counted and dated.
 
 ## What we built
 
@@ -100,11 +100,11 @@ Three advisories for the `zbus` family are ignored with a reason: they are "unma
 2. **Trust a publisher, but only one an imported set already trusts.** 49 `[[trusted.*]]` entries (53 versions), such as Kenny Kerr for the `windows-*` crates. Each entry says who, from when, and ends 2026-12-31, so it expires before Phase 6 instead of living forever.
 3. **Exemptions last.** 206 entries noted `gui-only, pre-release; audit or replace before Phase 6`. An exemption says "we have not checked this", in writing, so it shows up in review.
 
-Two rules hold this together. No new exemption may cover a normal dependency of `holm-core`, `holm-crypto` or `holm-platform`, and `cargo tree -p holm-core -e normal --locked` must print the same tree before and after. And we never write an audit we did not do: an AI skim is not a `safe-to-deploy` audit.
+Two rules hold this together. No new exemption may cover a normal dependency of `holm-core`, `holm-crypto` or `holm-platform`, and `cargo tree -p holm-core -e normal --locked` must print the same tree before and after. And we never write an audit we did not do: a quick skim is not a `safe-to-deploy` audit.
 
 In Kotlin you'd write a Gradle `verification-metadata.xml` with checksums and trusted PGP keys. That proves who published a jar; `cargo vet` also records whether someone reviewed it.
 
-## Exercises
+## Try it
 
 1. Show that Linux never compiles `eframe`, while macOS does. (The Linux query prints "nothing to print".)
    Check: `cargo tree -p holm-gui --target x86_64-unknown-linux-gnu --locked -i eframe; cargo tree -p holm-gui --target aarch64-apple-darwin --locked -i eframe | head -3`
@@ -115,6 +115,9 @@ In Kotlin you'd write a Gradle `verification-metadata.xml` with checksums and tr
 
 ## Read next
 
+- Previous: [Lesson 21](21-fuzzing-structured-inputs.md)
+- Next: [Lesson 23](23-a-password-widget-that-wipes.md)
+- [The index](README.md)
 - [The Cargo Book: platform-specific dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#platform-specific-dependencies)
 - [`std::fs::File::try_lock`](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock)
 - [cargo-vet: recording audits, trust and exemptions](https://mozilla.github.io/cargo-vet/recording-audits.html)

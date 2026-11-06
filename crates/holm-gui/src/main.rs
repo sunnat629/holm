@@ -81,19 +81,34 @@ mod macos {
             }
         };
         let options = native_options();
+        // On the main thread, before the window opens: the sleep, screen lock and
+        // logout observers. `None` only off the main thread; the wall-clock check in
+        // `tick` still catches a sleep then.
+        let lock_events = holm_platform::window::LockEvents::install();
         let result = eframe::run_native(
             "Holm",
             options,
             Box::new(|cc| {
                 holm_gui::fonts::install_fonts(&cc.egui_ctx);
-                Ok(Box::new(HolmApp::new(AppConfig {
+                let app = HolmApp::new(AppConfig {
                     vault_path,
                     kdf: KdfParams::DEFAULT,
                     session_clock: Box::new(SystemClock::new()),
                     ui_clock: Box::new(SystemClock::new()),
                     // Opened on first copy or paste, not here.
                     clipboard: Box::new(SystemClipboard::new()),
-                })))
+                    file_dialog: Box::new(holm_gui::file_dialog::RfdDialog),
+                    lock_events,
+                });
+                #[cfg(all(feature = "dev-unlock", debug_assertions))]
+                let app = match holm_gui::dev_unlock::password_from_env() {
+                    Some(pw) => {
+                        eprintln!("dev-unlock: unlocking from the environment (debug build only).");
+                        app.with_dev_password(pw)
+                    }
+                    None => app,
+                };
+                Ok(Box::new(app))
             }),
         );
         match result {

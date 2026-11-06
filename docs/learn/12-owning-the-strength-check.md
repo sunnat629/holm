@@ -12,22 +12,29 @@ The check has three steps:
 2. Find the cheapest way to build the whole password from those pieces, pricing gaps as random characters.
 3. Turn the guess count into a score.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
-### Refuse before you copy: a length cap
+### Refuse before you copy: two length caps
 
 ```rust
+let raw = password.raw_char_count();
+if raw > RAW_CHARS_LIMIT {
+    return too_long(raw);
+}
+let bytes = password.to_kdf_bytes();
+// ... `text` is the NFC form of `bytes`, as a &str
 let count = text.chars().count();
 if count > MAX_MASTER_CHARS {
-    return StrengthReport { /* score 0, fixed "too long" text */ };
+    return too_long(count);
 }
 let chars = wiped_chars(text.chars(), count);
 ```
 
-- `text.chars().count()` walks the UTF-8 bytes once and allocates nothing. Only when the count is at most 1,024 does `check` copy the text into a `[char]` buffer and run the matchers.
-- Without the cap, a 1 MB paste cost seconds and gigabytes, and the app calls `check` while you type. With it, the worst 1,024-character input takes about 28 ms, and a 1 MB paste is refused in about 10 ms.
+- The first cap counts the raw characters, before NFC. Above `RAW_CHARS_LIMIT` (4 times 1,024), the input is refused before `to_kdf_bytes` makes its normalised copy. NFC can shorten text (a decomposed Hangul syllable is three characters that become one), so this cap is loose on purpose.
+- The second cap counts the NFC form. `text.chars().count()` walks the UTF-8 bytes once and allocates nothing. Only when the count is at most 1,024 does `check` copy the text into a `[char]` buffer and run the matchers.
+- Without the caps, a huge paste would be copied and scored in full, and the app calls `check` while you type. The work grows linearly with length, so a fixed cap gives a fixed worst case.
 - `MAX_MASTER_CHARS` is defined as `2 * matching::MAX_REPEAT_UNIT`, so the code itself says why the number is 1,024: every repeat with two copies fits inside the limit and is found.
-- The refusal text is a fixed `&'static str`, like every other line of feedback, so a too-long input is never echoed back.
+- `too_long` returns fixed `&'static str` text, like every other line of feedback, so a too-long input is never echoed back.
 
 In Kotlin you'd write: `if (text.codePointCount(0, text.length) > MAX) return tooLong()` at the top of the function. Same guard clause; in Rust the early `return` also drops (and wipes) anything built so far, so the guard cannot leak.
 
@@ -101,7 +108,7 @@ The strength check sees the one secret that protects every other secret, just be
 
 - Every heap buffer derived from the password is wiped.
 - Nothing reads the clock, so the same password always gets the same answer.
-- The whole password is judged, up to 1,024 characters. zxcvbn scored only the first 100.
+- The whole password is judged, up to 1,024 characters. A test pads a strong password with 100 `a`s, before and after, and checks it is still accepted.
 - The feedback is fixed text from a table, and a test checks that report text comes from nowhere else.
 
 The cost is that our estimator could have bugs. The oracle test bounds that risk on a fixed corpus but does not prove the code correct. `docs/CRYPTO.md` lists the remaining limits: English-centric lists, a dictionary step cap, and shapes such as word + date + word that zxcvbn's model still prices at score 4.
@@ -127,4 +134,6 @@ The cost is that our estimator could have bugs. The oracle test bounds that risk
 - [str::chars](https://doc.rust-lang.org/std/primitive.str.html#method.chars)
 - [zeroize::Zeroizing](https://docs.rs/zeroize/latest/zeroize/struct.Zeroizing.html)
 
-Next lesson: [13: Serde and a versioned binary format](13-serde-and-versioned-formats.md).
+Previous lesson: lesson 11, listed in [the index](README.md).
+Next lesson: [Lesson 13: Serde and a versioned binary format](13-serde-and-versioned-formats.md).
+All lessons: [the index](README.md).

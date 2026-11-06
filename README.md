@@ -46,10 +46,13 @@ cargo run -p holm-gui --release --locked
 cargo run -p holm-cli --release --locked -- --help
 ```
 
-A download-and-run app is not ready yet.
+To build a local `Holm.app` (arm64, ad-hoc signed, not notarised), run
+`scripts/bundle-macos.sh`. It writes `target/bundle/Holm.app`; add `--zip` for a zip and
+its SHA-256.
 
 On Windows and Linux, `holm-gui` builds but only reports that it is macOS-only for now.
 The CLI is not supported there yet.
+Windows: see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) (untested, test vaults only).
 
 ## Roadmap
 

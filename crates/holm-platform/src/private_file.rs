@@ -3,9 +3,9 @@
 //!
 //! [`write_new_private_file`] creates a new file that only its owner can read (mode
 //! 0600 on Unix) and never touches an existing file or follows a symlink. If anything
-//! fails after the create, the partial file is truncated to zero bytes and synced,
-//! then removed (best effort), so a half-written export with some passwords in it is
-//! not left behind even when the remove fails too.
+//! fails after the create, truncation, sync and removal are all best effort. A
+//! failed cleanup may leave plaintext. APFS may keep freed blocks or snapshots
+//! even after successful cleanup; this is not secure erasure.
 //!
 //! [`read_capped`] reads a whole import file into wiping memory, but only a regular
 //! file no larger than the caller's cap. A FIFO, a device or a folder is refused
@@ -23,12 +23,12 @@ use zeroize::Zeroizing;
 
 use crate::fs_store::{create_exclusive, open_for_read};
 
-/// Creates `path` with `bytes`, readable and writable by its owner only, and syncs it.
+/// Creates an owner-only file, syncs its data, then syncs its parent on Unix.
 ///
 /// # Errors
 /// [`StoreError::AlreadyExists`] if anything (a file, a folder or a symlink, even a
 /// dangling one) is already at `path`; it is left untouched. [`StoreError::Io`] for
-/// any other failure, after the new file has been removed.
+/// any other failure, after best-effort cleanup of the new file.
 pub fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     write_new_private_file_with(path, bytes, &mut |file, b| file.write_all(b))
 }
@@ -40,15 +40,26 @@ pub(crate) fn write_new_private_file_with(
     bytes: &[u8],
     write: &mut dyn FnMut(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<(), StoreError> {
+    write_new_private_file_with_sync(path, bytes, write, &mut |file| file.sync_all())
+}
+
+/// A sync seam that lets tests distinguish the file from its parent.
+fn write_new_private_file_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    write: &mut dyn FnMut(&mut File, &[u8]) -> io::Result<()>,
+    sync: &mut dyn FnMut(&File) -> io::Result<()>,
+) -> Result<(), StoreError> {
     let mut file = create_exclusive(path)?;
-    let written = write(&mut file, bytes).and_then(|()| file.sync_all());
+    let written = write(&mut file, bytes)
+        .and_then(|()| sync(&file))
+        .and_then(|()| sync_parent(path, sync));
     match written {
         Ok(()) => Ok(()),
         Err(e) => {
             // First empty the file through the handle, so if the remove below fails
-            // too (a flaky or removable volume, the case where the write just failed)
-            // no partial plaintext stays on disk. All best effort: the write error is
-            // the one to report.
+            // too, less plaintext may remain. Every cleanup step is best effort;
+            // report the original write or sync error.
             let _ = file.set_len(0);
             let _ = file.sync_all();
             drop(file);
@@ -58,6 +69,23 @@ pub(crate) fn write_new_private_file_with(
             Err(StoreError::Io(e.kind()))
         }
     }
+}
+
+/// Uses the vault store's rule for volumes that cannot sync directories.
+fn sync_parent(path: &Path, sync: &mut dyn FnMut(&File) -> io::Result<()>) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+        let dir = File::open(parent.unwrap_or(Path::new(".")))?;
+        match sync(&dir) {
+            Ok(()) => {}
+            Err(e) if crate::fs_store::dir_sync_unsupported(&e) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (path, sync);
+    Ok(())
 }
 
 /// Reads all of `path` if it is a regular file (after following symlinks) of at most
@@ -137,6 +165,74 @@ mod tests {
         let path = dir.path().join("export.csv");
         write_new_private_file(&path, b"\"a\",\"b\"\r\n").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"\"a\",\"b\"\r\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_new_private_file_syncs_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.csv");
+        let mut synced_dirs = Vec::new();
+        write_new_private_file_with_sync(
+            &path,
+            b"example",
+            &mut |file, bytes| file.write_all(bytes),
+            &mut |file| {
+                synced_dirs.push(file.metadata()?.is_dir());
+                file.sync_all()
+            },
+        )
+        .unwrap();
+        assert_eq!(synced_dirs, [false, true]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_sync_failure_removes_export() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.csv");
+        let result = write_new_private_file_with_sync(
+            &path,
+            b"example",
+            &mut |file, bytes| file.write_all(bytes),
+            &mut |file| {
+                if file.metadata()?.is_dir() {
+                    Err(io::Error::from(ErrorKind::PermissionDenied))
+                } else {
+                    file.sync_all()
+                }
+            },
+        );
+        assert_eq!(result, Err(StoreError::Io(ErrorKind::PermissionDenied)));
+        assert!(!path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_directory_sync_may_be_unsupported() {
+        for fail_directory in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("export.csv");
+            let result = write_new_private_file_with_sync(
+                &path,
+                b"example",
+                &mut |file, bytes| file.write_all(bytes),
+                &mut |file| {
+                    if file.metadata()?.is_dir() == fail_directory {
+                        Err(io::Error::from(ErrorKind::Unsupported))
+                    } else {
+                        file.sync_all()
+                    }
+                },
+            );
+            if fail_directory {
+                assert_eq!(result, Ok(()));
+                assert!(path.exists());
+            } else {
+                assert_eq!(result, Err(StoreError::Io(ErrorKind::Unsupported)));
+                assert!(!path.exists());
+            }
+        }
     }
 
     #[test]

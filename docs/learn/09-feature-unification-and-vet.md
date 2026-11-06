@@ -40,10 +40,12 @@ Line by line:
   `holm-crypto` never calls `blake2` in normal code. The line exists only for its effect.
 
 That effect is *feature unification*. Within one build, Cargo compiles each crate version
-once, with the union of every feature anyone asked for. `argon2` asks for `blake2` with no
-features, we ask for `zeroize`, so the single `blake2` that `argon2` links against has
-`zeroize`. Features are additive: they can switch code on, never off, which is why a crate
-must stay correct under any combination.
+once for the product code, with the union of every feature asked for. `argon2` asks for
+`blake2` with no features, we ask for `zeroize`, so the single `blake2` that `argon2` links
+against has `zeroize`. The root `Cargo.toml` sets `resolver = "3"`. With it, build scripts
+and proc macros get their own feature set, and features asked for only by dev-dependencies
+are added only when you build tests. Features are meant to be additive: a feature should
+only switch code on, never off, because any other crate in the build may turn it on.
 
 In Kotlin you'd write: there is no real match. The nearest is adding a direct Gradle
 dependency on a newer version of a transitive library so conflict resolution picks it for
@@ -70,7 +72,7 @@ Line by line:
 - `-e features` adds feature nodes, so each line can say which feature pulled a crate in.
 - The first branch is the old path: `argon2` uses `blake2`, with no feature line under it.
 - `blake2 feature "zeroize"` with `holm-crypto` under it is the new line: our crate asked for
-  the feature. Before this task that line did not exist.
+  the feature. Before this change that line did not exist.
 - `--locked` refuses to change `Cargo.lock`, so the answer describes the committed lockfile.
 
 In Kotlin you'd write: `./gradlew :app:dependencyInsight --dependency blake2`. It explains
@@ -146,8 +148,9 @@ A crate can be covered in four ways, in the order we prefer them:
    - For `libc` we used `trusted-publisher = "github:rust-lang/libc"`: since 0.2.190 it is
      published by crates.io *trusted publishing* from the official repository's CI, not by
      the `rust-lang-owner` account that the imported sets trust.
-   - The six dev-only trust entries use `criteria = "safe-to-run"`. If one of those crates
-     ever enters the shipped tree, vet fails again, because it then needs `safe-to-deploy`.
+   - The dev-only trust entries, such as those for `winnow` and `zxcvbn`, use
+     `criteria = "safe-to-run"`. If one of those crates ever enters the shipped tree, vet
+     fails again, because it then needs `safe-to-deploy`.
 
 4. **An exemption** in `config.toml`: "not vetted, accepted for now". Ours must say why:
 
@@ -161,9 +164,10 @@ A crate can be covered in four ways, in the order we prefer them:
    An exemption names one exact `version`, so an update of that crate fails vet until
    someone looks again.
 
-We trusted a publisher only where isrg, mozilla and ariel-os already trust that same
-publisher (`cargo vet suggest`, which fetches the imported audits over the network, prints
-a `NOTE:` line when they do). `borsh-derive` and
+For `libc` and `syn` we trusted a publisher only where isrg, mozilla and ariel-os already
+trust that same publisher (`cargo vet suggest`, which fetches the imported audits over the
+network, prints a `NOTE:` line when they do). Later dev-only entries, such as the ones for
+the `zxcvbn` test tree, rest on the publisher identity alone, and their `notes` say so. `borsh-derive` and
 `proptest` have no such publisher, and `r-efi` is never built for Holm, so those three stay
 exempt with their reasons.
 
@@ -196,12 +200,15 @@ reliance ends, so every crate in the shipped tree now has a recorded reason to b
    `--locked` would refuse, and `--offline` still keeps Cargo off the network. Undo with
    `git checkout Cargo.toml Cargo.lock`.
 3. In `supply-chain/audits.toml`, delete the `[[trusted.syn]]` entry (its header and the
-   lines under it), then run `cargo vet fmt` so the file is tidy. Check: `cargo vet --locked` prints `Vetting Failed!` and
-   `syn:2.0.119 missing ["safe-to-deploy"]` (and the same for 3.0.9). Undo with
-   `git checkout supply-chain/audits.toml`.
+   lines under it), then run `cargo vet fmt` so the file is tidy. Check: `cargo vet --locked`
+   prints `Vetting Failed!` and `syn:2.0.119 missing ["safe-to-deploy"]` (and the same for
+   3.0.9, the other `syn` in `Cargo.lock`). Undo with `git checkout supply-chain/audits.toml`.
 
 ## Read next
 
+- Previous: [Lesson 08, Property tests and fuzzing](08-property-tests-and-fuzzing.md).
+- Next: [Lesson 10, Enums, newtypes and validation](10-enums-newtypes-and-validation.md).
+- All lessons: [the index](README.md).
 - [The Cargo Book: Features, and Feature unification](https://doc.rust-lang.org/cargo/reference/features.html)
 - [The cargo vet book: Audit criteria and trusting publishers](https://mozilla.github.io/cargo-vet/audit-criteria.html)
 - [The Rust Programming Language, ch. 14.3: Cargo Workspaces](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html)

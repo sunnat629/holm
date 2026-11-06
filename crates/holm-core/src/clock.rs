@@ -106,6 +106,61 @@ impl IdleTimer {
     }
 }
 
+/// How far, in seconds, the wall clock must run ahead of the monotonic clock before
+/// [`SleepWatch`] calls it a sleep. Enough to ignore small clock corrections, small
+/// enough that a real sleep is caught.
+pub const SLEEP_GAP_SECS: i64 = 5;
+
+/// Notices that the computer slept, from the two clocks alone.
+///
+/// The monotonic clock stands still while the computer sleeps and the wall clock does
+/// not, so after a wake the wall clock has run ahead of the monotonic one. `SleepWatch`
+/// marks both clocks and reports a sleep when the wall clock has gained more than
+/// [`SLEEP_GAP_SECS`] on the monotonic clock since the mark. A wall clock set back is
+/// never a sleep, and every sum is checked, so clock skew can't panic or wrap. A sleep
+/// shorter than the gap is missed (the OS notification is the other trigger). It holds
+/// no secret, so it is `Copy` and `Debug`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SleepWatch {
+    mono: Duration,
+    wall: Timestamp,
+}
+
+impl SleepWatch {
+    /// Marks both clocks now.
+    #[must_use]
+    pub fn new(clock: &dyn Clock) -> SleepWatch {
+        SleepWatch {
+            mono: clock.monotonic(),
+            wall: clock.now_unix(),
+        }
+    }
+
+    /// True when the wall clock moved more than [`SLEEP_GAP_SECS`] past the monotonic
+    /// clock since the mark. False when the wall clock went back, and when a difference
+    /// does not fit (unknown is not a sleep here; the idle lock still runs).
+    #[must_use]
+    pub fn slept(&self, clock: &dyn Clock) -> bool {
+        let Some(wall) = clock.now_unix().0.checked_sub(self.wall.0) else {
+            return false;
+        };
+        if wall <= 0 {
+            return false;
+        }
+        let mono = clock.monotonic().saturating_sub(self.mono).as_secs();
+        let Ok(mono) = i64::try_from(mono) else {
+            return false;
+        };
+        wall.checked_sub(mono)
+            .is_some_and(|gained| gained > SLEEP_GAP_SECS)
+    }
+
+    /// Marks both clocks again, so the next [`slept`](Self::slept) counts from now.
+    pub fn mark(&mut self, clock: &dyn Clock) {
+        *self = SleepWatch::new(clock);
+    }
+}
+
 /// A clock the tests control.
 #[cfg(test)]
 #[derive(Debug, Clone, Default)]
@@ -247,6 +302,73 @@ mod tests {
         assert_eq!(b.monotonic(), Duration::from_secs(3));
         a.advance(Duration::MAX);
         assert!(b.monotonic() >= Duration::from_secs(3));
+    }
+
+    /// A fake clock at a fixed wall time, for the sleep tests.
+    fn awake() -> FakeClock {
+        let c = FakeClock::default();
+        c.set_unix(1_000_000);
+        c.advance(secs(50));
+        c
+    }
+
+    #[test]
+    fn sleep_watch_detects_wall_jump() {
+        let c = awake();
+        let w = SleepWatch::new(&c);
+        assert!(!w.slept(&c));
+        // One second on the monotonic clock, a minute on the wall: the Mac slept.
+        c.advance(secs(1));
+        c.set_unix(1_000_060);
+        assert!(w.slept(&c));
+    }
+
+    #[test]
+    fn sleep_watch_ignores_small_skew() {
+        let c = awake();
+        let w = SleepWatch::new(&c);
+        c.advance(secs(10));
+        c.set_unix(1_000_014);
+        assert!(!w.slept(&c), "4 s of skew is under the 5 s gap");
+        // Exactly the gap is not more than it.
+        c.set_unix(1_000_015);
+        assert!(!w.slept(&c));
+        c.set_unix(1_000_016);
+        assert!(w.slept(&c));
+    }
+
+    #[test]
+    fn sleep_watch_ignores_backward_wall() {
+        let c = awake();
+        let w = SleepWatch::new(&c);
+        c.advance(secs(1));
+        c.set_unix(1_000_000 - 3600);
+        assert!(!w.slept(&c));
+        // The extremes neither panic nor count as a sleep.
+        c.set_unix(i64::MIN);
+        assert!(!w.slept(&c));
+        let far = FakeClock::default();
+        far.set_unix(i64::MIN);
+        let w = SleepWatch::new(&far);
+        far.set_unix(i64::MAX);
+        // The difference overflows i64: unknown, so no lock from this check.
+        assert!(!w.slept(&far));
+        far.set_unix(i64::MIN + 60);
+        assert!(w.slept(&far));
+    }
+
+    #[test]
+    fn mark_resets() {
+        let c = awake();
+        let mut w = SleepWatch::new(&c);
+        c.set_unix(1_000_600);
+        assert!(w.slept(&c));
+        w.mark(&c);
+        assert!(!w.slept(&c));
+        // A long awake stretch after the mark is not a sleep.
+        c.advance(secs(3600));
+        c.set_unix(1_000_600 + 3600);
+        assert!(!w.slept(&c));
     }
 
     #[test]

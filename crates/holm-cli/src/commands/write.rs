@@ -10,9 +10,17 @@ use std::path::Path;
 
 use holm_core::category::{CategoryId, name_key};
 use holm_core::error::CoreError;
+use holm_core::fields::{
+    CalendarDate, CustomField, FieldKind, FieldPreset, FieldValue, RecoveryCode, insert_field,
+    move_field, parse_date, parse_recovery_codes, preset_fields, remove_field, try_field,
+};
 use holm_core::generator::generate_password;
-use holm_core::item::{ItemData, ItemInput, ItemType};
-use holm_core::rules::{MAX_LINE_BYTES, MAX_NOTE_BYTES, MAX_SECRET_BYTES};
+use holm_core::item::{Item, ItemData, ItemId, ItemInput, ItemType};
+use holm_core::rules::{
+    FieldError, MAX_CUSTOM_FIELDS, MAX_LINE_BYTES, MAX_MULTILINE_SECRET_BYTES, MAX_NOTE_BYTES,
+    MAX_RECOVERY_CODE_BYTES, MAX_RECOVERY_CODES, MAX_SECRET_BYTES,
+};
+use holm_core::search::{Query, View};
 use holm_core::session::Session;
 use holm_core::strength;
 use holm_core::text::{GatedSecret, SecretText, Text};
@@ -20,10 +28,16 @@ use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use crate::Env;
-use crate::args::{AddArgs, CategoryArg, EditArgs, NewPassword, RmArgs};
-use crate::output::{CliError, clean, write_error};
+use crate::args::{
+    AddArgs, BAD_DATE, CategoryArg, EditArgs, ExpiryEdit, FieldEdit, MISSING_VALUE, NewPassword,
+    RefArgs, RmArgs, SECRET_ON_COMMAND_LINE,
+};
+use crate::output::{CliError, clean, read_error, write_error};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
+
+/// One prompt for a custom secret or multiline value. The label stays off the prompt.
+const FIELD_PROMPT: &str = "Field value: ";
 
 /// The first 8 hex digits of an id, as `list` shows it.
 fn short(id: holm_core::item::ItemId) -> String {
@@ -35,6 +49,11 @@ fn short(id: holm_core::item::ItemId) -> String {
 /// Moves typed text into a secret field without another copy.
 fn secret_of(mut typed: Zeroizing<String>) -> SecretText {
     SecretText::new(mem::take(&mut *typed))
+}
+
+/// Moves a parsed field into wiping vault text without a copy.
+fn text_of(mut typed: Zeroizing<String>) -> Text {
+    Text::new(mem::take(&mut *typed))
 }
 
 /// A copy of a stored secret, straight into a wiping field.
@@ -142,14 +161,14 @@ pub(crate) fn add_to(
                 )?
             };
             ItemData::Login {
-                username: Text::new(args.username.unwrap_or_default()),
+                username: text_of(args.username.unwrap_or_default()),
                 password,
-                urls: args.urls.into_iter().map(Text::new).collect(),
+                urls: args.urls.into_iter().map(text_of).collect(),
                 notes: notes(term, args.with_notes)?,
             }
         }
         ItemType::CryptoAddress => ItemData::CryptoAddress {
-            chain: Text::new(args.chain.unwrap_or_default()),
+            chain: text_of(args.chain.unwrap_or_default()),
             address: hidden(term, "Address: ", MAX_LINE_BYTES)?,
             memo: hidden(term, "Memo (Enter for none): ", MAX_LINE_BYTES)?,
             notes: notes(term, args.with_notes)?,
@@ -167,13 +186,22 @@ pub(crate) fn add_to(
             body: hidden(term, "Note: ", MAX_NOTE_BYTES)?,
         },
     };
+    // Preset rows come after the item's own secrets, so a codes prompt is last.
+    let (fields, empty_count) = match args.preset {
+        Some(preset) => fields_from_preset(preset, term)?,
+        None => (Vec::new(), 0),
+    };
     let input = ItemInput {
-        title: Text::new(args.title),
+        fields,
+        title: text_of(args.title),
         category,
         favourite: args.favourite,
         data,
     };
     let id = session.add_item(input).map_err(|e| write_error(&e))?;
+    if empty_count > 0 {
+        writeln!(out, "Added {empty_count} custom fields with empty values.")?;
+    }
     writeln!(out, "Added {}.", short(id))?;
     Ok(())
 }
@@ -210,25 +238,73 @@ pub fn edit(
 }
 
 /// The body of [`edit`] on an open session, for `holm shell` too.
+///
+/// A field prompt runs before any stored secret is copied. Cancelling it saves
+/// nothing. `update_item` ignores custom fields, so a field change goes through
+/// [`Session::set_custom_fields`] after the other edits.
 pub(crate) fn edit_in(
     session: &mut Session<FsStore>,
-    args: EditArgs,
+    mut args: EditArgs,
     term: &mut dyn Terminal,
     out: &mut dyn Write,
 ) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
-    let item = session.item(id).map_err(|_| CliError::NotFound)?;
-    if item.trashed().is_some() {
-        return Err(CliError::InTrash);
-    }
-    if !edit_fits(&args, item.item_type()) {
-        return Err(CliError::TypeChange);
-    }
+    let (item_type, kept_category) = {
+        let item = session.item(id).map_err(|_| CliError::NotFound)?;
+        if item.trashed().is_some() {
+            return Err(CliError::InTrash);
+        }
+        if !edit_fits(&args, item.item_type()) {
+            return Err(CliError::TypeChange);
+        }
+        reject_command_line_secret(&args, item)?;
+        (item.item_type(), item.category())
+    };
     let category = match &args.category {
-        None => item.category(),
+        None => kept_category,
         Some(CategoryArg::Uncategorised) => None,
         Some(CategoryArg::Named(name)) => Some(category_named(session, name)?),
     };
+    let (new_password, new_notes) = prompt_builtin(item_type, &args, session, term)?;
+    let fields = prepare_fields(session, id, &mut args, term)?;
+    if item_changes(&args) {
+        let input = {
+            let item = session.item(id).map_err(|_| CliError::NotFound)?;
+            updated_input(item, &mut args, category, new_password, new_notes)
+        };
+        session
+            .update_item(id, input)
+            .map_err(|e| write_error(&e))?;
+    } else {
+        drop(new_password);
+        drop(new_notes);
+    }
+    if let Some(fields) = fields {
+        session
+            .set_custom_fields(id, fields)
+            .map_err(|e| write_error(&e))?;
+    }
+    writeln!(out, "Updated {}.", short(id))?;
+    Ok(())
+}
+
+fn item_changes(args: &EditArgs) -> bool {
+    args.title.is_some()
+        || args.username.is_some()
+        || !args.urls.is_empty()
+        || args.clear_urls
+        || args.category.is_some()
+        || args.favourite.is_some()
+        || args.new_password.is_some()
+        || args.new_notes
+}
+
+fn prompt_builtin(
+    item_type: ItemType,
+    args: &EditArgs,
+    session: &Session<FsStore>,
+    term: &mut dyn Terminal,
+) -> Result<(Option<SecretText>, Option<SecretText>), CliError> {
     let new_password = match args.new_password {
         None => None,
         Some(NewPassword::Typed) => Some(twice(
@@ -240,15 +316,25 @@ pub(crate) fn edit_in(
         Some(NewPassword::Generate) => Some(generated(session)?),
     };
     let new_notes = if args.new_notes {
-        let (prompt, max) = if item.item_type() == ItemType::SecureNote {
-            ("New note: ", MAX_NOTE_BYTES)
+        let prompt = if item_type == ItemType::SecureNote {
+            "New note: "
         } else {
-            ("New notes: ", MAX_NOTE_BYTES)
+            "New notes: "
         };
-        Some(hidden(term, prompt, max)?)
+        Some(hidden(term, prompt, MAX_NOTE_BYTES)?)
     } else {
         None
     };
+    Ok((new_password, new_notes))
+}
+
+fn updated_input(
+    item: &Item,
+    args: &mut EditArgs,
+    category: Option<CategoryId>,
+    new_password: Option<SecretText>,
+    new_notes: Option<SecretText>,
+) -> ItemInput {
     let keep_or = |new: Option<SecretText>, old: &SecretText| new.unwrap_or_else(|| keep(old));
     let data = match item.data() {
         ItemData::Login {
@@ -262,9 +348,12 @@ pub(crate) fn edit_in(
             } else {
                 urls.iter().map(keep_text).collect()
             };
-            all.extend(args.urls.into_iter().map(Text::new));
+            all.extend(mem::take(&mut args.urls).into_iter().map(text_of));
             ItemData::Login {
-                username: args.username.map_or_else(|| keep_text(username), Text::new),
+                username: args
+                    .username
+                    .take()
+                    .map_or_else(|| keep_text(username), text_of),
                 password: keep_or(new_password, password),
                 urls: all,
                 notes: keep_or(new_notes, notes),
@@ -275,34 +364,355 @@ pub(crate) fn edit_in(
             address,
             memo,
             notes,
-        } => ItemData::CryptoAddress {
-            chain: keep_text(chain),
-            address: keep(address),
-            memo: keep(memo),
-            notes: keep_or(new_notes, notes),
-        },
+        } => {
+            drop(new_password);
+            ItemData::CryptoAddress {
+                chain: keep_text(chain),
+                address: keep(address),
+                memo: keep(memo),
+                notes: keep_or(new_notes, notes),
+            }
+        }
         // An empty phrase keeps the stored one; the CLI never reads it.
-        ItemData::RecoveryPhrase { notes, .. } => ItemData::RecoveryPhrase {
-            phrase: GatedSecret::new(SecretText::new(String::new())),
-            notes: keep_or(new_notes, notes),
-        },
-        ItemData::SecureNote { body } => ItemData::SecureNote {
-            body: keep_or(new_notes, body),
-        },
+        ItemData::RecoveryPhrase { notes, .. } => {
+            drop(new_password);
+            ItemData::RecoveryPhrase {
+                phrase: GatedSecret::new(SecretText::new(String::new())),
+                notes: keep_or(new_notes, notes),
+            }
+        }
+        ItemData::SecureNote { body } => {
+            drop(new_password);
+            ItemData::SecureNote {
+                body: keep_or(new_notes, body),
+            }
+        }
     };
-    let input = ItemInput {
+    ItemInput {
+        fields: Vec::new(),
         title: args
             .title
-            .map_or_else(|| keep_text_str(item.title()), Text::new),
+            .take()
+            .map_or_else(|| keep_text_str(item.title()), text_of),
         category,
         favourite: args.favourite.unwrap_or(item.favourite()),
         data,
+    }
+}
+
+/// A secret `--value` on `--field-set` is refused once the stored kind is known.
+/// The buffer is wiped when [`EditArgs`] drops.
+fn reject_command_line_secret(args: &EditArgs, item: &Item) -> Result<(), CliError> {
+    if args.field_value.is_none() {
+        return Ok(());
+    }
+    let secret = match &args.fields {
+        FieldEdit::Add { kind, .. } => secret_kind(*kind),
+        FieldEdit::Set { position, .. } => {
+            let index = position_index(*position)?;
+            let field = item
+                .fields()
+                .get(index)
+                .ok_or(CliError::Field(FieldError::NoSuchIndex))?;
+            secret_kind(field.kind())
+        }
+        FieldEdit::Remove { .. } | FieldEdit::Move { .. } | FieldEdit::None => false,
     };
-    session
-        .update_item(id, input)
-        .map_err(|e| write_error(&e))?;
-    writeln!(out, "Updated {}.", short(id))?;
+    if secret {
+        Err(CliError::Usage(SECRET_ON_COMMAND_LINE))
+    } else {
+        Ok(())
+    }
+}
+
+fn secret_kind(kind: FieldKind) -> bool {
+    matches!(
+        kind,
+        FieldKind::Secret | FieldKind::MultilineSecret | FieldKind::RecoveryCodes
+    )
+}
+
+fn prepare_fields(
+    session: &Session<FsStore>,
+    id: ItemId,
+    args: &mut EditArgs,
+    term: &mut dyn Terminal,
+) -> Result<Option<Vec<CustomField>>, CliError> {
+    match mem::replace(&mut args.fields, FieldEdit::None) {
+        FieldEdit::None => Ok(None),
+        FieldEdit::Add {
+            label,
+            kind,
+            expiry,
+        } => Ok(Some(add_field(
+            session,
+            id,
+            label,
+            kind,
+            expiry,
+            &mut args.field_value,
+            term,
+        )?)),
+        FieldEdit::Remove { position } => {
+            args.field_value = None;
+            Ok(Some(remove_at(session, id, position)?))
+        }
+        FieldEdit::Move { from, to } => {
+            args.field_value = None;
+            Ok(Some(move_at(session, id, from, to)?))
+        }
+        FieldEdit::Set { position, expiry } => Ok(Some(set_field(
+            session,
+            id,
+            position,
+            expiry,
+            &mut args.field_value,
+            term,
+        )?)),
+    }
+}
+
+fn add_field(
+    session: &Session<FsStore>,
+    id: ItemId,
+    label: String,
+    kind: FieldKind,
+    expiry: Option<CalendarDate>,
+    field_value: &mut Option<Zeroizing<String>>,
+    term: &mut dyn Terminal,
+) -> Result<Vec<CustomField>, CliError> {
+    let len = session
+        .item(id)
+        .map_err(|_| CliError::NotFound)?
+        .fields()
+        .len();
+    if len >= MAX_CUSTOM_FIELDS {
+        return Err(CliError::Field(FieldError::TooManyFields));
+    }
+    let value = read_value(kind, field_value, term)?;
+    let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
+    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let end = fields.len();
+    insert_field(&mut fields, end, field).map_err(CliError::Field)?;
+    Ok(fields)
+}
+
+fn set_field(
+    session: &Session<FsStore>,
+    id: ItemId,
+    position: u8,
+    expiry: ExpiryEdit,
+    field_value: &mut Option<Zeroizing<String>>,
+    term: &mut dyn Terminal,
+) -> Result<Vec<CustomField>, CliError> {
+    let index = position_index(position)?;
+    let (label, kind, old_expiry) = {
+        let item = session.item(id).map_err(|_| CliError::NotFound)?;
+        let field = item
+            .fields()
+            .get(index)
+            .ok_or(CliError::Field(FieldError::NoSuchIndex))?;
+        (field.label().to_owned(), field.kind(), field.expiry())
+    };
+    if secret_kind(kind) && field_value.is_some() {
+        *field_value = None;
+        return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
+    }
+    let value = read_value(kind, field_value, term)?;
+    let expiry = match expiry {
+        ExpiryEdit::Unchanged => old_expiry,
+        ExpiryEdit::Clear => None,
+        ExpiryEdit::Set(date) => Some(date),
+    };
+    let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
+    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    replace_at(&mut fields, index, field)?;
+    Ok(fields)
+}
+
+fn replace_at(
+    fields: &mut Vec<CustomField>,
+    index: usize,
+    field: CustomField,
+) -> Result<(), CliError> {
+    let removed = remove_field(fields, index).map_err(CliError::Field)?;
+    if let Err(error) = insert_field(fields, index, field) {
+        let _ = insert_field(fields, index, removed);
+        return Err(CliError::Field(error));
+    }
     Ok(())
+}
+
+fn remove_at(
+    session: &Session<FsStore>,
+    id: ItemId,
+    position: u8,
+) -> Result<Vec<CustomField>, CliError> {
+    let index = position_index(position)?;
+    if index >= field_len(session, id)? {
+        return Err(CliError::Field(FieldError::NoSuchIndex));
+    }
+    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    remove_field(&mut fields, index).map_err(CliError::Field)?;
+    Ok(fields)
+}
+
+fn move_at(
+    session: &Session<FsStore>,
+    id: ItemId,
+    from: u8,
+    to: u8,
+) -> Result<Vec<CustomField>, CliError> {
+    let from = position_index(from)?;
+    let to = position_index(to)?;
+    let len = field_len(session, id)?;
+    if from >= len || to >= len {
+        return Err(CliError::Field(FieldError::NoSuchIndex));
+    }
+    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    move_field(&mut fields, from, to).map_err(CliError::Field)?;
+    Ok(fields)
+}
+
+fn field_len(session: &Session<FsStore>, id: ItemId) -> Result<usize, CliError> {
+    Ok(session
+        .item(id)
+        .map_err(|_| CliError::NotFound)?
+        .fields()
+        .len())
+}
+
+fn read_value(
+    kind: FieldKind,
+    field_value: &mut Option<Zeroizing<String>>,
+    term: &mut dyn Terminal,
+) -> Result<FieldValue, CliError> {
+    match kind {
+        FieldKind::Secret => {
+            if field_value.is_some() {
+                *field_value = None;
+                return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
+            }
+            Ok(FieldValue::Secret(secret_of(
+                term.secret(FIELD_PROMPT, MAX_SECRET_BYTES)?,
+            )))
+        }
+        FieldKind::MultilineSecret => {
+            if field_value.is_some() {
+                *field_value = None;
+                return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
+            }
+            Ok(FieldValue::MultilineSecret(secret_of(
+                term.secret(FIELD_PROMPT, MAX_MULTILINE_SECRET_BYTES)?,
+            )))
+        }
+        FieldKind::RecoveryCodes => {
+            if field_value.is_some() {
+                *field_value = None;
+                return Err(CliError::Usage(SECRET_ON_COMMAND_LINE));
+            }
+            let typed = type_codes(term)?;
+            codes_value(&typed)
+        }
+        FieldKind::Text => {
+            let typed = field_value.take().ok_or(CliError::Usage(MISSING_VALUE))?;
+            Ok(FieldValue::Text(text_of(typed)))
+        }
+        FieldKind::Date => {
+            let typed = field_value.take().ok_or(CliError::Usage(MISSING_VALUE))?;
+            let date = parse_date(&typed).ok_or(CliError::Usage(BAD_DATE))?;
+            drop(typed);
+            Ok(FieldValue::Date(date))
+        }
+    }
+}
+
+/// The hidden prompt for a recovery codes list, one code per line.
+fn type_codes(term: &mut dyn Terminal) -> Result<Zeroizing<String>, CliError> {
+    Ok(term.secret(
+        FIELD_PROMPT,
+        MAX_RECOVERY_CODES * (MAX_RECOVERY_CODE_BYTES + 1),
+    )?)
+}
+
+/// Typed codes as a field value. An error names the rule only, never a code.
+fn codes_value(typed: &str) -> Result<FieldValue, CliError> {
+    let codes = parse_recovery_codes(typed).map_err(CliError::Field)?;
+    Ok(FieldValue::RecoveryCodes(codes))
+}
+
+fn position_index(position: u8) -> Result<usize, CliError> {
+    let index = usize::from(position)
+        .checked_sub(1)
+        .ok_or(CliError::Field(FieldError::NoSuchIndex))?;
+    if index >= MAX_CUSTOM_FIELDS {
+        Err(CliError::Field(FieldError::NoSuchIndex))
+    } else {
+        Ok(index)
+    }
+}
+
+fn copy_fields(fields: &[CustomField]) -> Result<Vec<CustomField>, CliError> {
+    fields.iter().map(copy_field).collect()
+}
+
+fn copy_field(field: &CustomField) -> Result<CustomField, CliError> {
+    let value = match field.value() {
+        FieldValue::Text(text) => FieldValue::Text(Text::new(text.as_str().to_owned())),
+        FieldValue::Secret(text) => FieldValue::Secret(SecretText::new(text.expose().to_owned())),
+        FieldValue::MultilineSecret(text) => {
+            FieldValue::MultilineSecret(SecretText::new(text.expose().to_owned()))
+        }
+        FieldValue::Date(date) => FieldValue::Date(*date),
+        FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
+            codes
+                .iter()
+                .map(|code| {
+                    RecoveryCode::new(
+                        SecretText::new(code.code().expose().to_owned()),
+                        code.used(),
+                    )
+                })
+                .collect(),
+        ),
+    };
+    try_field(Text::new(field.label().to_owned()), value, field.expiry()).map_err(CliError::Field)
+}
+
+/// The preset's rows, and how many of them were stored with an empty value.
+///
+/// A codes list cannot be empty, so it is asked for at the hidden prompt; nothing
+/// typed skips the row. A date row has no empty value and is skipped.
+fn fields_from_preset(
+    preset: FieldPreset,
+    term: &mut dyn Terminal,
+) -> Result<(Vec<CustomField>, usize), CliError> {
+    let mut fields = Vec::new();
+    let mut empty = 0;
+    for row in preset_fields(preset) {
+        let value = match row.kind {
+            FieldKind::Text => FieldValue::Text(Text::new(String::new())),
+            FieldKind::Secret => FieldValue::Secret(SecretText::new(String::new())),
+            FieldKind::MultilineSecret => {
+                FieldValue::MultilineSecret(SecretText::new(String::new()))
+            }
+            FieldKind::RecoveryCodes => {
+                let typed = type_codes(term)?;
+                if typed.trim().is_empty() {
+                    continue;
+                }
+                codes_value(&typed)?
+            }
+            FieldKind::Date => continue,
+        };
+        if !matches!(value, FieldValue::RecoveryCodes(_)) {
+            empty += 1;
+        }
+        fields.push(
+            try_field(Text::new(row.label.to_owned()), value, None).map_err(CliError::Field)?,
+        );
+    }
+    Ok((fields, empty))
 }
 
 fn keep_text_str(s: &str) -> Text {
@@ -357,11 +767,96 @@ pub(crate) fn rm_in(
     Ok(())
 }
 
+/// `holm restore REF`: takes a trashed item out of the Trash.
+///
+/// # Errors
+/// [`CliError::NotInTrash`] for an active item, [`CliError::NotFound`],
+/// [`CliError::Ambiguous`], or [`write_error`] of the change.
+pub fn restore(
+    path: &Path,
+    args: &RefArgs,
+    env: &Env,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
+    let mut opened = vault::open(path, env, term, err)?;
+    restore_in(&mut opened.session, args, out)
+}
+
+/// The body of [`restore`] on an open session, for `holm shell` too.
+pub(crate) fn restore_in(
+    session: &mut Session<FsStore>,
+    args: &RefArgs,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    // Only the Trash is searched, so a prefix can't pick an active item by chance.
+    let id = match vault::resolve(session, &args.reference, View::Trash) {
+        Ok(id) => id,
+        Err(CliError::NotFound) => {
+            return Err(
+                match vault::resolve(session, &args.reference, View::Active) {
+                    Ok(_) => CliError::NotInTrash,
+                    Err(_) => CliError::NotFound,
+                },
+            );
+        }
+        Err(e) => return Err(e),
+    };
+    session.restore(id).map_err(|e| write_error(&e))?;
+    writeln!(out, "Restored {}.", short(id))?;
+    Ok(())
+}
+
+/// `holm empty-trash`: deletes everything in the Trash for good, after the word
+/// `empty` is typed. Anything else leaves the Trash alone.
+///
+/// # Errors
+/// A terminal error, or [`write_error`] of the change.
+pub fn empty_trash(
+    path: &Path,
+    env: &Env,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> Result<(), CliError> {
+    let mut opened = vault::open(path, env, term, err)?;
+    empty_trash_in(&mut opened.session, term, out)
+}
+
+/// The body of [`empty_trash`] on an open session, for `holm shell` too.
+pub(crate) fn empty_trash_in(
+    session: &mut Session<FsStore>,
+    term: &mut dyn Terminal,
+    out: &mut dyn Write,
+) -> Result<(), CliError> {
+    let query = Query {
+        view: View::Trash,
+        ..Query::default()
+    };
+    let n = session.search(&query).map_err(|_| CliError::Failed)?.len();
+    if n == 0 {
+        writeln!(out, "Trash is empty.")?;
+        return Ok(());
+    }
+    let noun = if n == 1 { "item" } else { "items" };
+    let prompt = format!("Type empty to delete {n} {noun} forever: ");
+    let typed = term.line(&prompt, MAX_LINE_BYTES, None)?;
+    if typed.as_ref().is_none_or(|t| t.trim() != "empty") {
+        writeln!(out, "Nothing deleted.")?;
+        return Ok(());
+    }
+    let removed = session.empty_trash().map_err(|e| write_error(&e))?;
+    let noun = if removed == 1 { "item" } else { "items" };
+    writeln!(out, "Deleted {removed} {noun} forever.")?;
+    Ok(())
+}
+
 /// `holm passwd`: changes the master password.
 ///
-/// Order: open, the current password, the new one (a weak one is refused before the
-/// repeat), the repeat, then [`Session::change_password`], which checks the current
-/// password through the throttle and writes a whole new vault.
+/// Order: open, verify the current password, ask for the new one and its repeat,
+/// then call [`Session::change_password`]. A weak new password is refused before
+/// the repeat. Both password checks use the session throttle.
 ///
 /// # Errors
 /// [`CliError::WeakPassword`], [`CliError::SecretsDiffer`],
@@ -389,6 +884,9 @@ pub(crate) fn passwd_in(
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
     let current = vault::master(term.secret("Current master password: ", MAX_PASSWORD_BYTES)?);
+    session
+        .verify_password(&current)
+        .map_err(|e| read_error(&e))?;
     let new = vault::master(term.secret("New master password: ", MAX_PASSWORD_BYTES)?);
     let report = strength::check(&new);
     if !report.verdict.acceptable {

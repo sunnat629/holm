@@ -5,6 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use holm_core::category::name_key;
+use holm_core::fields::{FieldKind, FieldValue, codes_left};
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
@@ -18,7 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::Env;
 use crate::args::{CategoryArg, GenArgs, GenKind, GetArgs, ListArgs};
-use crate::output::{CliError, clean, create_error, utc};
+use crate::output::{CliError, clean, create_error, date_text, utc};
 use crate::term::Terminal;
 use crate::vault::{self, MAX_PASSWORD_BYTES};
 
@@ -52,7 +53,7 @@ pub fn init(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<(), CliError> {
-    let _lock = vault::lock_folder(path)?;
+    let _lock = vault::lock_folder_for_init(path)?;
     if vault::exists(path) {
         return Err(CliError::VaultExists);
     }
@@ -122,6 +123,7 @@ pub fn list(
             View::Active
         },
         sort: args.sort,
+        expiring_only: args.expiring,
     };
     let hits = session.search(&query).map_err(|_| CliError::Failed)?;
     for hit in hits {
@@ -187,6 +189,19 @@ pub fn get(
             writeln!(out, "body: {HIDDEN}")?;
         }
     }
+    for (index, field) in item.fields().iter().enumerate() {
+        let n = index + 1;
+        let kind = kind_name(field.kind());
+        let shown = shown_field(field.value());
+        writeln!(
+            out,
+            "field {n}: {} ({kind}) = {shown}",
+            clean(field.label())
+        )?;
+        if let Some(date) = field.expiry() {
+            writeln!(out, "field {n} expiry: {}", date_text(date))?;
+        }
+    }
     writeln!(
         out,
         "category: {}",
@@ -202,6 +217,29 @@ pub fn get(
     Ok(())
 }
 
+fn kind_name(kind: FieldKind) -> &'static str {
+    match kind {
+        FieldKind::Text => "text",
+        FieldKind::Secret => "secret",
+        FieldKind::MultilineSecret => "multiline",
+        FieldKind::Date => "date",
+        FieldKind::RecoveryCodes => "codes",
+    }
+}
+
+/// Text and dates are shown. A secret or multiline value stays [`HIDDEN`].
+fn shown_field(value: &FieldValue) -> Cow<'_, str> {
+    match value {
+        FieldValue::Text(text) => clean(text.as_str()),
+        FieldValue::Date(date) => Cow::Owned(date_text(*date)),
+        FieldValue::RecoveryCodes(codes) => {
+            let (left, total) = codes_left(codes);
+            Cow::Owned(format!("{HIDDEN} ({left} of {total} left)"))
+        }
+        FieldValue::Secret(_) | FieldValue::MultilineSecret(_) => Cow::Borrowed(HIDDEN),
+    }
+}
+
 /// `holm gen [password|passphrase|username]`: one new value from the default spec,
 /// on stdout. No vault is opened.
 ///
@@ -212,18 +250,28 @@ pub fn gen_value(args: &GenArgs, out: &mut dyn Write) -> Result<(), CliError> {
         GenKind::Password => {
             let value =
                 generate_password(&PasswordSpec::DEFAULT).map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.expose())?;
+            write_generated(out, value.expose())?;
         }
         GenKind::Passphrase => {
             let value = generate_passphrase(&PassphraseSpec::DEFAULT)
                 .map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.expose())?;
+            write_generated(out, value.expose())?;
         }
         GenKind::Username => {
             let value =
                 generate_username(&UsernameSpec::DEFAULT).map_err(|_| CliError::GenerateFailed)?;
-            writeln!(out, "{}", value.as_str())?;
+            write_generated(out, value.as_str())?;
         }
     }
+    Ok(())
+}
+
+/// Writes the value and newline from one wiping allocation, then flushes stdout.
+fn write_generated(out: &mut dyn Write, value: &str) -> Result<(), CliError> {
+    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() + 1));
+    bytes.extend_from_slice(value.as_bytes());
+    bytes.push(b'\n');
+    out.write_all(&bytes)?;
+    out.flush()?;
     Ok(())
 }

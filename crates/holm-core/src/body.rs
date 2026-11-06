@@ -5,6 +5,10 @@
 //! categories, the items and the next category id, in that order. Padding is added
 //! and removed by the envelope, not here.
 //!
+//! Schema 1 items have no custom fields; schema 2 added them. Schema 3 has the same
+//! layout as schema 2 plus custom value variant 4, recovery codes. A schema 2 body that
+//! holds that variant is refused as malformed.
+//!
 //! [`VaultData::decode`] treats its input as hostile even though the envelope has
 //! authenticated it: a buggy or newer writer is enough to produce bad bytes. It refuses
 //! a newer schema rather than drop fields it does not know, rejects trailing bytes,
@@ -16,17 +20,25 @@
 use crate::category::{
     BUILT_IN_CATEGORIES, Category, CategoryId, MAX_CATEGORIES, name_key, validate_category_name,
 };
+use crate::fields::validate_fields;
 use crate::item::{Item, ItemId, PhraseRule, validate_item};
 use crate::rules::MAX_ITEMS;
 use crate::settings::Settings;
 use crate::text::Text;
-use crate::wire::{BodyIn, BodyOut, CategoryOut, ItemOut, SettingsWire};
+use crate::wire::{BodyIn, BodyInV1, BodyOut, CategoryOut, ItemOut, SettingsWire};
 use core::fmt;
 use holm_crypto::SecretBuf;
 use zeroize::Zeroizing;
 
-/// The body schema this build writes and the only one it reads.
-pub const BODY_SCHEMA_VERSION: u16 = 1;
+/// The body schema this build writes; it also reads [`BODY_SCHEMA_V1`] and
+/// [`BODY_SCHEMA_V2`].
+pub const BODY_SCHEMA_VERSION: u16 = 3;
+
+/// Custom fields without recovery codes, preserved for existing vaults.
+pub const BODY_SCHEMA_V2: u16 = 2;
+
+/// The original body schema, preserved for existing vaults.
+pub const BODY_SCHEMA_V1: u16 = 1;
 
 /// Length of the schema version prefix in bytes.
 const VERSION_LEN: usize = 2;
@@ -125,21 +137,7 @@ impl VaultData {
             items: self.items.iter().map(ItemOut::new).collect(),
             next_category_id: self.next_category_id,
         };
-        let size = postcard::serialize_with_flavor(&out, postcard::ser_flavors::Size::default())
-            .map_err(|_| BodyError::Encode)?;
-        let total = size.checked_add(VERSION_LEN).ok_or(BodyError::Encode)?;
-        let mut buf = Zeroizing::new(vec![0u8; total]);
-        let (version, rest) = buf.split_at_mut(VERSION_LEN);
-        version.copy_from_slice(&BODY_SCHEMA_VERSION.to_le_bytes());
-        let written = postcard::to_slice(&out, rest)
-            .map_err(|_| BodyError::Encode)?
-            .len();
-        // Unreachable: the same value was just measured.
-        if written != size {
-            return Err(BodyError::Encode);
-        }
-        // Moves the Vec (pointer, length, capacity) into the SecretBuf: no copy.
-        Ok(SecretBuf::from_vec(core::mem::take(&mut *buf)))
+        encode_wire(&out, BODY_SCHEMA_VERSION)
     }
 
     /// Decodes and checks a body.
@@ -147,7 +145,8 @@ impl VaultData {
     /// Order: [`BodyError::TooShort`] under 2 bytes; [`BodyError::NewerSchema`] for a
     /// version above [`BODY_SCHEMA_VERSION`]; [`BodyError::UnknownSchema`] for version
     /// 0; [`BodyError::Malformed`] if postcard fails, a length or count is over its cap,
-    /// or bytes are left over; [`BodyError::Invalid`] if a field rule or cross-check
+    /// bytes are left over, or a schema 2 body holds recovery codes;
+    /// [`BodyError::Invalid`] if a field rule or cross-check
     /// fails. Out-of-range settings are then clamped into range, not refused, so a vault
     /// never becomes unopenable over a setting.
     ///
@@ -158,19 +157,30 @@ impl VaultData {
             .split_first_chunk::<VERSION_LEN>()
             .ok_or(BodyError::TooShort)?;
         let version = u16::from_le_bytes(*version);
-        if version > BODY_SCHEMA_VERSION {
-            return Err(BodyError::NewerSchema(version));
-        }
-        if version != BODY_SCHEMA_VERSION {
-            return Err(BodyError::UnknownSchema(version));
-        }
-        let (wire, leftover) =
-            postcard::take_from_bytes::<BodyIn>(rest).map_err(|_| BodyError::Malformed)?;
-        if !leftover.is_empty() {
-            return Err(BodyError::Malformed);
-        }
-        // The conversions run every field rule; the cross-checks follow.
-        let mut data = VaultData::from_wire(wire)?;
+        reject_if_newer(version, BODY_SCHEMA_VERSION)?;
+        // Keep the old wire types intact: postcard has no missing-field marker.
+        let mut data = match version {
+            BODY_SCHEMA_V1 => {
+                let (wire, leftover) = postcard::take_from_bytes::<BodyInV1>(rest)
+                    .map_err(|_| BodyError::Malformed)?;
+                if !leftover.is_empty() {
+                    return Err(BodyError::Malformed);
+                }
+                Self::from_wire_v1(wire)?
+            }
+            BODY_SCHEMA_V2 | BODY_SCHEMA_VERSION => {
+                let (wire, leftover) =
+                    postcard::take_from_bytes::<BodyIn>(rest).map_err(|_| BodyError::Malformed)?;
+                if !leftover.is_empty() {
+                    return Err(BodyError::Malformed);
+                }
+                if version == BODY_SCHEMA_V2 && wire.items.iter().any(|i| i.has_recovery_codes()) {
+                    return Err(BodyError::Malformed);
+                }
+                Self::from_wire(wire)?
+            }
+            _ => return Err(BodyError::UnknownSchema(version)),
+        };
         data.check_structure()?;
         data.settings.clamp_to_policy();
         Ok(data)
@@ -178,6 +188,26 @@ impl VaultData {
 
     /// Builds the domain values. Each conversion runs that value's field rules.
     fn from_wire(wire: BodyIn) -> Result<VaultData, BodyError> {
+        let wire_categories = wire.categories.into_inner();
+        let mut categories = Vec::with_capacity(wire_categories.len());
+        for c in wire_categories {
+            categories.push(c.into_category().map_err(|_| BodyError::Invalid)?);
+        }
+        let wire_items = wire.items.into_inner();
+        let mut items = Vec::with_capacity(wire_items.len());
+        for i in wire_items {
+            items.push(i.into_item().map_err(|_| BodyError::Invalid)?);
+        }
+        Ok(VaultData {
+            settings: wire.settings.into_settings(),
+            categories,
+            items,
+            next_category_id: wire.next_category_id,
+        })
+    }
+
+    /// Builds the domain values. Each conversion runs that value's field rules.
+    fn from_wire_v1(wire: BodyInV1) -> Result<VaultData, BodyError> {
         let wire_categories = wire.categories.into_inner();
         let mut categories = Vec::with_capacity(wire_categories.len());
         for c in wire_categories {
@@ -205,6 +235,7 @@ impl VaultData {
         for item in &self.items {
             validate_item(&item.title, &item.data, PhraseRule::Required)
                 .map_err(|_| BodyError::Invalid)?;
+            validate_fields(&item.fields).map_err(|_| BodyError::Invalid)?;
         }
         self.check_structure()
     }
@@ -250,6 +281,57 @@ impl VaultData {
     }
 }
 
+fn encode_wire(out: &impl serde::Serialize, schema: u16) -> Result<SecretBuf, BodyError> {
+    let size = postcard::serialize_with_flavor(out, postcard::ser_flavors::Size::default())
+        .map_err(|_| BodyError::Encode)?;
+    let total = size.checked_add(VERSION_LEN).ok_or(BodyError::Encode)?;
+    let mut buf = Zeroizing::new(vec![0u8; total]);
+    let (version, rest) = buf.split_at_mut(VERSION_LEN);
+    version.copy_from_slice(&schema.to_le_bytes());
+    let written = postcard::to_slice(out, rest)
+        .map_err(|_| BodyError::Encode)?
+        .len();
+    // Unreachable: the same value was just measured.
+    if written != size {
+        return Err(BodyError::Encode);
+    }
+    // Moves the Vec (pointer, length, capacity) into the SecretBuf: no copy.
+    Ok(SecretBuf::from_vec(core::mem::take(&mut *buf)))
+}
+
+pub(crate) fn reject_if_newer(version: u16, newest: u16) -> Result<(), BodyError> {
+    if version > newest {
+        Err(BodyError::NewerSchema(version))
+    } else if version == 0 {
+        Err(BodyError::UnknownSchema(0))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn encode_v1_for_test(data: &VaultData) -> SecretBuf {
+    use crate::wire::{BodyOutV1, ItemOutV1};
+    let out = BodyOutV1 {
+        settings: SettingsWire::new(&data.settings),
+        categories: data.categories.iter().map(CategoryOut::new).collect(),
+        items: data.items.iter().map(ItemOutV1::new).collect(),
+        next_category_id: data.next_category_id,
+    };
+    encode_wire(&out, BODY_SCHEMA_V1).unwrap()
+}
+
+#[cfg(test)]
+fn encode_v2_for_test(data: &VaultData) -> Vec<u8> {
+    let out = BodyOut {
+        settings: SettingsWire::new(&data.settings),
+        categories: data.categories.iter().map(CategoryOut::new).collect(),
+        items: data.items.iter().map(ItemOut::new).collect(),
+        next_category_id: data.next_category_id,
+    };
+    encode_wire(&out, BODY_SCHEMA_V2).unwrap().expose().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +352,7 @@ mod tests {
     }
     fn item(n: u8, category: Option<u32>, data: ItemData) -> Item {
         Item {
+            fields: Vec::new(),
             id: ItemId::from_hex(&format!("{n:02x}").repeat(16)).unwrap(),
             title: t("Exämple Mail ✉"),
             category: category.map(CategoryId),
@@ -450,27 +533,31 @@ mod tests {
         assert_eq!(back.settings, d.settings);
     }
 
+    #[rustfmt::skip]
+    const V1_DEFAULT_GOLDEN: [u8; 51] = [
+        1, 0,                         // schema version 1, little-endian
+        172, 2, 30, 1,                // auto-lock 300 (varint), clipboard 30, lock on sleep
+        20, 1, 1, 1, 1, 0, 1, 1,      // password: length 20, sets, no look-alike filter, minimums
+        6, 1, 45, 0, 0,               // passphrase: 6 words, separator "-", flags
+        2, 3,                         // username: 2 words, 3 digits
+        3,                            // 3 categories
+        1, 8, b'P', b'e', b'r', b's', b'o', b'n', b'a', b'l',
+        2, 4, b'W', b'o', b'r', b'k',
+        3, 9, b'C', b'o', b'm', b'm', b'u', b'n', b'i', b't', b'y',
+        0,                            // no items
+        4,                            // next category id
+    ];
+
     /// The schema v1 encoding of a new vault, byte for byte. If this test fails, the
     /// body format changed: existing vaults would no longer open, so the change needs a
     /// schema bump, not an edit here.
     #[test]
     fn default_body_golden() {
-        #[rustfmt::skip]
-        const GOLDEN: [u8; 51] = [
-            1, 0,                         // schema version 1, little-endian
-            172, 2, 30, 1,                // auto-lock 300 (varint), clipboard 30, lock on sleep
-            20, 1, 1, 1, 1, 0, 1, 1,      // password: length 20, sets, no look-alike filter, minimums
-            6, 1, 45, 0, 0,               // passphrase: 6 words, separator "-", flags
-            2, 3,                         // username: 2 words, 3 digits
-            3,                            // 3 categories
-            1, 8, b'P', b'e', b'r', b's', b'o', b'n', b'a', b'l',
-            2, 4, b'W', b'o', b'r', b'k',
-            3, 9, b'C', b'o', b'm', b'm', b'u', b'n', b'i', b't', b'y',
-            0,                            // no items
-            4,                            // next category id
-        ];
-        assert_eq!(VaultData::new_default().encode().unwrap().expose(), GOLDEN);
-        let back = VaultData::decode(&GOLDEN).unwrap();
+        assert_eq!(
+            encode_v1_for_test(&VaultData::new_default()).expose(),
+            V1_DEFAULT_GOLDEN
+        );
+        let back = VaultData::decode(&V1_DEFAULT_GOLDEN).unwrap();
         assert_eq!(back.settings, Settings::default());
         assert_eq!(back.next_category_id, 4);
         assert_eq!(back.categories.len(), 3);
@@ -479,8 +566,8 @@ mod tests {
     #[test]
     fn encoded_starts_with_version() {
         let b = bytes(&VaultData::new_default());
-        assert_eq!(b[..2], [1, 0]);
-        assert_eq!(BODY_SCHEMA_VERSION.to_le_bytes(), [1, 0]);
+        assert_eq!(b[..2], [3, 0]);
+        assert_eq!(BODY_SCHEMA_VERSION.to_le_bytes(), [3, 0]);
     }
 
     #[test]
@@ -492,10 +579,10 @@ mod tests {
     #[test]
     fn newer_schema_refused() {
         let mut b = bytes(&VaultData::new_default());
-        b[..2].copy_from_slice(&[2, 0]);
+        b[..2].copy_from_slice(&[4, 0]);
         assert_eq!(
             VaultData::decode(&b).unwrap_err(),
-            BodyError::NewerSchema(2)
+            BodyError::NewerSchema(4)
         );
         assert_eq!(
             VaultData::decode(&[0xff, 0xff]).unwrap_err(),
@@ -743,6 +830,9 @@ mod tests {
         let seeds = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/seeds");
         let default_body = bytes(&VaultData::new_default());
         let four_items = bytes(&data_with(every_type()));
+        let v1_items = encode_v1_for_test(&data_with(every_type()));
+        let v2_fields = bytes(&schema2::with_fields());
+        let v3_codes = bytes(&schema2::with_codes());
         let settings = postcard::to_allocvec(&SettingsWire::new(&Settings::default())).unwrap();
         let mut huge_count = vec![1, 0];
         huge_count.extend_from_slice(&settings);
@@ -752,6 +842,9 @@ mod tests {
         std::fs::create_dir_all(&decode).unwrap();
         std::fs::write(decode.join("default"), &default_body).unwrap();
         std::fs::write(decode.join("four_items"), &four_items).unwrap();
+        std::fs::write(decode.join("v1_items"), v1_items.expose()).unwrap();
+        std::fs::write(decode.join("v2_fields"), &v2_fields).unwrap();
+        std::fs::write(decode.join("v3_codes"), &v3_codes).unwrap();
         std::fs::write(decode.join("huge_count"), &huge_count).unwrap();
 
         // `open_fixed_key` takes an `arbitrary`-encoded `Input`: a 4-byte LE
@@ -775,6 +868,514 @@ mod tests {
             arb_bytes(&mut sealed, body);
             arb_bytes(&mut sealed, &[]); // no edits
             std::fs::write(open.join(format!("sealed_{name}")), sealed).unwrap();
+        }
+    }
+
+    mod schema2 {
+        use super::*;
+        use crate::fields::{FieldKind, FieldValue, parse_date, parse_recovery_codes, try_field};
+        use crate::format::{FORMAT_VERSION, HEADER_LEN};
+        use crate::padding::MAX_BODY_LEN;
+        use crate::rules::{
+            MAX_CUSTOM_FIELDS, MAX_LABEL_CHARS, MAX_LINE_BYTES, MAX_MULTILINE_SECRET_BYTES,
+            MAX_NOTE_BYTES, MAX_RECOVERY_CODE_BYTES, MAX_RECOVERY_CODES, MAX_SECRET_BYTES,
+            MAX_URLS,
+        };
+        use crate::wire::{ItemOutV1, MAX_WIRE_STR_BYTES};
+        use serde::Serialize;
+
+        // These tuples have exactly the wire field order. Postcard adds no struct
+        // or tuple delimiters, so the old item followed by this list is a v2 item.
+        type RawDate = (u16, u8, u8);
+        type RawField<'a> = (u8, &'a str, RawValue<'a>, Option<RawDate>);
+
+        #[derive(Serialize)]
+        enum RawValue<'a> {
+            Text(&'a str),
+            Secret(&'a str),
+            MultilineSecret(&'a str),
+            Date(RawDate),
+            RecoveryCodes(Vec<(&'a str, bool)>),
+            Unknown,
+        }
+
+        fn example_text(len: usize) -> String {
+            let mut text = "EXAMPLE".repeat(len.div_ceil("EXAMPLE".len()));
+            text.truncate(len);
+            text
+        }
+
+        fn raw_body(fields: Vec<RawField<'_>>) -> Vec<u8> {
+            let item = every_type().remove(0);
+            let data = data_with(vec![item]);
+            let out = (
+                SettingsWire::new(&data.settings),
+                data.categories
+                    .iter()
+                    .map(CategoryOut::new)
+                    .collect::<Vec<_>>(),
+                vec![(ItemOutV1::new(&data.items[0]), fields)],
+                data.next_category_id,
+            );
+            let mut bytes = BODY_SCHEMA_VERSION.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&postcard::to_allocvec(&out).unwrap());
+            bytes
+        }
+
+        fn raw_one(label: &str, value: RawValue<'_>) -> Result<VaultData, BodyError> {
+            VaultData::decode(&raw_body(vec![(0, label, value, None)]))
+        }
+
+        pub(super) fn with_fields() -> VaultData {
+            let mut data = data_with(vec![every_type().remove(0)]);
+            let date = parse_date("2024-02-29").unwrap();
+            data.items[0].fields = vec![
+                try_field(
+                    t("EXAMPLE-text"),
+                    FieldValue::Text(t("EXAMPLE-value")),
+                    None,
+                )
+                .unwrap(),
+                try_field(
+                    t("EXAMPLE-secret"),
+                    FieldValue::Secret(st("EXAMPLE-field-secret")),
+                    Some(date),
+                )
+                .unwrap(),
+                try_field(
+                    t("EXAMPLE-key"),
+                    FieldValue::MultilineSecret(st(
+                        "BEGIN OPENSSH PRIVATE KEY\nEXAMPLE-key\r\nEND OPENSSH PRIVATE KEY",
+                    )),
+                    None,
+                )
+                .unwrap(),
+                try_field(t("EXAMPLE-date"), FieldValue::Date(date), None).unwrap(),
+            ];
+            data
+        }
+
+        pub(super) fn with_codes() -> VaultData {
+            let mut data = data_with(vec![every_type().remove(0)]);
+            let mut codes =
+                parse_recovery_codes("EXAMPLE-code-1\nEXAMPLE-code-2\nEXAMPLE-code-3").unwrap();
+            codes[1].set_used(true);
+            data.items[0].fields = vec![
+                try_field(t("EXAMPLE-codes"), FieldValue::RecoveryCodes(codes), None).unwrap(),
+            ];
+            data
+        }
+
+        #[test]
+        fn recovery_codes_roundtrip() {
+            let encoded = bytes(&with_codes());
+            assert_eq!(&encoded[..2], &[3, 0]);
+            let back = VaultData::decode(&encoded).unwrap();
+            let FieldValue::RecoveryCodes(codes) = back.items[0].fields()[0].value() else {
+                panic!("field kind changed");
+            };
+            let got: Vec<(&str, bool)> = codes
+                .iter()
+                .map(|code| (code.code().expose(), code.used()))
+                .collect();
+            assert_eq!(
+                got,
+                [
+                    ("EXAMPLE-code-1", false),
+                    ("EXAMPLE-code-2", true),
+                    ("EXAMPLE-code-3", false)
+                ]
+            );
+            assert_eq!(bytes(&back), encoded);
+        }
+
+        #[test]
+        fn schema_2_without_codes_decodes() {
+            let v2 = encode_v2_for_test(&with_fields());
+            assert_eq!(&v2[..2], &[2, 0]);
+            let back = VaultData::decode(&v2).unwrap();
+            assert_eq!(back.items[0].fields().len(), 4);
+            assert_eq!(&bytes(&back)[..2], &[3, 0]);
+        }
+
+        #[test]
+        fn schema_2_with_codes_malformed() {
+            assert_eq!(
+                VaultData::decode(&encode_v2_for_test(&with_codes())).unwrap_err(),
+                BodyError::Malformed
+            );
+        }
+
+        #[test]
+        fn code_count_over_cap_malformed() {
+            let codes = |n| RawValue::RecoveryCodes(vec![("EXAMPLE", false); n]);
+            assert!(raw_one("EXAMPLE", codes(MAX_RECOVERY_CODES)).is_ok());
+            assert_eq!(
+                raw_one("EXAMPLE", codes(MAX_RECOVERY_CODES + 1)).unwrap_err(),
+                BodyError::Malformed
+            );
+            assert_eq!(
+                raw_one("EXAMPLE", codes(0)).unwrap_err(),
+                BodyError::Invalid
+            );
+        }
+
+        #[test]
+        fn code_65_bytes_invalid() {
+            let at_cap = example_text(MAX_RECOVERY_CODE_BYTES);
+            let over = example_text(MAX_RECOVERY_CODE_BYTES + 1);
+            assert!(raw_one("EXAMPLE", RawValue::RecoveryCodes(vec![(&at_cap, true)])).is_ok());
+            for bad in [over.as_str(), "*EXAMPLE", " EXAMPLE"] {
+                assert_eq!(
+                    raw_one("EXAMPLE", RawValue::RecoveryCodes(vec![(bad, false)])).unwrap_err(),
+                    BodyError::Invalid
+                );
+            }
+        }
+
+        #[test]
+        fn v1_default_golden_still_decodes() {
+            let data = VaultData::decode(&V1_DEFAULT_GOLDEN).unwrap();
+            assert_eq!(data.item_count(), 0);
+            assert_eq!(&data.encode().unwrap().expose()[..2], &[3, 0]);
+        }
+
+        #[test]
+        fn current_default_golden_is_v1_with_version_byte_3() {
+            let encoded = bytes(&VaultData::new_default());
+            let mut expected = V1_DEFAULT_GOLDEN;
+            expected[0] = 3;
+            assert_eq!(encoded, expected);
+            assert_eq!(encoded[2..], V1_DEFAULT_GOLDEN[2..]);
+        }
+
+        #[test]
+        fn v1_item_roundtrip_has_no_fields() {
+            let data = data_with(vec![every_type().remove(0)]);
+            let v1 = encode_v1_for_test(&data);
+            assert_eq!(&v1.expose()[..2], &[1, 0]);
+            let back = VaultData::decode(v1.expose()).unwrap();
+            assert_eq!(back.item_count(), 1);
+            assert!(back.items[0].fields().is_empty());
+            assert_items_eq(&data.items[0], &back.items[0]);
+        }
+
+        #[test]
+        fn v1_then_encode_is_v2() {
+            let data = data_with(every_type());
+            let back = VaultData::decode(encode_v1_for_test(&data).expose()).unwrap();
+            let v2 = bytes(&back);
+            assert_eq!(&v2[..2], &[3, 0]);
+            let again = VaultData::decode(&v2).unwrap();
+            for (old, new) in data.items.iter().zip(&again.items) {
+                assert!(new.fields().is_empty());
+                assert_items_eq(old, new);
+            }
+            assert_eq!(bytes(&again), v2);
+        }
+
+        #[test]
+        fn v2_roundtrip_keeps_fields() {
+            let data = with_fields();
+            let encoded = bytes(&data);
+            let back = VaultData::decode(&encoded).unwrap();
+            let fields = back.items[0].fields();
+            assert_eq!(fields.len(), 4);
+            for (old, new) in data.items[0].fields().iter().zip(fields) {
+                assert!(old.label() == new.label());
+                assert_eq!(old.kind(), new.kind());
+                assert_eq!(old.expiry(), new.expiry());
+                match (old.value(), new.value()) {
+                    (FieldValue::Text(a), FieldValue::Text(b)) => assert!(a.as_str() == b.as_str()),
+                    (FieldValue::Secret(a), FieldValue::Secret(b))
+                    | (FieldValue::MultilineSecret(a), FieldValue::MultilineSecret(b)) => {
+                        assert!(a.expose() == b.expose())
+                    }
+                    (FieldValue::Date(a), FieldValue::Date(b)) => assert!(a == b),
+                    _ => panic!("field kinds differ"),
+                }
+            }
+            assert_eq!(fields[1].kind(), FieldKind::Secret);
+            assert_eq!(bytes(&back), encoded);
+        }
+
+        #[test]
+        fn v1_reader_refuses_v2() {
+            assert_eq!(
+                reject_if_newer(2, BODY_SCHEMA_V1),
+                Err(BodyError::NewerSchema(2))
+            );
+        }
+
+        #[test]
+        fn schema_four_is_newer() {
+            let mut encoded = bytes(&with_fields());
+            encoded[..2].copy_from_slice(&4u16.to_le_bytes());
+            assert_eq!(
+                VaultData::decode(&encoded).unwrap_err(),
+                BodyError::NewerSchema(4)
+            );
+            assert_eq!(
+                VaultData::decode(&u16::MAX.to_le_bytes()).unwrap_err(),
+                BodyError::NewerSchema(u16::MAX)
+            );
+        }
+
+        #[test]
+        fn schema_zero_still_unknown() {
+            assert_eq!(
+                VaultData::decode(&[0, 0]).unwrap_err(),
+                BodyError::UnknownSchema(0)
+            );
+        }
+
+        #[test]
+        fn header_untouched() {
+            assert_eq!(FORMAT_VERSION, 1);
+            assert_eq!(HEADER_LEN, 164);
+        }
+
+        #[test]
+        fn eleven_fields_malformed() {
+            let fields = (0..=MAX_CUSTOM_FIELDS)
+                .map(|i| {
+                    (
+                        u8::try_from(i).unwrap(),
+                        "EXAMPLE",
+                        RawValue::Text(""),
+                        None,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                VaultData::decode(&raw_body(fields)).unwrap_err(),
+                BodyError::Malformed
+            );
+        }
+
+        #[test]
+        fn label_65_chars_invalid() {
+            assert!(raw_one(&"\u{1F980}".repeat(MAX_LABEL_CHARS), RawValue::Text("")).is_ok());
+            assert_eq!(
+                raw_one(&"\u{1F980}".repeat(MAX_LABEL_CHARS + 1), RawValue::Text("")).unwrap_err(),
+                BodyError::Invalid
+            );
+            assert_eq!(
+                raw_one(" \t", RawValue::Text("")).unwrap_err(),
+                BodyError::Invalid
+            );
+        }
+
+        #[test]
+        fn label_control_invalid() {
+            for bad in ["EXAMPLE\nlabel", "EXAMPLE\u{202E}label"] {
+                assert_eq!(
+                    raw_one(bad, RawValue::Text("")).unwrap_err(),
+                    BodyError::Invalid
+                );
+            }
+        }
+
+        #[test]
+        fn secret_4097_invalid() {
+            let at_cap = example_text(MAX_SECRET_BYTES);
+            let over = example_text(MAX_SECRET_BYTES + 1);
+            for value in [RawValue::Text(&at_cap), RawValue::Secret(&at_cap)] {
+                assert!(raw_one("EXAMPLE", value).is_ok());
+            }
+            for value in [RawValue::Text(&over), RawValue::Secret(&over)] {
+                assert_eq!(raw_one("EXAMPLE", value).unwrap_err(), BodyError::Invalid);
+            }
+        }
+
+        #[test]
+        fn multiline_16385_invalid() {
+            assert!(
+                raw_one(
+                    "EXAMPLE",
+                    RawValue::MultilineSecret(&example_text(MAX_MULTILINE_SECRET_BYTES))
+                )
+                .is_ok()
+            );
+            assert_eq!(
+                raw_one(
+                    "EXAMPLE",
+                    RawValue::MultilineSecret(&example_text(MAX_MULTILINE_SECRET_BYTES + 1))
+                )
+                .unwrap_err(),
+                BodyError::Invalid
+            );
+        }
+
+        #[test]
+        fn multiline_over_wire_cap_is_malformed() {
+            assert_eq!(
+                raw_one(
+                    "EXAMPLE",
+                    RawValue::MultilineSecret(&example_text(MAX_WIRE_STR_BYTES + 1))
+                )
+                .unwrap_err(),
+                BodyError::Malformed
+            );
+        }
+
+        #[test]
+        fn bad_kind_tag_malformed() {
+            assert_eq!(
+                raw_one("EXAMPLE", RawValue::Unknown).unwrap_err(),
+                BodyError::Malformed
+            );
+        }
+
+        #[test]
+        fn bad_dates_invalid() {
+            for date in [
+                (2026, 13, 1),
+                (2026, 1, 0),
+                (2026, 2, 29),
+                (0, 1, 1),
+                (10_000, 1, 1),
+                (1900, 2, 29),
+            ] {
+                assert_eq!(
+                    raw_one("EXAMPLE", RawValue::Date(date)).unwrap_err(),
+                    BodyError::Invalid
+                );
+                assert_eq!(
+                    VaultData::decode(&raw_body(vec![(
+                        0,
+                        "EXAMPLE",
+                        RawValue::Text(""),
+                        Some(date)
+                    )]))
+                    .unwrap_err(),
+                    BodyError::Invalid
+                );
+            }
+            for date in [(2024, 2, 29), (2000, 2, 29)] {
+                assert!(raw_one("EXAMPLE", RawValue::Date(date)).is_ok());
+                assert!(
+                    VaultData::decode(&raw_body(vec![(
+                        0,
+                        "EXAMPLE",
+                        RawValue::Text(""),
+                        Some(date)
+                    )]))
+                    .is_ok()
+                );
+            }
+        }
+
+        #[test]
+        fn duplicate_positions_invalid() {
+            assert_eq!(
+                VaultData::decode(&raw_body(vec![
+                    (0, "EXAMPLE", RawValue::Text(""), None),
+                    (0, "EXAMPLE", RawValue::Text(""), None)
+                ]))
+                .unwrap_err(),
+                BodyError::Invalid
+            );
+        }
+
+        #[test]
+        fn position_gap_invalid() {
+            for positions in [[0, 2], [1, 2], [0, u8::MAX]] {
+                let fields = positions
+                    .into_iter()
+                    .map(|p| (p, "EXAMPLE", RawValue::Text(""), None))
+                    .collect();
+                assert_eq!(
+                    VaultData::decode(&raw_body(fields)).unwrap_err(),
+                    BodyError::Invalid
+                );
+            }
+        }
+
+        #[test]
+        fn permuted_positions_encode_in_order() {
+            let body = raw_body(vec![
+                (1, "EXAMPLE-second", RawValue::Secret("EXAMPLE"), None),
+                (0, "EXAMPLE-first", RawValue::Text("EXAMPLE"), None),
+            ]);
+            let back = VaultData::decode(&body).unwrap();
+            assert!(back.items[0].fields()[0].label() == "EXAMPLE-first");
+            assert!(back.items[0].fields()[1].label() == "EXAMPLE-second");
+            let encoded = bytes(&back);
+            assert_eq!(bytes(&VaultData::decode(&encoded).unwrap()), encoded);
+        }
+
+        #[test]
+        fn truncated_v2_is_malformed() {
+            let body = raw_body(vec![(0, "EXAMPLE", RawValue::Secret("EXAMPLE"), None)]);
+            for n in 0..body.len() {
+                let expected = if n < VERSION_LEN {
+                    BodyError::TooShort
+                } else {
+                    BodyError::Malformed
+                };
+                assert_eq!(
+                    VaultData::decode(&body[..n]).unwrap_err(),
+                    expected,
+                    "prefix length {n}"
+                );
+            }
+            assert!(VaultData::decode(&body).is_ok());
+        }
+
+        fn assert_debug_hidden(data: &VaultData, marker: &str) {
+            for field in data.items[0].fields() {
+                assert!(!format!("{field:?} {:?}", field.value()).contains(marker));
+                assert!(!format!("{field:?}").contains(field.label()));
+            }
+            assert!(!format!("{:?}", data.items[0]).contains(marker));
+            assert!(!format!("{data:?}").contains(marker));
+        }
+
+        #[test]
+        fn custom_secret_absent_from_debug() {
+            assert_debug_hidden(&with_fields(), "EXAMPLE-field-secret");
+        }
+
+        #[test]
+        fn multiline_secret_absent_from_debug() {
+            assert_debug_hidden(&with_fields(), "BEGIN OPENSSH PRIVATE KEY");
+        }
+
+        #[test]
+        fn maxed_login_with_ten_keys_fits_one_body() {
+            let mut login = item(
+                1,
+                None,
+                ItemData::Login {
+                    username: t(&example_text(MAX_LINE_BYTES)),
+                    password: st(&example_text(MAX_SECRET_BYTES)),
+                    urls: (0..MAX_URLS)
+                        .map(|_| t(&example_text(MAX_LINE_BYTES)))
+                        .collect(),
+                    notes: st(&example_text(MAX_NOTE_BYTES)),
+                },
+            );
+            login.title = t(&example_text(MAX_LINE_BYTES));
+            login.fields = (0..MAX_CUSTOM_FIELDS)
+                .map(|_| {
+                    try_field(
+                        t(&"\u{1F980}".repeat(MAX_LABEL_CHARS)),
+                        FieldValue::MultilineSecret(st(&example_text(MAX_MULTILINE_SECRET_BYTES))),
+                        parse_date("9999-12-31"),
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let data = data_with(vec![login]);
+            let encoded = bytes(&data);
+            let len = encoded.len();
+            assert!(
+                (270_849..=272_000).contains(&len),
+                "encoded body length: {len}"
+            );
+            assert!(len <= MAX_BODY_LEN);
+            assert_eq!(bytes(&VaultData::decode(&encoded).unwrap()), encoded);
         }
     }
 
@@ -844,6 +1445,7 @@ mod tests {
                 .prop_map(
                     |(id, title, cat, favourite, created, updated, trashed, data)| {
                         let item = Item {
+                            fields: Vec::new(),
                             id: ItemId::from_hex(&"00".repeat(16)).unwrap(),
                             title: t(&title),
                             category: None,

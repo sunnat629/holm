@@ -8,6 +8,7 @@ use holm_crypto::MasterPassword;
 use super::Session;
 use crate::body::VaultData;
 use crate::error::CoreError;
+use crate::fields::{CustomField, validate_fields};
 use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
 use crate::rules::MAX_ITEMS;
 use crate::settings::Settings;
@@ -33,6 +34,7 @@ pub(crate) fn insert_new(
         id = ItemId::random()?;
     }
     data.items.push(Item {
+        fields: input.fields,
         id,
         title: input.title,
         category: input.category,
@@ -111,7 +113,9 @@ impl<S: VaultStore> Session<S> {
     }
 
     /// Replaces an item's contents and saves. `created` stays; `updated` becomes now.
-    /// An empty phrase on a recovery-phrase item keeps the stored phrase.
+    /// An empty phrase on a recovery-phrase item keeps the stored phrase. The item's
+    /// custom fields stay as they are (`input.fields` is ignored). Call
+    /// [`Session::set_custom_fields`] to replace them.
     ///
     /// # Errors
     /// [`CoreError::Locked`], [`CoreError::Field`], [`CoreError::NotFound`],
@@ -137,6 +141,7 @@ impl<S: VaultStore> Session<S> {
         );
         let created = data.items[pos].created;
         let new = Item {
+            fields: Vec::new(),
             id,
             title: input.title,
             category: input.category,
@@ -150,11 +155,45 @@ impl<S: VaultStore> Session<S> {
         if keep {
             swap_phrases(&mut data.items[pos], &mut old);
         }
+        // The item keeps its custom fields: an edit form that does not show them must
+        // not delete them. `input.fields` is ignored here.
+        core::mem::swap(&mut data.items[pos].fields, &mut old.fields);
         self.commit_or_undo(move |d| {
             let mut cur = std::mem::replace(&mut d.items[pos], old);
             if keep {
                 swap_phrases(&mut d.items[pos], &mut cur);
             }
+            core::mem::swap(&mut d.items[pos].fields, &mut cur.fields);
+        })
+    }
+
+    /// Replaces an item's custom fields and saves. `updated` becomes now.
+    ///
+    /// If the vault has no room for the save, the previous fields and `updated`
+    /// are put back.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::Field`], [`CoreError::NotFound`],
+    /// [`CoreError::InTrash`], or the errors of a save.
+    pub fn set_custom_fields(
+        &mut self,
+        id: ItemId,
+        fields: Vec<CustomField>,
+    ) -> Result<(), CoreError> {
+        self.unlocked()?;
+        validate_fields(&fields)?;
+        let now = self.now_unix();
+        let data = &mut self.unlocked_mut()?.data;
+        let pos = position(data, id)?;
+        if data.items[pos].trashed.is_some() {
+            return Err(CoreError::InTrash);
+        }
+        let old_updated = data.items[pos].updated;
+        let old_fields = std::mem::replace(&mut data.items[pos].fields, fields);
+        data.items[pos].updated = now;
+        self.commit_or_undo(move |d| {
+            d.items[pos].fields = old_fields;
+            d.items[pos].updated = old_updated;
         })
     }
 

@@ -8,7 +8,7 @@ prints `holm 0.0.0`. We also added a test that runs that program and checks its 
 There is no cryptography yet. This lesson is about how a Rust project is laid out and how
 you build, run and test it.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Installing Rust with rustup
 
@@ -46,7 +46,7 @@ cargo test --workspace    # run all tests
 
 A **crate** is one compilation unit: a library or a program. It is like a Gradle module. A
 **workspace** groups several crates that share one lock file and one build folder (`target/`).
-Our root `Cargo.toml`:
+Our root `Cargo.toml` started like this:
 
 ```toml
 [workspace]
@@ -55,7 +55,9 @@ members = ["crates/holm-crypto", "crates/holm-core", "crates/holm-cli"]
 ```
 
 Line by line: `[workspace]` starts the workspace section. `resolver` picks how Cargo
-chooses dependency versions (3 is the current one). `members` lists the crate folders. In
+chooses dependency versions (3 is the current one). `members` lists the crate folders. The
+workspace has grown since: `holm-platform` and `holm-gui` are members now, and the separate
+`oracle` and `fuzz` workspaces are listed under `exclude`. In
 Kotlin you'd write: `include(":holm-crypto", ":holm-core", ":holm-cli")` in `settings.gradle.kts`.
 
 ### Reading a crate's `Cargo.toml`
@@ -78,7 +80,7 @@ Kotlin you'd write: a Gradle version catalog (`libs.versions.toml`).
 
 ### `fn main` and `println!`
 
-This is the whole program, `crates/holm-cli/src/main.rs`:
+This was the whole first program, `crates/holm-cli/src/main.rs`:
 
 ```rust
 fn main() {
@@ -92,6 +94,10 @@ next argument goes. `env!("CARGO_PKG_VERSION")` reads a value at compile time: C
 it from the `version` field in `Cargo.toml`, so the program prints the version it was built
 with and the text can never drift from the manifest. In Kotlin you'd write:
 `fun main() { println("holm ${BuildConfig.VERSION}") }`. They look alike on purpose.
+
+Today `main.rs` is longer. It collects the command-line arguments with
+`std::env::args_os()`, parses them, and hands them to `holm_cli::run`, which returns an
+`ExitCode`. Run with no arguments, it still prints a line that starts with `holm `.
 
 ### `let` versus `let mut`
 
@@ -120,7 +126,9 @@ The `#![...]` form is an **attribute** that applies to the whole crate. `unsafe`
 keyword that switches off some of the compiler's memory safety checks so you can do
 low-level things. `forbid(unsafe_code)` makes any `unsafe` block a compile error, and unlike
 `deny` it cannot be overridden further down. `deny(missing_docs)` makes a public item
-without a doc comment (`///` or `//!`) an error. In Kotlin you'd write: nothing close. The
+without a doc comment (`///` or `//!`) an error. Today the unsafe rule also lives in the
+workspace lint table (lesson 01). One crate, `holm-platform`, sets it to `deny` instead of
+`forbid`, so that its one reviewed macOS (AppKit) module can opt in. In Kotlin you'd write: nothing close. The
 JVM has no `unsafe` keyword in the language; the nearest idea is a lint rule that bans
 `sun.misc.Unsafe`.
 
@@ -135,27 +143,32 @@ fn prints_version() {
         .output()
         .expect("failed to run holm binary");
     assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout is not UTF-8");
+    assert!(stdout.starts_with("holm "), "unexpected output: {stdout}");
 }
 ```
 
 `#[test]` marks a test function. `Command::new(...)` starts a process. `env!` reads a value
 at compile time: Cargo sets `CARGO_BIN_EXE_holm` to the path of the built binary.
 `.expect("...")` means "stop with this message if it failed". `assert!` fails the test if
-its condition is false. In Kotlin you'd write: a JUnit `@Test` that uses `ProcessBuilder`.
+its condition is false. `String::from_utf8` turns the raw output bytes into text, and the
+last line checks that the text starts with `holm `. In Kotlin you'd write: a JUnit `@Test` that uses `ProcessBuilder`.
 
 ## Why this matters for security
 
 Pinning the compiler version, and committing `Cargo.lock` (which records the exact version of
 every dependency), makes builds repeatable. That is the first step toward builds others can
 verify. `forbid(unsafe_code)` means that, in our own crates, the compiler proves a whole class
-of memory bugs (buffer overflows, use after free) cannot happen. It does not cover our
+of memory bugs (buffer overflows, use after free) cannot happen. The one exception is the
+reviewed AppKit module in `holm-platform`. The rule does not cover our
 dependencies, which do use `unsafe` internally; that is why we keep the dependency list short
 and checked by the local gates in `scripts/ci-local.sh`.
 
 ## Try it
 
 1. Run the program and read its output.
-   Check: `cargo run -p holm-cli` prints `holm 0.0.0`.
+   Check: `cargo run -p holm-cli` prints a line that starts with `holm `, followed by the
+   version (for example `holm 0.0.0`).
 2. In `crates/holm-cli/src/main.rs`, add `let message = "hi";` as the first line of `main`,
    then try `message = "bye";` on the next line. Read the compiler error, then fix it with
    `let mut`. Check: `cargo build -p holm-cli` fails before the fix and passes after. Undo
@@ -168,3 +181,5 @@ and checked by the local gates in `scripts/ci-local.sh`.
 - [The Rust Programming Language, ch. 1: Getting Started](https://doc.rust-lang.org/book/ch01-00-getting-started.html)
 - [Ch. 3.1: Variables and Mutability](https://doc.rust-lang.org/book/ch03-01-variables-and-mutability.html)
 - [Ch. 14.3: Cargo Workspaces](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html)
+- Next: [Lesson 01](01-dependencies-and-supply-chain.md)
+- [The index](README.md)
