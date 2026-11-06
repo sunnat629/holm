@@ -61,6 +61,12 @@ mod macos {
                 .with_inner_size([900.0, 600.0]),
             renderer: eframe::Renderer::Glow,
             clipboard_shortcuts: false,
+            // A flat 2D UI needs none of these. They are the eframe defaults, spelled out
+            // so a dependency bump cannot quietly add a depth, stencil or MSAA buffer
+            // (each one grows the window's GPU memory).
+            depth_buffer: 0,
+            stencil_buffer: 0,
+            multisampling: 0,
             ..Default::default()
         }
     }
