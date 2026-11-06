@@ -11,7 +11,9 @@ text. The Trash has the opposite problem: the commands that act on it (`restore`
 
 - GUI: a "Back up..." toolbar button, a typed-path form, and a `BackedUp` result screen.
 - CLI: `holm restore ID`, `holm empty-trash`, and `holm list --trash`.
-- Shell: the same two commands, from the same function bodies.
+- Shell: the same two commands. `Shell::command` in `crates/holm-cli/src/shell.rs` calls
+  `write::restore_in` and `write::empty_trash_in` on the session it keeps open, while the
+  one-shot commands call `write::restore` and `write::empty_trash` with a vault path.
 
 ## Rust ideas in this task
 
