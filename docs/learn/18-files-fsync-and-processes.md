@@ -6,7 +6,7 @@ A password manager that loses the vault on a crash is worse than one that leaks 
 
 ## What we built
 
-A new crate, `holm-platform`, holds `FsStore`: the vault as one file on disk, behind the `VaultStore` trait from Task 7. A save writes a fresh temp file next to the vault, syncs it, renames it over the vault, then syncs the directory. The vault must be a regular file (symlinks and folders are refused), new files are mode 0600, and a world-writable directory is refused. Tests cover each rule on real files, on a real exFAT disk image, and with a child process that kills itself at each of the six save steps. `Session::active_items` lists the items not in Trash, so the crash test can check what survived.
+A new crate, `holm-platform`, holds `FsStore`: the vault as one file on disk, behind the `VaultStore` trait from an earlier lesson. A save writes a fresh temp file next to the vault, syncs it, renames it over the vault, then syncs the directory. The vault must be a regular file (symlinks and folders are refused), new files are mode 0600, and a world-writable directory is refused. Tests cover each rule on real files, on a real exFAT disk image, and with a child process that kills itself at each of the six save steps. `Session::active_items` lists the items not in Trash, so the crash test can check what survived.
 
 ## Rust ideas in this task
 
@@ -51,7 +51,7 @@ File::open(dir)?.sync_all()?;             // DirSynced (Unix)
 
 `create_new` for a brand-new vault uses `hard_link(temp, path)` instead of `rename`, because `rename` would overwrite a file that appeared in the meantime, while `hard_link` fails if anything is there. exFAT has no hard links, so there we fall back to an exclusive create of the vault path.
 
-In Kotlin you'd write `Files.move(temp, path, ATOMIC_MOVE)`, then `FileChannel.force(true)`. The JVM has no portable directory sync, which is one reason the old project lost data.
+In Kotlin you'd write `FileChannel.force(true)` on the temp file, then `Files.move(temp, path, ATOMIC_MOVE)`. The JVM has no portable directory sync, so that last step has no direct equivalent.
 
 ### Checking what you opened
 
@@ -84,9 +84,9 @@ In Kotlin you'd write `ProcessBuilder(javaBin, "-cp", cp, "CrashMain").start().w
 
 ### Why `exit` is not pulling the power
 
-`process::exit` stops our process at once: no destructors, no unwinding. But the OS keeps running and still writes its cache to the disk later. So the crash test proves the order of our steps is right, not that every sync is needed. A real power cut can lose anything not yet synced, which is what the two `sync_all` calls are for. Testing that needs a VM or special hardware, which is Phase 5 work.
+`process::exit` stops our process at once: no destructors, no unwinding. But the OS keeps running and still writes its cache to the disk later. So the crash test proves the order of our steps is right, not that every sync is needed. A real power cut can lose anything not yet synced, which is what the two `sync_all` calls are for. Testing that needs a VM or special hardware, which these tests do not use.
 
-## Exercises
+## Try it
 
 1. In `replace`, comment out `self.check_target()?;`. Run the symlink test and read why it fails. Then restore the line.
    Check: `cargo test -p holm-platform --test fs_store symlinked_vault_refused --locked`
@@ -97,6 +97,9 @@ In Kotlin you'd write `ProcessBuilder(javaBin, "-cp", cp, "CrashMain").start().w
 
 ## Read next
 
+- Previous: [Lesson 16](16-borrowing-in-practice.md)
+- Next: [Lesson 21](21-fuzzing-structured-inputs.md)
+- [The index](README.md)
 - [`std::fs::OpenOptions`](https://doc.rust-lang.org/std/fs/struct.OpenOptions.html)
 - [`std::fs::File::sync_all`](https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_all)
 - [The Rust Book, Test Organization](https://doc.rust-lang.org/book/ch11-03-test-organization.html)

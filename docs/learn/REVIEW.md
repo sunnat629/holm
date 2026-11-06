@@ -20,3 +20,7 @@
 | 24-state-machines-and-worker-threads | fixed | Screen enum marked as a simplified first version, "this task" reworded, Try it heading, previous, next and index links added. |
 | 25-borrowing-across-a-frame | fixed | ItemRow and build_rows updated to the current rows.rs (summaries, categories, dates), subtitle rules described, grep exercise clarified, unverified line_buf test replaced with the codes badge test, Try it and links added. |
 | 26-the-clipboard-is-shared | fixed | Phase 5 plan section replaced with a pointer to lesson 38's auto-clear, stale "doesn't clear yet" claim removed, Try it and links added (next links the index). |
+| 21-fuzzing-structured-inputs | fixed | BoundedVec snippet now shows the cap check before the prealloc clamp, varint arithmetic corrected, exercise 1 removes both guards, later fuzz targets noted, Try it and links added. |
+| 18-files-fsync-and-processes | fixed | Task and phase references removed, Kotlin order fixed (force the temp before the move), Try it heading, previous, next and index links added. |
+| 16-borrowing-in-practice | fixed | Snippets and Rust facts fine; Try it heading, next and index links added (previous points at the index, as the lesson 15 file name is not known here). |
+| 22-a-gui-crate-and-its-supply-chain | fixed | Font hashes and try_lock facts match; "this task" and "AI skim" wording replaced, Try it heading, previous, next and index links added. |

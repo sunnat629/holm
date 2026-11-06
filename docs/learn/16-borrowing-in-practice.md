@@ -54,7 +54,7 @@ In Kotlin you'd write `val old = settings; settings = new` and keep `old` in a v
 
 A doc comment can hold a code block marked `compile_fail,E0624`. The test passes only if the block fails to compile with that exact error (private method). Doctests build as an outside crate, so they check the real public surface. Each one has a plain sibling that compiles, so a typo cannot fake a pass.
 
-## Exercises
+## Try it
 
 1. In `update_item`, temporarily change `keep` to always `false` and run the test that keeps an empty phrase. Read the failure, then restore the line.
    Check: `cargo test -p holm-core empty_phrase_on_update_keeps_phrase --locked`
@@ -65,6 +65,9 @@ A doc comment can hold a code block marked `compile_fail,E0624`. The test passes
 
 ## Read next
 
+- Previous: Lesson 15 (see [the index](README.md) for its file)
+- Next: [Lesson 18](18-files-fsync-and-processes.md)
+- [The index](README.md)
 - [The Rust Book, References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html)
 - [`std::mem::replace`](https://doc.rust-lang.org/std/mem/fn.replace.html)
 - [Rustdoc: documentation tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html)

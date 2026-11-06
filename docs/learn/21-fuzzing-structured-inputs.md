@@ -6,7 +6,7 @@ The vault body decoder reads bytes that an attacker may have written, so it must
 
 ## What we built
 
-Two new fuzz targets: `decode_body` throws raw bytes at `VaultData::decode`, and `open_fixed_key` runs the whole open (envelope, padding, body decode) on raw or damaged files. A test-only Cargo feature, `fuzzing`, lets the second target skip Argon2 by handing in the key directly. A property test, `body_roundtrip_any`, generates valid vault bodies of every item type and checks `decode(encode())` gives the same data back. Finally `tests/round_trip.rs` in `holm-platform` drives a whole session (create, add, lock, unlock, edit, change password, back up) on `FsStore` in a temp directory and on an in-memory store.
+Two new fuzz targets: `decode_body` throws raw bytes at `VaultData::decode`, and `open_fixed_key` runs the whole open (envelope, padding, body decode) on raw or damaged files. A test-only Cargo feature, `fuzzing`, lets the second target skip Argon2 by handing in the key directly. A property test, `body_roundtrip_any`, generates valid vault bodies of every item type and checks `decode(encode())` gives the same data back. Finally `tests/round_trip.rs` in `holm-platform` drives a whole session (create, add, lock, unlock, edit, change password, back up) on `FsStore` in a temp directory and on an in-memory store. The fuzz workspace has since grown more targets (`parse_header_structured`, `unpad`, `decode_body_v1`, `import_csv`, `import_json`), and `scripts/ci-local.sh` runs every one of them.
 
 ## Rust ideas in this task
 
@@ -59,10 +59,19 @@ In Kotlin you'd put the helper in a `testFixtures` source set. A Cargo feature i
 ### Bounding allocation, and proving it
 
 ```rust
-let mut v = Vec::with_capacity(hint.min(PREALLOC_CAP)); // never trust the length field
+let hint = seq.size_hint().unwrap_or(0);
+if hint > MAX {
+    return Err(de::Error::invalid_length(hint, &self));
+}
+let mut v = Vec::with_capacity(hint.min(PREALLOC_CAP));
 ```
 
-A postcard length is a varint, so 6 bytes can claim `2^40` items. The decoder never reserves more than 1024 slots up front and grows only as real elements arrive. The fuzz gate proves it: every run passes `-malloc_limit_mb=64`, so one allocation over 64 MiB counts as a crash. The `huge_count` seed starts the fuzzer right at that case.
+A postcard length is a varint with 7 bits per byte, so 6 bytes can claim over four trillion items. `BoundedVec<T, MAX>` in `crates/holm-core/src/wire.rs` guards against that twice:
+
+- A declared length above the list's own cap (`MAX_ITEMS`, `MAX_URLS` and so on) is refused before any element is read.
+- An allowed length still reserves at most `PREALLOC_CAP` (1024) slots up front. The list grows only as real elements arrive.
+
+Strings get a cap too: `WireStr` refuses any string longer than `MAX_WIRE_STR_BYTES`. The fuzz gate proves the bounds hold. Every run passes `-malloc_limit_mb=64`, so one allocation over 64 MiB counts as a crash. The `huge_count` seed starts the fuzzer right at that case.
 
 In Kotlin you'd write `ArrayList(min(count, 1024))`. Same fix; the difference is that a Rust fuzzer can enforce it.
 
@@ -87,9 +96,9 @@ In Kotlin you'd write a Kotest `checkAll(Arb.bind(...))`. proptest also shrinks 
 
 Each unit test checks one piece, with fakes around it. `full_round_trip_on_disk` uses no fakes: real files, the system clock, real Argon2 at two costs. It checks things no unit test can see, such as that a password change still opens after a lock, that a backup written by one session opens in a new one, and that no temp file is left in the folder afterwards. Running the same scenario on an in-memory store too tells you, when it fails, whether to look at the core or at the file code.
 
-## Exercises
+## Try it
 
-1. In `crates/holm-core/src/wire.rs`, change `hint.min(PREALLOC_CAP)` to `hint`. Run the `huge_count` seed and read the crash report. Then undo the change.
+1. In `BoundedVec`'s visitor in `crates/holm-core/src/wire.rs`, delete the `if hint > MAX { ... }` check and change `hint.min(PREALLOC_CAP)` to `hint`. Run the `huge_count` seed and read the crash report. Then undo both changes. (With only one of the two changes, the other guard still stops the huge length.)
    Check: `cargo +nightly-2026-10-12 fuzz run decode_body fuzz/seeds/decode_body/huge_count -- -malloc_limit_mb=64`
 2. Show that the `fuzzing` feature is off in the product workspace and on in `fuzz/`.
    Check: `cargo tree -p holm-core -e features --locked | grep -c fuzzing; cargo tree --manifest-path fuzz/Cargo.toml -e features -i holm-core | grep fuzzing`
@@ -98,6 +107,9 @@ Each unit test checks one piece, with fakes around it. `full_round_trip_on_disk`
 
 ## Read next
 
+- Previous: [Lesson 18](18-files-fsync-and-processes.md)
+- Next: [Lesson 22](22-a-gui-crate-and-its-supply-chain.md)
+- [The index](README.md)
 - [Rust Fuzz Book: structure-aware fuzzing](https://rust-fuzz.github.io/book/cargo-fuzz/structure-aware-fuzzing.html)
 - [The `arbitrary` crate](https://docs.rs/arbitrary/latest/arbitrary/)
 - [The Cargo Book: features](https://doc.rust-lang.org/cargo/reference/features.html)
