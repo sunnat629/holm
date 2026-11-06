@@ -10,11 +10,13 @@ data it points into. Together they let search hand back titles without cloning t
 ## What we built
 
 `crates/holm-core/src/search.rs` adds `Session::search(&Query)`. The query holds typed text, an
-optional item type, a category filter, a favourites flag, a view (active or trash) and a sort. The
-result is a list of `ItemSummary<'a>` values that borrow their title and subtitle straight from the
-unlocked session. Only public fields are matched (title, username, URLs, chain, category name);
-passwords, notes, addresses and phrases are never read. Ties always break by item id, so the order
-is stable.
+optional item type, a category filter, a favourites flag, a view (active or trash), a sort and an
+`expiring_only` flag. The result is a list of `ItemSummary<'a>` values that borrow their title and
+subtitle straight from the unlocked session. A summary also carries plain numbers and dates: the
+soonest custom-field reminder and how many recovery codes are left. Only public fields are matched
+(title, username, URLs, chain, category name, custom field labels); passwords, notes, addresses,
+phrases, custom secrets and custom text values are never read. Ties always break by item id, so
+the order is stable.
 
 ## Rust ideas in this task
 
@@ -50,6 +52,7 @@ let mut hits: Vec<&Item> = data
     .collect();
 ```
 
+This is trimmed: the real chain also filters on view, category, search text and `expiring_only`.
 Each `filter` is lazy: nothing runs until `collect` pulls items through. No intermediate `Vec` is
 built between the filters. `.iter()` yields `&Item`, so `hits` holds references, not copies.
 
@@ -111,7 +114,7 @@ arguments, so the default lives on the type.
 `Query` has a hand-written `Debug` that prints `text_len` and never the text, so a stray
 `{:?}` in a log cannot leak what the user typed. A test pins this.
 
-## Exercises
+## Try it
 
 1. In `search.rs`, add a `Sort::TitleDesc` variant (reverse of `TitleAsc`, ties still by id) and a
    test for it. Check: `cargo test -p holm-core --locked search`
@@ -126,3 +129,6 @@ arguments, so the default lives on the type.
 - [The Rust Programming Language, ch. 10.3: Validating references with lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html)
 - [The Rust Programming Language, ch. 13.2: Processing a series of items with iterators](https://doc.rust-lang.org/book/ch13-02-iterators.html)
 - [std::cmp::Ordering](https://doc.rust-lang.org/std/cmp/enum.Ordering.html)
+- Previous: lesson 28, listed in [the index](README.md)
+- Next: [Lesson 30: Parsing untrusted text](30-parsing-untrusted-text.md)
+- [The index](README.md)
