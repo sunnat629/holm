@@ -9,12 +9,12 @@ security, three exercises, and what to read next in
 
 | Lesson | Topic |
 |---|---|
-| [00](00-setup-and-cargo.md) | Install Rust, Cargo workspaces, `fn main`, `let`, and `forbid(unsafe_code)`. |
-| [01](01-dependencies-and-supply-chain.md) | Continuous integration and supply-chain gates: what a dependency is and why we count them. |
-| [02](02-ownership-and-drop.md) | Secret types: ownership, `Drop`, and why a secret must not be `Clone`. |
-| [03](03-errors-and-results.md) | Errors and randomness: `Result`, the `?` operator and asking the OS for random bytes. |
-| [04](04-constants-overflow-and-features.md) | Argon2id: constants, integer overflow, Cargo features, and checking costs before doing work. |
-| [05](05-slices-and-borrowing.md) | XChaCha20-Poly1305: slices, arrays and `Vec`, borrowing, lifetimes, and why decryption is all or nothing. |
+| 00 | [Setup and Cargo](00-setup-and-cargo.md): Install Rust, Cargo workspaces, `fn main`, `let`, and `forbid(unsafe_code)`. |
+| 01 | [Dependencies and the supply chain](01-dependencies-and-supply-chain.md): Continuous integration and supply-chain gates: what a dependency is and why we count them. |
+| 02 | [Ownership, Drop and secret types](02-ownership-and-drop.md): Secret types: ownership, `Drop`, and why a secret must not be `Clone`. |
+| 03 | [Errors, Result and randomness](03-errors-and-results.md): Errors and randomness: `Result`, the `?` operator and asking the OS for random bytes. |
+| 04 | [Constants, integer overflow and Cargo features](04-constants-overflow-and-features.md): Argon2id: constants, integer overflow, Cargo features, and checking costs before doing work. |
+| 05 | [Slices, arrays and borrowing](05-slices-and-borrowing.md): XChaCha20-Poly1305: slices, arrays and `Vec`, borrowing, lifetimes, and why decryption is all or nothing. |
 | 06 | [Parsing bytes safely](06-parsing-bytes-safely.md): the vault header, with no panics on bad input. |
 | 07 | [Modules and encapsulation](07-modules-and-encapsulation.md): the envelope that creates, opens, saves and re-keys a vault, and how privacy keeps the data key in one module. |
 | 08 | [Property tests and fuzzing](08-property-tests-and-fuzzing.md): letting the computer invent hostile inputs. |
@@ -51,6 +51,7 @@ security, three exercises, and what to read next in
 | 42 | [One list, four shapes](42-one-list-four-shapes.md): an exhaustive `match` over the item data with no catch-all arm, a gated secret checked on the worker and handed back in a wiping `SecretText`, and a reveal timer as one `Option<(field, deadline)>` checked each frame. |
 | 43 | [Listening to the OS](43-listening-to-the-os.md): AppKit notification observers with a Rust closure as an Objective-C block, `Drop` to unregister, `Arc<AtomicBool>` with `swap(false)` as a one-bit mailbox, and the wall clock gaining on the monotonic clock as a sign of sleep. Kotlin: `BroadcastReceiver` for `ACTION_SCREEN_OFF`. |
 | 44 | [The list and its memory](44-the-list-and-its-memory.md): a height-bounded `ScrollArea` with an always-drawn bar, plural count strings, egui's `IdTypeMap` holding undo history as a copy of typed text, and a lock flag instead of a context parameter. Kotlin: `rememberSaveable` outliving a screen. |
+| 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 | 47 | [One row of buttons](47-one-row-of-buttons.md): moving a button's body into a method, testing layout with accessibility rectangles, and `get_by_label` against `query_all_by_label(..).count()` for "exactly one" and "none" checks. |
 | 48 | [Category chips and badges](48-category-chips-and-badges.md): reusing a core enum as UI state, `Copy` enums compared with `!=` to spot a stale list, and `Option<Text>` from `iter().find`. Kotlin: a `sealed interface` filter in a `ViewModel`. |
 | 49 | [Letter avatars](49-letter-avatars.md): `char::to_uppercase` as an iterator (`ß` is `SS`), `% len` for a stable palette slot, and `Option<usize>` from `iter().position`. Kotlin: `indexOfFirst` returning `-1`. |
@@ -68,7 +69,6 @@ security, three exercises, and what to read next in
 | 61 | [Recovery codes and schema 3](61-recovery-codes-and-schema-3.md): appending an enum variant so old postcard bytes still read, `BoundedVec` and `.take(MAX + 1)` to cap a count before allocating, a hand-written `Debug` that hides the code, and a `Zeroizing<String>` export cell. Kotlin: a new `sealed` subclass, and why a protobuf `oneof` is different. |
 | 62 | [One form, four kinds](62-one-form-four-kinds.md): a `Copy` `NewKind` choice and a private `Body` enum that holds only its kind's buffers, a hand-written `Debug` that never prints a buffer, `menu_button` with `ui.close()`, a `convex_polygon` triangle because the font has no U+25BE glyph, `Box<LoginForm>` for clippy's `large_enum_variant`, and a recovery phrase that is not restored after a failed save. Kotlin: a `sealed interface` for form state, and `Box` against a JVM reference. |
 | 63 | [Codes you cross off](63-codes-you-cross-off.md): `ui.push_id((position, i), ..)` for buttons in a loop, a mark sent as a whole new field list built by a deep copy that flips one flag with `^` (no `Clone` on secrets), `Option<Vec<RecoveryCode>>` so an empty box keeps the stored codes, `Option::filter` for the badge, and dots with `strikethrough()` so a used code shows without showing the code. Kotlin: `key(..)` in a loop and `copy(used = !used)`. |
-| 45 | [Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md): the `.app` folder layout, `Info.plist`, ad-hoc signing against Developer ID, and why no `cargo-bundle`. |
 
 ## Side tracks
 

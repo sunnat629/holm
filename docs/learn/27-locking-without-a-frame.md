@@ -8,7 +8,7 @@ An open vault left on an unattended Mac is the easiest attack there is: no explo
 
 `HolmApp::lock` calls `session.lock()`, which wipes the keys and data in the core, then replaces the vault screen with an empty unlock form. That drops the whole `VaultView` and everything it owns. The vault locks in three ways: the Lock button or Cmd+L (`Manual`), the idle timer running out (`Idle`), and the window being minimised (`Minimised`). The unlock screen then says why, with text built by `messages::lock_line` from the vault's own auto-lock setting. A manual lock with unsaved changes first asks "Save and lock", "Lock anyway" or "Cancel"; the idle and minimise locks never ask, and 30 seconds before an idle lock an amber line warns that it is coming.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### `logic` and `ui`: two halves of a frame
 
@@ -104,7 +104,7 @@ The unlock screen's line is a `match` on the reason, so a fourth reason will not
 
 A manual lock with unsaved changes would discard them, so it asks first. "Save and lock" calls `session.save()`. If the save fails, the dialog closes, the Not saved banner shows and the vault stays open: a lock that silently threw the changes away would be worse than no lock. The idle and minimise locks never ask, because nobody may be there to answer. They lock at once, and the unlock screen adds "Unsaved changes were discarded."
 
-## Exercises
+## Try it
 
 1. In `tests/lock.rs`, delete the `clock.advance(a)` line from `idle_lock_runs_without_ui`. See it fail, then undo. Check: `cargo test -p holm-gui --locked --test lock idle_lock_runs`.
 2. In `app.rs`, remove the `viewport().visible() != Some(false)` part of `record_activity`. Which test fails, and why? Undo it. Check: `cargo test -p holm-gui --locked --test lock stale_input`.
@@ -115,3 +115,6 @@ A manual lock with unsaved changes would discard them, so it asks first. "Save a
 - [`eframe::App`](https://docs.rs/eframe/0.37.0/eframe/trait.App.html)
 - [`egui::InputState::consume_shortcut`](https://docs.rs/egui/0.37.0/egui/struct.InputState.html#method.consume_shortcut)
 - [The Rust Book: running code on cleanup with `Drop`](https://doc.rust-lang.org/book/ch15-03-drop.html)
+- Previous lesson: [Lesson 26](26-the-clipboard-is-shared.md)
+- Next lesson: [Lesson 28](28-testing-a-whole-app.md)
+- All lessons: [the index](README.md)

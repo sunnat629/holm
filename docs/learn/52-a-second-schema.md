@@ -73,7 +73,7 @@ Holm checks the supported year range before converting back to a calendar date.
 
 ## Read next
 
-- Previous: [Lesson 51](51-custom-fields.md)
+- Previous: [Lesson 51](51-closing-the-small-gaps.md)
 - Next: [Lesson 53](53-labels-dates-and-secrets.md)
 - [The index](README.md)
 

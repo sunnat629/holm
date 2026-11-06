@@ -23,7 +23,7 @@ pub mod padding;
 
 ```rust
 use crate::format::{FormatError, HEADER_LEN, Header, WRAP_AAD_LEN};
-use crate::padding::{pad, unpad};
+use crate::padding::{MAX_BODY_LEN, pad, unpad};
 ```
 
 Line by line:
@@ -55,8 +55,8 @@ Line by line:
   nested in it, such as its `tests`) can read or write it. Any other module gets a compile
   error.
 - The same holds for `header`, so outside code cannot swap in a header that does not match
-  the DEK, or build a `VaultKeys` itself. The public ways to get one are `create` and
-  `open`.
+  the DEK, or build a `VaultKeys` itself. Outside `holm-core`, the only way to get one is
+  `create`. Inside the crate, `open` returns one too.
 
 In Kotlin you'd write: `class VaultKeys internal constructor(private val dek: SecretKey,
 private val header: Header)`. Close, but Kotlin's `private` is per class, while Rust's
@@ -134,6 +134,7 @@ impl From<CryptoError> for VaultError {
         match e {
             CryptoError::KdfParams(k) => VaultError::KdfPolicy(k),
             CryptoError::Aead => VaultError::WrongPasswordOrCorrupt,
+            CryptoError::OutOfMemory => VaultError::OutOfMemory,
             CryptoError::Rng | CryptoError::Kdf | CryptoError::InvalidKeyLength => {
                 VaultError::Crypto
             }
@@ -213,8 +214,8 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
    }
    ```
 
-   Check: the build fails with ``error[E0616]: field `dek` of struct `envelope::VaultKeys`
-   is private``. Change `keys.dek.expose()` to `keys.dek().expose()` and run the same
+   Check: the build fails with error E0616, saying that field `dek` of struct `VaultKeys`
+   is private. Change `keys.dek.expose()` to `keys.dek().expose()` and run the same
    command. It passes, because `dek()` is `pub(crate)` and this is a test build.
 2. Add this test inside `mod tests` in `crates/holm-core/src/envelope.rs`, then run
    `cargo test -p holm-core hold_old_dek`:
@@ -247,4 +248,6 @@ Run each one from the repo root. Undo after each: `git checkout crates/holm-core
 - [Chapter 4.2, References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html)
 - [Chapter 9.2, Recoverable Errors with `Result`](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html)
 
-Next lesson: [08, property tests and fuzzing](08-property-tests-and-fuzzing.md).
+- Previous lesson: lesson 06, listed in [the index](README.md)
+- Next lesson: [Lesson 08](08-property-tests-and-fuzzing.md), property tests and fuzzing
+- All lessons: [the index](README.md)

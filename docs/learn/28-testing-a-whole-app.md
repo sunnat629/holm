@@ -15,11 +15,13 @@ screen, so they need a written list and a person.
 flow: create a vault, add a login, copy its password, lock, then start a brand new app
 on the same path, refuse a wrong password, unlock with the right one and see the login.
 A second test runs the same flow and then inspects the folder: only `holm.vault` and
-`holm.lock`, owner-only modes, an empty lock file, and none of the item text or
-passwords in either file's bytes. `docs/manual/phase-3-macos-checklist.md` lists what
+`holm.lock`, owner-only modes, an empty lock file, and none of the item text, the
+password or the wrong password in the bytes of any file under the temp folder. Three
+small tests open a vault and check the toolbar: one row of buttons, no "Holm" heading
+and exactly one "New" button. `docs/manual/phase-3-macos-checklist.md` lists what
 only a person at a real Mac can check, and records what was checked automatically.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### An integration test is its own crate
 
@@ -32,9 +34,9 @@ use holm_gui::app::{HolmApp, ScreenKind};
 
 Each file in `tests/` is compiled as a separate crate that sees only `holm_gui`'s public
 API, as any other user would. `mod common;` pulls in `tests/common/mod.rs`, so the files
-share a fake clock, a fake clipboard and a harness builder without making them part of
-the library. The `#![cfg]` line removes the whole file on Linux and Windows, where there
-is no egui to test.
+share a fake clock, a fake clipboard, a fake window, a `make_vault` helper and a harness
+builder without making them part of the library. The `#![cfg]` line removes the whole file on every platform except macOS,
+so these tests only build where they can run.
 
 In Kotlin you'd write the same test under `src/test` with a `testFixtures` source set for
 the shared fakes; here the folder layout does that job.
@@ -52,8 +54,10 @@ let mut harness = common::harness(app);
 The first app holds `holm.lock` through an `InstanceLock` field. Nothing calls
 `unlock()` on it: the lock is released when the `File` inside it drops. `drop(harness)`
 ends the harness, the app and the lock at that line, so the second app can take the lock.
-Leave the `drop` out and the second app shows "Holm is already open", which is exactly
-what the single-instance test in Task 3 checks.
+Note that the second `let mut harness` only shadows the name: without the `drop`, the
+first harness would live on until the end of the function. Leave the `drop` out and the
+second app shows "Holm is already open", which is exactly what the single-instance test
+checks.
 
 In Kotlin you'd write `firstApp.use { … }` and rely on `close()` running at the end of
 the block. Rust runs `Drop` at the end of every scope, with no `use` to forget.
@@ -67,14 +71,19 @@ pub struct FakeClipboard(pub Rc<RefCell<FakeClipboardState>>);
 let fake = FakeClipboard::default();
 let (app, _clock) = test_app_with_clipboard(dir, Box::new(fake.clone()));
 // … click Copy …
-assert_eq!(fake.0.borrow().sets.len(), 1, "one set_secret call");
+{
+    let state = fake.0.borrow();
+    assert_eq!(state.sets.len(), 1, "one set call");
+    assert_eq!(state.sets[0].as_str(), SECRET);
+}
 ```
 
 The app owns a `Box<dyn SecretClipboard>`, so the test can't reach into it afterwards.
 Cloning the `Rc` gives both sides a handle to the same state: the app writes through
 its clone, the test reads through its own. `RefCell` moves the borrow check to run time,
-which is fine on one thread. The same fake goes to the second app, so the test can also
-check that unlocking and viewing copied nothing.
+which is fine on one thread. The block ends the `borrow()` before the app runs again;
+a `Ref` still alive when the app writes would panic at run time. The same fake goes to
+the second app, so the test can also check that unlocking and viewing copied nothing.
 
 In Kotlin you'd write `val fake = FakeClipboard()` and pass the same object to both,
 because every object is a shared reference. Rust makes the sharing explicit.
@@ -116,7 +125,8 @@ fn system_clipboard_marks_concealed() { … }
 ```
 
 `#[ignore]` keeps a test compiled (so it can't rot) but out of `cargo test`. It runs only
-when asked: `cargo test … -- --ignored system_clipboard_marks_concealed`. This one
+when asked: `cargo test -p holm-gui --locked --test clipboard -- --ignored
+system_clipboard_marks_concealed`. This one
 replaces the user's real clipboard, so it must never run inside the CI gate.
 
 In Kotlin you'd write `@Disabled("uses the real pasteboard")` in JUnit 5.
@@ -124,14 +134,18 @@ In Kotlin you'd write `@Disabled("uses the real pasteboard")` in JUnit 5.
 ## What the headless test proves, and what it can't
 
 The harness runs the same `tick` and `show` code that eframe runs, feeds it the same
-input events and reads the same AccessKit tree a screen reader would. So it proves the
+input events and reads the same AccessKit tree a screen reader would. One gap: the
+harness never calls `eframe::App::raw_input_hook`, so `tests/clipboard.rs` builds the
+frame's input itself and runs the hook by hand when a test needs it, such as Cmd+V into
+a secret field. So it proves the
 logic: screen order, fixed texts, that secrets leave the form when work starts, that the
 throttle and the idle lock fire, and what lands on disk.
 
 It can't prove anything outside the process. Only a person can see that the window
 title says "Holm", that TextEdit.app receives the pasted password, that a clipboard
-manager skipped it, that minimising with the yellow button really reports
-`minimized`, that a second Holm started from a terminal shows the fixed text, that
+manager skipped it, that minimising with Cmd+M or the yellow button really locks the
+vault (Holm asks AppKit's `isMiniaturized`, and the tests can only drive a
+`FakeWindow`), that a second Holm started from a terminal shows the fixed text, that
 macOS saved no window state, and that Activity Monitor shows no network use. Those are
 the unchecked boxes in the manual checklist.
 
@@ -151,7 +165,7 @@ main.rs ── default path or --vault ── HolmApp::new
 The walking-skeleton test walks this whole picture once, from `HolmApp::new` to the
 bytes of `holm.vault`.
 
-## Exercises
+## Try it
 
 1. In `walking_skeleton.rs`, comment out `drop(harness);` before the second app is made.
    Which assertion fails, and which fixed text does the second app show instead? Undo.
@@ -168,3 +182,6 @@ bytes of `holm.vault`.
 - [The Rust Book: test organisation and integration tests](https://doc.rust-lang.org/book/ch11-03-test-organization.html)
 - [`egui_kittest`](https://docs.rs/egui_kittest/0.37.0/egui_kittest/)
 - [The Rust Book: `Rc<T>` and `RefCell<T>`](https://doc.rust-lang.org/book/ch15-05-interior-mutability.html)
+- Previous lesson: [Lesson 27](27-locking-without-a-frame.md)
+- Next lesson: [Lesson 29](29-iterators-and-lifetimes.md)
+- All lessons: [the index](README.md)

@@ -9,10 +9,11 @@ one place, and writes the layout down as tests, so a later change cannot quietly
 
 ## What we built
 
-The vault screen's top panel is now one row: `Lock`, `Import...`, `Export...`, `New login`.
-The `Holm` heading is gone (the window title still says Holm, and the heading used up space on
-the row). The left panel keeps only the Search box and the list. A later task adds a `Back up`
-button to the same row.
+The vault screen's top panel is one row. Today it holds `Lock`, `Import...`, `Export...`, a
+back-up button and a `New` menu. The menu offers four kinds of item: Login, Crypto address,
+Recovery phrase and Secure note. The `Holm` heading is gone, because it used up space on the
+row. The left panel keeps the Search box, the filter chips and the list, with no New button
+of its own.
 
 The code is in `crates/holm-gui/src/screens/vault.rs`, in the `vault-top` panel. The tests are
 in `crates/holm-gui/tests/walking_skeleton.rs`.
@@ -21,24 +22,36 @@ in `crates/holm-gui/tests/walking_skeleton.rs`.
 
 ### 1. Pull a body out into a method so the call site stays small
 
-The old New login button had five lines of state resets inline in `show_list`. Moving the
-button meant moving those lines. Instead of pasting them into the toolbar closure, they became
-a method:
+Opening a blank form takes a few lines of state resets. Moving the button meant moving those
+lines. Instead of pasting them into the toolbar closure, they live in a method:
 
 ```rust
-fn start_new_login(&mut self) {
+fn start_new(&mut self, kind: NewKind) {
     self.selected = None;
-    self.reveal_until = None;
+    self.item = ItemView::new();
     self.status = None;
-    self.copy_note = None;
-    self.mode = DetailMode::Edit(LoginForm::new_blank());
+    self.mode = DetailMode::Edit(Box::new(LoginForm::new_blank_kind(kind)));
 }
 ```
 
-The toolbar then reads `if ui.button(NEW_LABEL).clicked() { self.start_new_login(); }`. Inside
-the `ui.horizontal(|ui| { ... })` closure, `self` is borrowed mutably by the closure, and a
-method call on `self` is fine because the closure is the only user. Kotlin comparison: an
-extracted private function on a ViewModel, called from a click handler.
+Replacing `self.item` with a fresh `ItemView` drops the old one, so whatever the detail pane
+showed is hidden and wiped. The toolbar calls it from the `New` menu:
+
+```rust
+let menu = ui.menu_button(NEW_LABEL, |ui| {
+    for (label, kind) in NEW_ENTRIES {
+        if ui.button(label).clicked() {
+            self.start_new(kind);
+            ui.close();
+        }
+    }
+});
+```
+
+The menu closure sits inside the `ui.horizontal(|ui| { ... })` closure, and both capture
+`self` mutably. That is fine because only one closure runs at a time, and nothing else uses
+`self` while they do. Kotlin comparison: an extracted private function on a ViewModel, called
+from a click handler.
 
 ### 2. Test layout with rectangles, not pictures
 
@@ -55,10 +68,10 @@ for top in &tops {
 }
 ```
 
-The 2 pixel slack allows for buttons of slightly different height. When the test failed before
-the change, the message showed `[11.0, 11.0, 11.0, 38.0]`: the failure text names the exact
-problem, because the assertion prints the whole `Vec`. A `{tops:?}` in a message costs nothing
-and saves a debugging session.
+The 2 point slack allows for buttons of slightly different height. If one button lands on a
+second row, its top is far below the others, and the failure text names the exact problem
+because the assertion prints the whole `Vec`. A `{tops:?}` in a message costs nothing and
+saves a debugging session.
 
 ### 3. A label that must appear exactly once
 
@@ -67,27 +80,28 @@ and saves a debugging session.
 
 ```rust
 assert_eq!(harness.query_all_by_label("Holm").count(), 0);
-assert_eq!(harness.query_all_by_label("New login").count(), 1);
+assert_eq!(harness.query_all_by_label("New").count(), 1);
 ```
 
-Note that `new_login_button_once` passed even before the change, because the toolbar did not
-yet have the button. A test that passes first time is only a guard, not proof of progress: its
-value is to fail if someone adds the button back to the list later.
+A test like `new_login_button_once` can pass the first time it runs. That makes it a guard,
+not proof of progress: its value is to fail if someone adds a second New button to the list
+later.
 
 ### 4. Easy to extend
 
-The test file keeps the labels in one array, `TOOLBAR_LABELS`, and the code has a comment
-where the next button goes. Adding `Back up` means one more `if ui.button(..)` in the row and
-one more string in the array.
+The test file keeps the labels in one array, `TOOLBAR_LABELS`. Each button in the row is one
+`if ui.add_enabled(..).clicked()` or `if ui.button(..).clicked()` in the `vault-top` panel.
+The back-up button was added that way, after `Export...`. The array in the test still lists
+four labels, so the back-up button is not yet part of the one-row check.
 
-## Exercises
+## Try it
 
-1. Add a fifth button `Settings` to the row and the array. Run the tests and see which one
-   fails if you put it in the left panel by mistake.
-   Check: `cargo test -p holm-gui --locked --test walking_skeleton`
-2. Change the 2 pixel slack to 0. Does the test still pass? Explain what that says about the
+1. Add the back-up button's label to `TOOLBAR_LABELS` (look up `messages::BACKUP_BUTTON` for
+   the text). Run the test and check it still passes.
+   Check: `cargo test -p holm-gui --locked --test walking_skeleton toolbar_is_one_row`
+2. Change the 2 point slack to 0. Does the test still pass? Explain what that says about the
    heights of the buttons.
-3. Write a test that the Search box is still in the left panel, below the toolbar (its top is
+3. Write a test that the Search box is in the left panel, below the toolbar (its top is
    greater than the toolbar's top).
    Check: `cargo test -p holm-gui --locked --test walking_skeleton`
 
@@ -96,3 +110,9 @@ one more string in the array.
 - [Closures and capturing](https://doc.rust-lang.org/book/ch13-01-closures.html)
 - [Method syntax](https://doc.rust-lang.org/book/ch05-03-method-syntax.html)
 - [Lesson 36: Thin screens over the core](36-thin-screens-over-the-core.md)
+- [Lesson 45: Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md)
+- [Lesson 48: Category chips and badges](48-category-chips-and-badges.md)
+- [The index](README.md)
+- [Lesson 45: Shipping a Mac app by hand](45-shipping-a-mac-app-by-hand.md)
+- [Lesson 48: Category chips and badges](48-category-chips-and-badges.md)
+- [The index](README.md)
