@@ -55,7 +55,7 @@ fn unlocked(dir: &Path, fake: &FakeClipboard) -> Harness<'static, HolmApp> {
 
 /// Adds one login and leaves it selected in the read-only view.
 fn add_login(harness: &mut Harness<'static, HolmApp>) {
-    harness.get_by_label("New login").click();
+    common::new_login(harness);
     harness.run();
     type_into(harness, TITLE, "Example Mail");
     type_into(harness, "Password", SECRET);
@@ -215,7 +215,7 @@ fn cmd_v_pastes_into_title() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeClipboard::serving(PASTED);
     let mut harness = unlocked(dir.path(), &fake);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     harness.get_by_label(TITLE).click();
     harness.run();
@@ -234,7 +234,7 @@ fn cmd_c_in_title_copies_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeClipboard::default();
     let mut harness = unlocked(dir.path(), &fake);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, TITLE, "Example Mail");
 

@@ -102,7 +102,7 @@ fn assert_locked(harness: &Harness<'static, HolmApp>, expected_line: &str) {
 
 /// Adds one login and leaves it selected in the read-only view.
 fn add_example(harness: &mut Harness<'static, HolmApp>) {
-    harness.get_by_label("New login").click();
+    common::new_login(harness);
     harness.run();
     type_into(harness, "Title", ROW_TITLE);
     type_into(harness, "Username", "ada@example.com");
@@ -290,7 +290,7 @@ fn minimise_locks_at_once() {
 fn lock_wipes_an_open_form() {
     let dir = tempfile::tempdir().unwrap();
     let (mut harness, _clock) = open(dir.path());
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Password", SECRET);
@@ -537,7 +537,7 @@ fn idle_during_job_locks_on_finish() {
     unlock(&mut harness);
     let a = auto_lock(&harness);
     let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Password", SECRET);
@@ -578,7 +578,7 @@ fn job_end_while_minimised_asks_for_another_frame() {
     harness.run();
     unlock(&mut harness);
     let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Password", SECRET);
@@ -763,7 +763,7 @@ fn sleep_during_job_locks_when_job_ends() {
     harness.run();
     assert_eq!(fake.0.borrow().contents.as_deref(), Some(SECRET));
     let hold = HOLD_WORKER.lock().unwrap_or_else(PoisonError::into_inner);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Password", SECRET);

@@ -60,7 +60,8 @@ fn open_new_login(dir: &Path) -> Harness<'static, HolmApp> {
     let mut harness = harness(app);
     harness.run();
     unlock(&mut harness);
-    click(&mut harness, "New login");
+    common::new_login(&mut harness);
+    harness.run();
     harness
 }
 

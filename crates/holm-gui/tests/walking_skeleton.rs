@@ -80,7 +80,7 @@ fn run_flow(dir: &Path) {
     assert!(harness.state().is_unlocked());
 
     // Add the Task 4 login.
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", ROW_TITLE);
     type_into(&mut harness, "Username", USERNAME);
@@ -239,7 +239,7 @@ fn open_vault(dir: &Path) -> Harness<'static, HolmApp> {
 }
 
 /// The toolbar buttons today. A later task adds "Back up" to this list.
-const TOOLBAR_LABELS: [&str; 4] = ["Lock", "Import...", "Export...", "New login"];
+const TOOLBAR_LABELS: [&str; 4] = ["Lock", "Import...", "Export...", "New"];
 
 #[test]
 fn toolbar_is_one_row() {
@@ -268,5 +268,5 @@ fn no_holm_heading_in_toolbar() {
 fn new_login_button_once() {
     let dir = tempfile::tempdir().unwrap();
     let harness = open_vault(dir.path());
-    assert_eq!(harness.query_all_by_label("New login").count(), 1);
+    assert_eq!(harness.query_all_by_label("New").count(), 1);
 }

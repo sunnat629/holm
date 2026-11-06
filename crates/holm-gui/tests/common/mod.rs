@@ -322,3 +322,12 @@ pub fn make_vault_without_lock_on_sleep(dir: &Path, password: &str) {
     // Turning it off is a weaker setting, so it needs the password.
     session.update_settings(settings, Some(&password)).unwrap();
 }
+
+/// Opens the toolbar's New menu and picks Login, as the old "New login" button did.
+/// The caller runs the harness afterwards, as it did after the old click.
+pub fn new_login(harness: &mut egui_kittest::Harness<'static, holm_gui::app::HolmApp>) {
+    use egui_kittest::kittest::Queryable;
+    harness.get_by_label("New").click();
+    harness.run();
+    harness.get_by_label("Login").click();
+}

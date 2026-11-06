@@ -49,7 +49,7 @@ fn copied_in_made_vault(dir: &Path) -> (Harness<'static, HolmApp>, TestClock, Fa
     run_until(&mut harness, |a| a.screen_kind() == ScreenKind::Vault, WAIT);
     harness.run();
 
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", "Example Mail");
     type_into(&mut harness, "Password", SECRET);

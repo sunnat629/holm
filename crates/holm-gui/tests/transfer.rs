@@ -689,7 +689,7 @@ fn opening_a_dialog_clears_a_copied_secret() {
             Box::new(dialog)
         });
     let (mut harness, _clock) = unlock(app, clock);
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     type_into(&mut harness, "Title", "Example Mail");
     type_into(&mut harness, "Password", SECRET);

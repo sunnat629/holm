@@ -77,7 +77,7 @@ fn eye_on_create_unlock_and_export() {
     // Login form and export form, once unlocked.
     let dir = tempfile::tempdir().unwrap();
     let mut vault = unlocked(dir.path());
-    vault.get_by_label("New login").click();
+    common::new_login(&mut vault);
     vault.run();
     assert_eq!(eyes(&vault), 1);
     vault.get_by_label("Cancel").click();

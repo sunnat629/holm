@@ -26,7 +26,7 @@ use zeroize::Zeroizing;
 
 use super::FieldIo;
 use super::item_view::{ItemAction, ItemView, show_item};
-use super::login_form::{FormAction, LineBuf, LoginForm, line_field};
+use super::login_form::{FormAction, LineBuf, LoginForm, NewKind, line_field};
 use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
 use crate::file_dialog::DialogKind;
 use crate::fonts::display;
@@ -36,8 +36,15 @@ use crate::widgets::avatar::{avatar, avatar_colour, avatar_letter, chip_dot};
 use crate::worker::{Job, JobKind, TransferResult};
 use holm_platform::transfer::TransferError;
 
-/// Label of the new-login button.
-pub(crate) const NEW_LABEL: &str = "New login";
+/// Label of the new-item menu.
+pub(crate) const NEW_LABEL: &str = "New";
+/// The new-item menu's entries.
+const NEW_ENTRIES: [(&str, NewKind); 4] = [
+    ("Login", NewKind::Login),
+    ("Crypto address", NewKind::CryptoAddress),
+    ("Recovery phrase", NewKind::RecoveryPhrase),
+    ("Secure note", NewKind::SecureNote),
+];
 /// Label of the retry-save button.
 pub(crate) const RETRY_LABEL: &str = "Try again";
 /// Label of the lock button.
@@ -80,7 +87,7 @@ enum DetailMode {
     /// The selected item, read-only.
     View,
     /// The form.
-    Edit(LoginForm),
+    Edit(Box<LoginForm>),
 }
 
 /// The open vault's screen state.
@@ -336,20 +343,18 @@ impl VaultView {
                     }
                 };
                 self.selected = None;
-                self.mode = DetailMode::Edit(form);
+                self.mode = DetailMode::Edit(Box::new(form));
             }
             (JobKind::Update, Err(CoreError::Vault(VaultError::TooLargeToSave))) => {
                 self.mode = match (returned, self.selected) {
-                    (Some(input), id @ Some(_)) => DetailMode::Edit(LoginForm::from_input(
-                        id,
-                        input,
-                        messages::TOO_LARGE_TO_SAVE,
+                    (Some(input), id @ Some(_)) => DetailMode::Edit(Box::new(
+                        LoginForm::from_input(id, input, messages::TOO_LARGE_TO_SAVE),
                     )),
                     (None, Some(id)) => {
                         match session.item(id).ok().and_then(LoginForm::from_item) {
                             Some(mut f) => {
                                 f.error = Some(messages::TOO_LARGE_TO_SAVE);
-                                DetailMode::Edit(f)
+                                DetailMode::Edit(Box::new(f))
                             }
                             None => DetailMode::View,
                         }
@@ -474,9 +479,27 @@ impl VaultView {
                     self.item = ItemView::new();
                     self.transfer = Some(Transfer::backup());
                 }
-                if ui.button(NEW_LABEL).clicked() {
-                    self.start_new_login();
-                }
+                let menu = ui.menu_button(NEW_LABEL, |ui| {
+                    for (label, kind) in NEW_ENTRIES {
+                        if ui.button(label).clicked() {
+                            self.start_new(kind);
+                            ui.close();
+                        }
+                    }
+                });
+                // A small down triangle: the bundled font has no arrow glyph.
+                let rect = menu.response.rect;
+                let c = egui::pos2(rect.right() + 8.0, rect.center().y);
+                ui.painter().add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(c.x - 3.0, c.y - 2.0),
+                        egui::pos2(c.x + 3.0, c.y - 2.0),
+                        egui::pos2(c.x, c.y + 2.0),
+                    ],
+                    ui.visuals().text_color(),
+                    egui::Stroke::NONE,
+                ));
+                ui.add_space(8.0);
             });
         });
         if let Some(left) = idle_left {
@@ -582,13 +605,13 @@ impl VaultView {
         action
     }
 
-    /// Opens a blank login form in the detail pane, as the toolbar's "New login" button
+    /// Opens a blank form for `kind` in the detail pane, as the toolbar's "New" menu
     /// asks. Nothing stays selected, and whatever the item view showed is dropped.
-    fn start_new_login(&mut self) {
+    fn start_new(&mut self, kind: NewKind) {
         self.selected = None;
         self.item = ItemView::new();
         self.status = None;
-        self.mode = DetailMode::Edit(LoginForm::new_blank());
+        self.mode = DetailMode::Edit(Box::new(LoginForm::new_blank_kind(kind)));
     }
 
     fn show_list(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) {
@@ -835,8 +858,11 @@ impl VaultView {
                 None => Job::Add(input),
             }),
             Err(e) => {
-                self.mode =
-                    DetailMode::Edit(LoginForm::from_input(id, input, messages::field_error(&e)));
+                self.mode = DetailMode::Edit(Box::new(LoginForm::from_input(
+                    id,
+                    input,
+                    messages::field_error(&e),
+                )));
                 None
             }
         }
@@ -873,7 +899,7 @@ impl VaultView {
                 match LoginForm::from_item(item) {
                     Some(form) => {
                         self.status = None;
-                        self.mode = DetailMode::Edit(form);
+                        self.mode = DetailMode::Edit(Box::new(form));
                     }
                     None => self.status = Some(messages::SECRET_TOO_LONG),
                 }

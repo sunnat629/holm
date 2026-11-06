@@ -53,7 +53,7 @@ fn reopen(dir: &Path) -> (Harness<'static, HolmApp>, TestClock) {
 }
 
 fn fill_form(harness: &mut Harness<'static, HolmApp>, title: &str) {
-    harness.get_by_label("New login").click();
+    common::new_login(harness);
     harness.run();
     if !title.is_empty() {
         type_into(harness, TITLE, title);
@@ -202,7 +202,7 @@ fn save_banner_and_retry_survive_navigation() {
     let _ = harness.get_by_label("Try again");
 
     // New login: the session is still dirty, so the banner stays.
-    harness.get_by_label("New login").click();
+    common::new_login(&mut harness);
     harness.run();
     let _ = harness.get_by_label(messages::DIR_PERMISSIONS);
     let _ = harness.get_by_label("Try again");

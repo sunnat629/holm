@@ -20,8 +20,8 @@ use egui::text::CharIndex;
 use holm_core::category::CategoryId;
 use holm_core::fields::{CustomField, FieldValue};
 use holm_core::item::{Item, ItemData, ItemId, ItemInput};
-use holm_core::rules::{FieldError, MAX_LINE_BYTES};
-use holm_core::text::{SecretText, Text};
+use holm_core::rules::{FieldError, MAX_LINE_BYTES, MAX_NOTE_BYTES};
+use holm_core::text::{GatedSecret, SecretText, Text};
 use zeroize::Zeroizing;
 
 use super::FieldIo;
@@ -45,6 +45,18 @@ pub(crate) const CUSTOM_FIELDS_LABEL: &str = "Custom fields";
 /// Shown in place of the editor when held fields are passed through unchanged.
 pub(crate) const HELD_FIELDS_NOTE: &str =
     "Custom fields are too long to edit here. They are kept as they are.";
+/// Label of the chain field.
+pub(crate) const CHAIN_LABEL: &str = "Chain";
+/// Hint shown in the empty chain field.
+pub(crate) const CHAIN_HINT: &str = "e.g. Bitcoin";
+/// Label of the crypto address field.
+pub(crate) const ADDRESS_LABEL: &str = "Address";
+/// Label of the memo field.
+pub(crate) const MEMO_LABEL: &str = "Memo";
+/// Label of the recovery phrase field.
+pub(crate) const PHRASE_LABEL: &str = "Recovery phrase";
+/// Label of the secure note field.
+pub(crate) const NOTE_LABEL: &str = "Note";
 
 /// The form's custom fields.
 enum Fields {
@@ -224,6 +236,131 @@ pub(crate) enum FormAction {
     Cancel,
 }
 
+/// The kind of item a new form creates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NewKind {
+    /// A login.
+    Login,
+    /// A crypto address.
+    CryptoAddress,
+    /// A recovery phrase.
+    RecoveryPhrase,
+    /// A secure note.
+    SecureNote,
+}
+
+/// The kind-specific buffers. Only the buffers of the form's kind exist.
+enum Body {
+    Login {
+        username: LineBuf,
+        url: LineBuf,
+        password: SecretInput,
+    },
+    Crypto {
+        chain: LineBuf,
+        address: SecretInput,
+        memo: SecretInput,
+    },
+    Phrase {
+        phrase: SecretInput,
+    },
+    Note {
+        body: SecretInput,
+    },
+}
+
+impl Body {
+    fn blank(kind: NewKind) -> Body {
+        match kind {
+            NewKind::Login => Body::Login {
+                username: LineBuf::new(),
+                url: LineBuf::new(),
+                password: SecretInput::with_capacity(ITEM_SECRET_CAP),
+            },
+            NewKind::CryptoAddress => Body::Crypto {
+                chain: LineBuf::new(),
+                address: SecretInput::with_capacity(MAX_LINE_BYTES),
+                memo: SecretInput::with_capacity(MAX_LINE_BYTES),
+            },
+            NewKind::RecoveryPhrase => Body::Phrase {
+                phrase: SecretInput::with_multiline_capacity(ITEM_SECRET_CAP),
+            },
+            NewKind::SecureNote => Body::Note {
+                body: SecretInput::with_multiline_capacity(MAX_NOTE_BYTES),
+            },
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Body::Login {
+                username,
+                url,
+                password,
+            } => username.is_empty() && url.is_empty() && password.is_empty(),
+            Body::Crypto {
+                chain,
+                address,
+                memo,
+            } => chain.is_empty() && address.is_empty() && memo.is_empty(),
+            Body::Phrase { phrase } => phrase.is_empty(),
+            Body::Note { body } => body.is_empty(),
+        }
+    }
+
+    fn secret_char_count(&self) -> usize {
+        match self {
+            Body::Login { password, .. } => password.char_count(),
+            Body::Crypto { address, memo, .. } => address.char_count() + memo.char_count(),
+            Body::Phrase { phrase } => phrase.char_count(),
+            Body::Note { body } => body.char_count(),
+        }
+    }
+}
+
+impl fmt::Debug for Body {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Body::Login {
+                username,
+                url,
+                password,
+            } => f
+                .debug_struct("Login")
+                .field("username_len", &username.len())
+                .field("url_len", &url.len())
+                .field("password", password)
+                .finish(),
+            Body::Crypto {
+                chain,
+                address,
+                memo,
+            } => f
+                .debug_struct("Crypto")
+                .field("chain_len", &chain.len())
+                .field("address", address)
+                .field("memo", memo)
+                .finish(),
+            Body::Phrase { phrase } => f.debug_struct("Phrase").field("phrase", phrase).finish(),
+            Body::Note { body } => f.debug_struct("Note").field("body", body).finish(),
+        }
+    }
+}
+
+/// Puts `text` back into `buf`. A taken value came out of a buffer with this cap, so it
+/// always fits; refuse in debug builds rather than blank it silently.
+fn restore(buf: &mut SecretInput, text: &str, cap: usize, multiline: bool) {
+    let restored = if multiline {
+        SecretInput::from_multiline_secret(text, cap)
+    } else {
+        SecretInput::from_secret(text, cap)
+    };
+    debug_assert!(restored.is_some(), "a taken secret always fits its cap");
+    if let Some(b) = restored {
+        *buf = b;
+    }
+}
+
 /// The form. Every buffer wipes itself when the form drops.
 pub(crate) struct LoginForm {
     /// The item being edited, or `None` for a new login.
@@ -236,12 +373,8 @@ pub(crate) struct LoginForm {
     fields: Fields,
     /// The title being typed.
     title: LineBuf,
-    /// The username being typed.
-    username: LineBuf,
-    /// The first web address being typed. Empty means no address.
-    url: LineBuf,
-    /// The password being typed.
-    pub(crate) password: SecretInput,
+    /// The buffers of the item's kind.
+    body: Body,
     /// The fixed line for the last problem.
     pub(crate) error: Option<&'static str>,
 }
@@ -251,9 +384,7 @@ impl fmt::Debug for LoginForm {
         f.debug_struct("LoginForm")
             .field("editing", &self.id.is_some())
             .field("title_len", &self.title.len())
-            .field("username_len", &self.username.len())
-            .field("url_len", &self.url.len())
-            .field("password", &self.password)
+            .field("body", &self.body)
             .field("fields", &self.fields)
             .field("error", &self.error)
             .finish()
@@ -264,15 +395,18 @@ impl LoginForm {
     /// An empty form for a new login. The field editor is empty, so its preset picker
     /// shows.
     pub(crate) fn new_blank() -> LoginForm {
+        LoginForm::new_blank_kind(NewKind::Login)
+    }
+
+    /// An empty form for a new item of `kind`.
+    pub(crate) fn new_blank_kind(kind: NewKind) -> LoginForm {
         LoginForm {
             id: None,
             category: None,
             favourite: false,
             fields: Fields::blank(),
             title: LineBuf::new(),
-            username: LineBuf::new(),
-            url: LineBuf::new(),
-            password: SecretInput::with_capacity(ITEM_SECRET_CAP),
+            body: Body::blank(kind),
             error: None,
         }
     }
@@ -296,9 +430,11 @@ impl LoginForm {
             favourite: item.favourite(),
             fields: Fields::Editable(FieldEditor::from_fields(item.fields())?),
             title: LineBuf::from_text(item.title())?,
-            username: LineBuf::from_text(username.as_str())?,
-            url: LineBuf::from_text(urls.first().map_or("", Text::as_str))?,
-            password: SecretInput::from_secret(password.expose(), ITEM_SECRET_CAP)?,
+            body: Body::Login {
+                username: LineBuf::from_text(username.as_str())?,
+                url: LineBuf::from_text(urls.first().map_or("", Text::as_str))?,
+                password: SecretInput::from_secret(password.expose(), ITEM_SECRET_CAP)?,
+            },
             error: None,
         })
     }
@@ -317,30 +453,63 @@ impl LoginForm {
             data,
             fields,
         } = input;
-        let mut form = LoginForm::new_blank();
+        let kind = match &data {
+            ItemData::Login { .. } => NewKind::Login,
+            ItemData::CryptoAddress { .. } => NewKind::CryptoAddress,
+            ItemData::RecoveryPhrase { .. } => NewKind::RecoveryPhrase,
+            ItemData::SecureNote { .. } => NewKind::SecureNote,
+        };
+        let mut form = LoginForm::new_blank_kind(kind);
         form.id = id;
         form.category = category;
         form.favourite = favourite;
         form.fields = Fields::from_owned(fields);
         form.error = Some(error);
         form.title = LineBuf::from_text(title.as_str()).unwrap_or_else(LineBuf::new);
-        if let ItemData::Login {
-            username,
-            password,
-            urls,
-            ..
-        } = data
-        {
-            form.username = LineBuf::from_text(username.as_str()).unwrap_or_else(LineBuf::new);
-            form.url = LineBuf::from_text(urls.first().map_or("", Text::as_str))
-                .unwrap_or_else(LineBuf::new);
-            // The input came out of a capped buffer, so this always fits. If it ever did
-            // not, refuse in debug builds rather than blank the password.
-            let restored = SecretInput::from_secret(password.expose(), ITEM_SECRET_CAP);
-            debug_assert!(restored.is_some(), "a taken password always fits its cap");
-            if let Some(p) = restored {
-                form.password = p;
+        // The input came out of capped buffers, so every secret fits its cap.
+        match (&mut form.body, data) {
+            (
+                Body::Login {
+                    username: u,
+                    url,
+                    password: pw,
+                },
+                ItemData::Login {
+                    username,
+                    password,
+                    urls,
+                    ..
+                },
+            ) => {
+                *u = LineBuf::from_text(username.as_str()).unwrap_or_else(LineBuf::new);
+                *url = LineBuf::from_text(urls.first().map_or("", Text::as_str))
+                    .unwrap_or_else(LineBuf::new);
+                restore(pw, password.expose(), ITEM_SECRET_CAP, false);
             }
+            (
+                Body::Crypto {
+                    chain: c,
+                    address: a,
+                    memo: m,
+                },
+                ItemData::CryptoAddress {
+                    chain,
+                    address,
+                    memo,
+                    ..
+                },
+            ) => {
+                *c = LineBuf::from_text(chain.as_str()).unwrap_or_else(LineBuf::new);
+                restore(a, address.expose(), MAX_LINE_BYTES, false);
+                restore(m, memo.expose(), MAX_LINE_BYTES, false);
+            }
+            // The phrase is gated in core and is not handed back to the GUI. After a
+            // failed save the phrase box starts empty and is typed again.
+            (Body::Phrase { .. }, ItemData::RecoveryPhrase { .. }) => {}
+            (Body::Note { body: buf }, ItemData::SecureNote { body }) => {
+                restore(buf, body.expose(), MAX_NOTE_BYTES, true);
+            }
+            _ => {}
         }
         form
     }
@@ -357,64 +526,113 @@ impl LoginForm {
     ) -> Result<ItemInput, FieldError> {
         let fields = self.fields.take_built()?;
         let title = self.title.take_text();
-        let username = self.username.take_text();
-        let first = self.url.take_text();
-        let mut urls = Vec::with_capacity(1 + kept_urls.len());
-        if !first.as_str().is_empty() {
-            urls.push(first);
-        }
-        urls.extend(kept_urls);
+        let data = match &mut self.body {
+            Body::Login {
+                username,
+                url,
+                password,
+            } => {
+                let username = username.take_text();
+                let first = url.take_text();
+                let mut urls = Vec::with_capacity(1 + kept_urls.len());
+                if !first.as_str().is_empty() {
+                    urls.push(first);
+                }
+                urls.extend(kept_urls);
+                ItemData::Login {
+                    username,
+                    password: password.take_secret_text(),
+                    urls,
+                    notes: kept_notes,
+                }
+            }
+            Body::Crypto {
+                chain,
+                address,
+                memo,
+            } => ItemData::CryptoAddress {
+                chain: chain.take_text(),
+                address: address.take_secret_text(),
+                memo: memo.take_secret_text(),
+                notes: kept_notes,
+            },
+            Body::Phrase { phrase } => ItemData::RecoveryPhrase {
+                phrase: GatedSecret::new(phrase.take_secret_text()),
+                notes: kept_notes,
+            },
+            Body::Note { body } => ItemData::SecureNote {
+                body: body.take_secret_text(),
+            },
+        };
         Ok(ItemInput {
             fields,
             title,
             category: self.category,
             favourite: self.favourite,
-            data: ItemData::Login {
-                username,
-                password: self.password.take_secret_text(),
-                urls,
-                notes: kept_notes,
-            },
+            data,
         })
     }
 
     /// Whether every buffer is empty, custom fields included.
     pub(crate) fn buffers_empty(&self) -> bool {
-        self.title.is_empty()
-            && self.username.is_empty()
-            && self.url.is_empty()
-            && self.password.is_empty()
-            && self.fields.is_empty()
+        self.title.is_empty() && self.body.is_empty() && self.fields.is_empty()
     }
 
     /// Characters held by the password and the custom secret values.
     pub(crate) fn secret_char_count(&self) -> usize {
-        self.password.char_count() + self.fields.secret_char_count()
+        self.body.secret_char_count() + self.fields.secret_char_count()
     }
 
     /// Draws the form and reports what was pressed.
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, io: &mut FieldIo<'_>) -> FormAction {
-        ui.heading(if self.id.is_some() {
-            "Edit login"
-        } else {
-            "New login"
+        ui.heading(match (&self.id, &self.body) {
+            (Some(_), _) => "Edit login",
+            (None, Body::Login { .. }) => "New login",
+            (None, Body::Crypto { .. }) => "New crypto address",
+            (None, Body::Phrase { .. }) => "New recovery phrase",
+            (None, Body::Note { .. }) => "New secure note",
         });
         ui.add_space(8.0);
         let mut touched = false;
-        touched |= line_field(ui, io, TITLE_LABEL, &mut self.title);
-        touched |= line_field(ui, io, USERNAME_LABEL, &mut self.username);
-        touched |= line_field(ui, io, URL_LABEL, &mut self.url);
-        ui.add_space(4.0);
         let mut refused = None;
-        touched |= io
-            .secret_field(
-                ui,
-                "login-password",
-                PASSWORD_LABEL,
-                &mut self.password,
-                &mut refused,
-            )
-            .changed;
+        touched |= line_field(ui, io, TITLE_LABEL, &mut self.title);
+        match &mut self.body {
+            Body::Login {
+                username,
+                url,
+                password,
+            } => {
+                touched |= line_field(ui, io, USERNAME_LABEL, username);
+                touched |= line_field(ui, io, URL_LABEL, url);
+                ui.add_space(4.0);
+                touched |= io
+                    .secret_field(ui, "login-password", PASSWORD_LABEL, password, &mut refused)
+                    .changed;
+            }
+            Body::Crypto {
+                chain,
+                address,
+                memo,
+            } => {
+                touched |= line_field_hint(ui, io, CHAIN_LABEL, CHAIN_HINT, chain);
+                touched |= io
+                    .secret_field(ui, "crypto-address", ADDRESS_LABEL, address, &mut refused)
+                    .changed;
+                touched |= io
+                    .secret_field(ui, "crypto-memo", MEMO_LABEL, memo, &mut refused)
+                    .changed;
+            }
+            Body::Phrase { phrase } => {
+                touched |= io
+                    .secret_area(ui, "phrase-text", PHRASE_LABEL, phrase, &mut refused)
+                    .changed;
+            }
+            Body::Note { body } => {
+                touched |= io
+                    .secret_area(ui, "note-body", NOTE_LABEL, body, &mut refused)
+                    .changed;
+            }
+        }
         ui.add_space(8.0);
         ui.label(CUSTOM_FIELDS_LABEL);
         touched |= self.fields.show(ui, io);
@@ -491,10 +709,17 @@ mod tests {
     fn filled() -> LoginForm {
         let mut form = LoginForm::new_blank();
         form.title.insert_text("Example Mail", CharIndex(0));
-        form.username.insert_text("ada@example.com", CharIndex(0));
-        form.url
-            .insert_text("https://mail.example.com", CharIndex(0));
-        form.password.push_str("EXAMPLE-zq9-pass");
+        let Body::Login {
+            username,
+            url,
+            password,
+        } = &mut form.body
+        else {
+            panic!("a login form");
+        };
+        username.insert_text("ada@example.com", CharIndex(0));
+        url.insert_text("https://mail.example.com", CharIndex(0));
+        password.push_str("EXAMPLE-zq9-pass");
         form
     }
 
@@ -529,8 +754,11 @@ mod tests {
     #[test]
     fn blank_url_means_no_url() {
         let mut form = filled();
-        form.url.delete_char_range(CharIndex(0)..CharIndex(100));
-        assert!(form.url.is_empty());
+        let Body::Login { url, .. } = &mut form.body else {
+            panic!("a login form");
+        };
+        url.delete_char_range(CharIndex(0)..CharIndex(100));
+        assert!(url.is_empty());
         let input = form
             .take_input(SecretText::new(String::new()), Vec::new())
             .expect("no custom fields");
@@ -582,7 +810,7 @@ mod tests {
         let back = LoginForm::from_input(None, input, "Add a title.");
         assert_eq!(back.title.as_str(), "Example Mail");
         assert_eq!(back.error, Some("Add a title."));
-        assert!(!back.password.is_empty());
+        assert!(matches!(&back.body, Body::Login { password, .. } if !password.is_empty()));
     }
 
     #[test]
@@ -672,6 +900,105 @@ mod tests {
             FieldValue::Secret(s) => assert_eq!(s.expose().as_bytes(), secret.as_bytes()),
             _ => panic!("still a secret"),
         }
+    }
+
+    fn typed(kind: NewKind, fill: impl FnOnce(&mut Body)) -> ItemInput {
+        let mut form = LoginForm::new_blank_kind(kind);
+        form.title.insert_text("Example Title", CharIndex(0));
+        fill(&mut form.body);
+        form.take_input(SecretText::new(String::new()), Vec::new())
+            .expect("no custom fields")
+    }
+
+    fn crypto_input() -> ItemInput {
+        typed(NewKind::CryptoAddress, |b| {
+            let Body::Crypto {
+                chain,
+                address,
+                memo,
+            } = b
+            else {
+                panic!("a crypto form");
+            };
+            chain.insert_text("Bitcoin", CharIndex(0));
+            address.push_str("EXAMPLE-addr");
+            memo.push_str("42");
+        })
+    }
+
+    #[test]
+    fn take_input_builds_crypto_address() {
+        let input = crypto_input();
+        assert_eq!(input.validate(), Ok(()));
+        let ItemData::CryptoAddress {
+            chain,
+            address,
+            memo,
+            notes,
+        } = &input.data
+        else {
+            panic!("a crypto address");
+        };
+        assert_eq!(chain.as_str(), "Bitcoin");
+        assert_eq!(address.expose(), "EXAMPLE-addr");
+        assert_eq!(memo.expose(), "42");
+        assert!(notes.expose().is_empty());
+    }
+
+    #[test]
+    fn take_input_builds_phrase_and_note() {
+        let input = typed(NewKind::RecoveryPhrase, |b| {
+            let Body::Phrase { phrase } = b else {
+                panic!("a phrase form");
+            };
+            phrase.push_str("EXAMPLE one two");
+        });
+        assert_eq!(input.validate(), Ok(()));
+        let ItemData::RecoveryPhrase { phrase, .. } = &input.data else {
+            panic!("a recovery phrase");
+        };
+        assert!(!phrase.is_empty());
+
+        let input = typed(NewKind::SecureNote, |b| {
+            let Body::Note { body } = b else {
+                panic!("a note form");
+            };
+            body.push_str("EXAMPLE note body");
+        });
+        assert_eq!(input.validate(), Ok(()));
+        let ItemData::SecureNote { body } = &input.data else {
+            panic!("a secure note");
+        };
+        assert_eq!(body.expose(), "EXAMPLE note body");
+    }
+
+    #[test]
+    fn empty_phrase_fails_validate() {
+        use holm_core::rules::Field;
+        let input = typed(NewKind::RecoveryPhrase, |_| {});
+        assert_eq!(input.validate(), Err(FieldError::Empty(Field::Phrase)));
+    }
+
+    #[test]
+    fn from_input_restores_crypto_kind_and_address() {
+        let back = LoginForm::from_input(None, crypto_input(), "x");
+        let Body::Crypto { chain, address, .. } = &back.body else {
+            panic!("the kind is kept");
+        };
+        assert_eq!(chain.len(), "Bitcoin".len());
+        assert_eq!(address.char_count(), "EXAMPLE-addr".chars().count());
+    }
+
+    #[test]
+    fn debug_of_phrase_form_has_no_text() {
+        let mut form = LoginForm::new_blank_kind(NewKind::RecoveryPhrase);
+        let Body::Phrase { phrase } = &mut form.body else {
+            panic!("a phrase form");
+        };
+        phrase.push_str("EXAMPLE secret phrase");
+        let shown = format!("{form:?}");
+        assert!(!shown.contains("secret phrase"), "{shown}");
+        assert!(shown.contains("title_len"));
     }
 
     #[test]
