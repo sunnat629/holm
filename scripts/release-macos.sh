@@ -82,9 +82,12 @@ check_sig() { # path
   if printf '%s\n' "$info" | grep -q -E '^Signature=adhoc'; then die "$1 is ad-hoc signed"; fi
 }
 check_sig "$app"
-codesign -d --verbose=4 "$app" 2>&1 | grep -q -E '^CodeDirectory .*flags=0x[0-9a-f]*\(runtime\)' ||
+# Read into variables first: `cmd | grep -q` under pipefail fails when grep exits early (SIGPIPE).
+app_info="$(codesign -d --verbose=4 "$app" 2>&1)"
+printf '%s\n' "$app_info" | grep -q -E '^CodeDirectory .*flags=0x[0-9a-f]*\(runtime\)' ||
   die "$app does not have the hardened runtime flag"
-if codesign -d --entitlements - "$app" 2>/dev/null | grep -q '<key>'; then
+app_ents="$(codesign -d --entitlements - "$app" 2>/dev/null || true)"
+if printf '%s\n' "$app_ents" | grep -q '<key>'; then
   die "$app carries entitlements; Holm ships with none"
 fi
 codesign --verify --deep --strict --verbose=2 "$app"
