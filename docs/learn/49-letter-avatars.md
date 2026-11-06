@@ -15,7 +15,7 @@ with no category are grey. There are two palettes of eight fills, deeper ones fo
 theme, and white letters read on all of them. The widget paints a circle and some text, adds
 no accessibility label (the row title already names the item) and never touches a secret.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### `char::to_uppercase` returns an iterator
 
@@ -36,8 +36,8 @@ is closer to what Rust gives you.
 
 ### `% len` for a stable palette slot
 
-The slot is an index, and the remainder wraps it into the palette, so a ninth category
-reuses the first colour. The same slot always gives the same colour:
+The slot is an index, and the remainder wraps it into the palette, so slot 8 reuses the
+first colour. The same slot always gives the same colour:
 
 ```rust
 slot.map_or(grey, |i| palette[i % palette.len()])
@@ -46,32 +46,40 @@ slot.map_or(grey, |i| palette[i % palette.len()])
 In Kotlin you'd write `slot?.let { palette[it % palette.size] } ?: grey`. `map_or` takes the
 value for `None` first, then the function for `Some`.
 
-### `Option<usize>` from `iter().position`
+### `Option<&Category>` from `iter().find`
 
-`CategoryId` has a private field, so a row stores the category's index in the session's list
-instead. `position` returns the index of the first match, or `None`:
+`build_rows` looks up a row's category once. `find` returns a borrow of the first match, or
+`None`. The slot comes from the category's id (`colour_index`), not from its place in the
+list:
 
 ```rust
-let slot = s
+let found = s
     .category
-    .and_then(|id| categories.iter().position(|c| c.id() == id));
+    .and_then(|id| categories.iter().find(|c| c.id() == id));
+// ...
+category: found.map(|c| Text::new(c.name().to_owned())),
+category_slot: found.map(|c| c.id().colour_index()),
 ```
 
-In Kotlin you'd write `categories.indexOfFirst { it.id == id }.takeIf { it >= 0 }`, because
-`indexOfFirst` returns `-1` for "not found". Rust's `Option` makes that case impossible to
-forget. The name lookup then reuses the slot with `categories.get(i)`, which also returns an
-`Option` instead of panicking.
+`found` is an `Option<&Category>`. A shared reference is `Copy`, so an `Option` holding one
+is `Copy` too, and `found.map` can run twice without moving anything. If the category is not
+in the list, both fields are `None`.
 
-## Exercises
+In Kotlin you'd write `val found = categories.firstOrNull { it.id == id }`, then
+`found?.name`. Rust's `Option` makes the "not found" case impossible to forget.
+
+## Try it
 
 1. Add the case `"émile"` (expecting `'É'`) to `letter_from_title`, then add `"😀 smile"`
    and decide what the test should expect and why.
    `cargo test -p holm-gui --lib widgets::avatar::tests::letter_from_title`
-2. Add a unit test in `rows.rs` that builds rows for an item whose category id is not in the
-   list and checks both `category` and `category_slot` are `None`.
+2. Copy `row_carries_the_category_name` in `rows.rs`, but pass an empty category list
+   (`&[]`) to `build_rows`. Check that the item with a category now has both `category`
+   and `category_slot` set to `None`.
    `cargo test -p holm-gui --lib rows::`
-3. Add a test that computes the contrast ratio of every colour in both palettes against white
-   and checks it is at least 4.5.
+3. Read `every_fill_reads_with_white_text`. Change one entry of `PALETTE_LIGHT` to a pale
+   yellow such as `egui::Color32::from_rgb(253, 224, 71)` and run the tests. Which test
+   fails, and what ratio does it print? Put the colour back afterwards.
    `cargo test -p holm-gui --lib widgets::avatar::`
 
 ## Read next
@@ -79,3 +87,6 @@ forget. The name lookup then reuses the slot with `categories.get(i)`, which als
 - [Storing UTF-8 text in strings](https://doc.rust-lang.org/book/ch08-02-strings.html)
 - [`char::to_uppercase`](https://doc.rust-lang.org/std/primitive.char.html#method.to_uppercase)
 - [Processing a series of items with iterators](https://doc.rust-lang.org/book/ch13-02-iterators.html)
+- Previous: Lesson 48 (find it in [the index](README.md))
+- Next: [Lesson 50](50-dev-unlock-feature.md)
+- [The index](README.md)
