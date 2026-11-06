@@ -20,11 +20,11 @@ reminder date. Rows move up and down and can be removed. There are at most 10.
 A secret value types into `secret_field`. A multiline value types into
 `secret_area`, where Enter is a newline. Holding the eye paints the value. The
 item view shows custom secrets with dots, Reveal and Copy, and hides them after
-30 seconds. The test `custom_secret_not_in_accesskit` walks the whole tree and
-finds no node with `EXAMPLE` in it.
+30 seconds. The widget tests walk the whole AccessKit tree and find no node with
+`EXAMPLE` in it, even while the eye is held.
 
 Save moves the fields to the worker. It updates the item, sets the custom
-fields, then saves once. A non-login item saves its fields with
+fields, then saves if anything changed. A non-login item saves its fields with
 `Job::SetFields`.
 
 ## Rust ideas in this task
@@ -160,3 +160,6 @@ changes, instead of keeping every value in one data class.
 - [The field editor](../../crates/holm-gui/src/screens/fields.rs)
 - [The worker](../../crates/holm-gui/src/worker.rs)
 - [Ownership](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html)
+- Previous: Lesson 55, listed in [the index](README.md).
+- Next: [Lesson 57](57-a-badge-from-a-date.md), a badge from a date.
+- All lessons: [the index](README.md).

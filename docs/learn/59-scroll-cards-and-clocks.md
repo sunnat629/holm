@@ -102,3 +102,6 @@ by a stable id is kept unless you clear it on purpose.
 - [Fonts and `display`](../../crates/holm-gui/src/fonts.rs)
 - [Forgetting state on lock](../../crates/holm-gui/src/app.rs)
 - [Enums and `Cow`](https://doc.rust-lang.org/std/borrow/enum.Cow.html)
+- Previous: [Lesson 58](58-the-chapter-and-the-bytes.md), the chapter and the bytes.
+- Next: [Lesson 60](60-colour-by-category.md), colour by category.
+- All lessons: [the index](README.md).

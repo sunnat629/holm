@@ -20,14 +20,14 @@ Two rules shape the work:
   read it aloud.
 
 Days are counted in UTC, because Holm stores no timezone. Near midnight the badge can
-be one local day early or late. Task 2 accepted that risk.
+be one local day early or late. That is an accepted risk.
 
 ## What we built
 
 - `ExpiryBadge` in `crates/holm-gui/src/rows.rs`: `InDays(u32)` or `Expired`. It is a
   copy of the core's `ExpiryStatus`, so a row never borrows the session.
-- A new field on `ItemRow`: `expiry_badge: Option<ExpiryBadge>`. `build_rows` now
-  takes `today: CalendarDate` and fills the badge from `ItemSummary::soonest_expiry`.
+- A new field on `ItemRow`: `expiry_badge: Option<ExpiryBadge>`. `build_rows` takes
+  `today: CalendarDate` and fills the badge from `ItemSummary::soonest_expiry`.
 - `expiry_badge_line` in `messages.rs`, which gives the wording: `Expires today`,
   `Expires in 1 day`, `Expires in N days` or `Expired`.
 - The `CHIP_EXPIRING` label and an `expiring: bool` on `VaultView`. The chip sets
@@ -84,11 +84,15 @@ pub fn build_rows(
     summaries: &[ItemSummary<'_>],
     categories: &[Category],
     today: CalendarDate,
+    now: Timestamp,
+    utc_offset_secs: i32,
 ) -> Vec<ItemRow> {
 ```
 
 `build_rows` never reads the time. The caller passes the day in, so a test can choose
-the day and get the same answer every run.
+the day and get the same answer every run. (`now` and `utc_offset_secs` came later,
+for the "updated" label in [Lesson 59](59-scroll-cards-and-clocks.md). They follow
+the same rule.)
 
 In the app, the day comes from the clock that `HolmApp` already owns. The headless
 tests swap that clock for a `TestClock`, which the test can control.
@@ -124,13 +128,15 @@ due.
 In Kotlin you'd keep two `StateFlow`s and `combine` them, rather than add an
 `EXPIRING` value to a category enum.
 
-## Exercises
+## Try it
 
 1. Delete the `InDays(1)` arm in `expiry_badge_line`, run the tests and see which one
    fails. Then put the arm back.
    `cargo test -p holm-gui --locked --lib messages`
-2. In `rows.rs`, write a test where one item has reminders 9 days and 2 days after
-   `parse_date("2026-11-05")`. Assert that the badge is `InDays(2)`.
+2. In `badge_comes_from_the_soonest_reminder` (in `rows.rs`), add an item titled `d`
+   with `reminder(0)`, and one titled `e` with `reminder(5)` and `reminder(-3)`.
+   Predict both badges first: `InDays(0)` and `Expired`. Remember the rows are sorted
+   by title.
    `cargo test -p holm-gui --locked --lib rows`
 3. In `tests/expiring.rs`, add a test with an item that has no category and a
    reminder exactly 30 days away. Click the "No category" chip, then the Expiring
@@ -143,3 +149,6 @@ In Kotlin you'd keep two `StateFlow`s and `combine` them, rather than add an
 - The Rust Book, 10.2: [Traits](https://doc.rust-lang.org/book/ch10-02-traits.html), for `From`.
 - Lesson [53](53-labels-dates-and-secrets.md), where `expiry_status` and the UTC day
   were built.
+- Previous: [Lesson 56](56-paint-the-secret.md), paint the secret.
+- Next: [Lesson 58](58-the-chapter-and-the-bytes.md), the chapter and the bytes.
+- All lessons: [the index](README.md).

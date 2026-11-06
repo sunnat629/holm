@@ -1,7 +1,7 @@
 # Lesson 58: The chapter and the bytes
 
-This lesson goes with P5b Task 7. That task changed no code. It rewrote the body
-chapter of `docs/CRYPTO.md` for body schema 2, and tied that chapter to a test.
+This lesson covers a change that touched no code. It rewrote the body chapter of
+`docs/CRYPTO.md` for body schema 2, and tied that chapter to a test.
 
 ## Why this matters
 
@@ -19,9 +19,9 @@ quiet edit to the test.
 There is a second fixture: the sealed golden vault in `tests/golden_vault.rs`. It is a
 whole encrypted file, built with fixed key material, holding the schema-1 body. It
 stays schema 1 on purpose. It is the proof that a vault written before schema 2 still
-opens. If we rebuilt it as schema 2, we would throw away the only test that an old
-file opens. Opening a vault and saving it writes schema 2. The golden test opens and
-never saves, so the file on disk never changes.
+opens. If we rebuilt it with a newer schema, we would throw away the only test that an
+old file opens. Opening a vault and saving it writes the current schema (3 today). The
+golden test opens and never saves, so the file on disk never changes.
 
 ## What we built
 
@@ -36,7 +36,11 @@ never saves, so the file on disk never changes.
   slot rules and `Session::export_json`.
 - One sentence in `fuzz/README.md`: a version-1 body re-encodes as version 2, so
   `decode_body` checks that the second encode matches the first, not that the input
-  comes back.
+  comes back. Today it re-encodes as version 3, and the check is the same.
+
+Since then, recovery codes added schema 3 ([Lesson 61](61-recovery-codes-and-schema-3.md)).
+Holm now writes version 3 and reads 1, 2 and 3, and the chapter is now called "The
+vault body (schema v3)". The snippets below show the code as it is today.
 
 ## Rust ideas in this task
 
@@ -87,31 +91,32 @@ In Kotlin you'd write
 reject_if_newer(version, BODY_SCHEMA_VERSION)?;
 let mut data = match version {
     BODY_SCHEMA_V1 => { /* BodyInV1, fields empty */ }
-    BODY_SCHEMA_VERSION => { /* BodyIn */ }
+    BODY_SCHEMA_V2 | BODY_SCHEMA_VERSION => { /* BodyIn */ }
     _ => return Err(BodyError::UnknownSchema(version)),
 };
 ```
 
-A `const` can be a pattern. `reject_if_newer` has already refused 0 and anything above
-2, so the `_` arm is a guard that should never run. The page says the same thing: above
-2 is `NewerSchema`, and 0 is `UnknownSchema`.
+A `const` can be a pattern, and `|` joins two patterns in one arm. Versions 2 and 3
+share one set of wire structs, so they share an arm. `reject_if_newer` has already
+refused 0 and anything above 3, so the `_` arm is a guard that should never run. The
+page says the same thing: above 3 is `NewerSchema`, and 0 is `UnknownSchema`.
 
-In Kotlin you'd write `when (version) { BODY_SCHEMA_V1 -> ...; BODY_SCHEMA_VERSION -> ...; else -> throw ... }`.
+In Kotlin you'd write `when (version) { BODY_SCHEMA_V1 -> ...; BODY_SCHEMA_V2, BODY_SCHEMA_VERSION -> ...; else -> throw ... }`.
 
 ### Arrays are Copy
 
 ```rust
 let encoded = bytes(&VaultData::new_default());
 let mut expected = V1_DEFAULT_GOLDEN;
-expected[0] = 2;
+expected[0] = 3;
 assert_eq!(encoded, expected);
 ```
 
 `let mut expected = V1_DEFAULT_GOLDEN;` copies all 51 bytes, because `[u8; N]` is
 `Copy`. Changing byte 0 does not touch the constant. This one test is the whole
-statement "the version-2 empty body is the version-1 body with byte 0 set to 2".
+statement "the current empty body is the version-1 body with byte 0 set to 3".
 
-In Kotlin you'd write `val expected = V1_DEFAULT_GOLDEN.copyOf().also { it[0] = 2 }`.
+In Kotlin you'd write `val expected = V1_DEFAULT_GOLDEN.copyOf().also { it[0] = 3 }`.
 Without `copyOf()`, Kotlin would change the shared array.
 
 ### A writer that exists only in tests
@@ -144,7 +149,7 @@ is not in the release binary at all.
    `cargo test -p holm-core --locked --lib body::tests::default_body_golden`
 
 3. Write a test named `schema_byte_exercise`. It copies `V1_DEFAULT_GOLDEN`, sets byte 0
-   to 3, and checks that `VaultData::decode` returns `NewerSchema(3)`. Then also set
+   to 4, and checks that `VaultData::decode` returns `NewerSchema(4)`. Then also set
    byte 1 to 1. Predict the version number before you run it.
    `cargo test -p holm-core --locked --lib schema_byte_exercise`
 
@@ -156,4 +161,7 @@ is not in the release binary at all.
 - The Rust Book, [The match control flow construct](https://doc.rust-lang.org/book/ch06-02-match.html).
 - [Lesson 13](13-serde-and-versioned-formats.md) for the first version prefix, and
   [Lesson 52](52-a-second-schema.md) for why schema 2 is a second struct.
-- `docs/CRYPTO.md`, "The vault body (schema v2)", next to `body.rs`.
+- `docs/CRYPTO.md`, "The vault body (schema v3)", next to `body.rs`.
+- Previous: [Lesson 57](57-a-badge-from-a-date.md), a badge from a date.
+- Next: [Lesson 59](59-scroll-cards-and-clocks.md), scroll, cards and clocks.
+- All lessons: [the index](README.md).
