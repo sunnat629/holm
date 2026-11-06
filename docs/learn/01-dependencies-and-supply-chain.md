@@ -11,10 +11,11 @@ workflow's actions are pinned to exact commits. GitHub Actions is manual-only un
 repo is public, so the merge gate is `scripts/ci-local.sh` on macOS (a project decision;
 see `docs/DECISIONS.md`). The script refuses a dirty tree, so a pass describes exactly the
 commit you push. It also unsets environment variables such as `RUSTFLAGS` that could weaken
-a gate, and pins cargo-deny at 0.20.2. There is still no cryptography; this lesson is about
-trusting code you did not write.
+a gate, and it refuses to run when a cargo config file could change the build. It also
+requires exact versions of cargo-deny (0.20.2), cargo-audit (0.22.2) and cargo-vet (0.10.2).
+There is still no cryptography; this lesson is about trusting code you did not write.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Dependency syntax in `Cargo.toml`
 
@@ -23,25 +24,25 @@ From our root `Cargo.toml`:
 ```toml
 [workspace.dependencies]
 holm-crypto = { path = "crates/holm-crypto", version = "0.0.0" }
-argon2 = "0.6"
+getrandom = "0.4"
 ```
 
 The first line is a dependency on a crate in our own repo (`path`). The second says "the
-`argon2` crate from crates.io, version 0.6". A crate then opts in with
-`argon2.workspace = true`. In Kotlin you'd write: `implementation(libs.argon2)` using a
-Gradle version catalog.
+`getrandom` crate from crates.io, version 0.4". A crate then opts in with a line such as
+`zeroize.workspace = true` (from `crates/holm-cli/Cargo.toml`). In Kotlin you'd write:
+`implementation(libs.getrandom)` using a Gradle version catalog.
 
 ### Semver
 
-`"0.6"` is shorthand for `^0.6`, meaning "0.6.0 or newer, but below 0.7.0". Rust uses
+`"0.4"` is shorthand for `^0.4`, meaning "0.4.0 or newer, but below 0.5.0". Rust uses
 semantic versioning: `MAJOR.MINOR.PATCH`. For `0.x` versions the minor number acts like a
-major one, so `0.6` to `0.7` may break things. For `1.x` and up, `"1.9"` allows `1.9.0` up to
+major one, so `0.4` to `0.5` may break things. For `1.x` and up, `"1.9"` allows `1.9.0` up to
 (not including) `2.0.0`. In Kotlin you'd write: `"1.9.+"` in Gradle, which allows any 1.9.x patch; Cargo's `"1.9"` is
 wider, since it also allows 1.10 and later 1.x releases, but never 2.0.
 
 ### `Cargo.lock` and why we commit it
 
-A range like `"0.6"` is not one version. `Cargo.lock` records the exact version and checksum
+A range like `"0.4"` is not one version. `Cargo.lock` records the exact version and checksum
 of every crate that was actually chosen. Libraries often skip it; programs should commit it.
 Holm is a program that guards secrets, so we commit it: every build, on every machine, uses
 the same bytes, and a changed lock file shows up in code review. In Kotlin you'd write:
@@ -52,8 +53,8 @@ Gradle dependency locking (`gradle.lockfile`).
 A crate can have optional parts called features, switched on per dependency with a
 `features = [...]` list. Features add code, and code adds risk, so we turn on only what we
 need. Holm's `Cargo.toml` already uses them: for example `argon2 = { ..., default-features = false, features = ["alloc", "zeroize"] }` turns the default features off and picks only what we need. In Kotlin you'd write: optional modules or Gradle
-capabilities, but Cargo features compile code in or out. `cargo deny` runs with
-`all-features = true` so it sees the biggest possible dependency tree.
+capabilities, but Cargo features compile code in or out. The local gate runs
+`cargo deny --all-features`, so it sees the biggest possible dependency tree.
 
 ### Workspace lints
 
@@ -63,7 +64,10 @@ unsafe_code = "forbid"
 ```
 
 Each crate adds `[lints] workspace = true` and inherits it. This covers integration tests
-and build scripts, which `#![forbid(unsafe_code)]` inside `lib.rs` would miss. In Kotlin
+and build scripts, which `#![forbid(unsafe_code)]` inside `lib.rs` would miss. One crate,
+`holm-platform`, keeps its own `[lints.rust]` table with `unsafe_code = "deny"`, so one
+reviewed AppKit module can opt in. The `lint-drift` gate in `scripts/ci-local.sh` checks
+that every other lint in that table still matches the workspace. In Kotlin
 you'd write: a shared detekt config applied by a convention plugin.
 
 ### crates.io trust
@@ -78,9 +82,10 @@ has the same problem. Three tools check different parts of it:
 - **`cargo audit`** compares `Cargo.lock` with the RustSec advisory database of known
   vulnerable or unmaintained crates. It tells you "this version is known bad".
 - **`cargo vet`** asks "has a trusted human actually read this code?". We import audit
-  results published by nine organisations (Mozilla, Google, the Bytecode Alliance and six others; see `[imports.*]` in `supply-chain/config.toml`). Any crate nobody we trust
-  has audited needs an exemption in `supply-chain/config.toml`, with a reason, and we
-  review that list again in Phase 2.
+  results published by nine organisations (Mozilla, Google, the Bytecode Alliance, ISRG,
+  Zcash and four others; see `[imports.*]` in `supply-chain/config.toml`). Any crate nobody
+  we trust has audited needs an exemption in `supply-chain/config.toml`, with a reason, and
+  we review that list as the project grows.
 
 Here is part of the ban list from `deny.toml`:
 
@@ -107,6 +112,10 @@ inside another dependency. The matching rule in `clippy.toml` lists `std::net::T
 `TcpListener` and `UdpSocket` under `disallowed-types`, so CI's `clippy -D warnings` fails if
 Holm's own code opens a socket. Together they catch the common ways to reach the network:
 an HTTP, TLS or async-runtime crate on the list, or the standard library's socket types.
+
+`scripts/ci-local.sh` adds one more check, the `no-network` gate. It runs `cargo tree` on
+`holm-gui` for the shipped macOS target and fails if `reqwest`, `ureq`, `hyper` or `url`
+appears in the normal dependency tree.
 
 They cannot catch everything. A network crate that is not on the list passes. A call into C
 through FFI can open a socket with no Rust crate involved. The `std::net` rule only sees
@@ -139,14 +148,19 @@ yet, so a human must run it and look at the result before pushing.
 1. Prove the ban works. Run `cargo add ureq -p holm-cli`, then `cargo deny check bans`.
    It should fail and name `ureq`. Undo with `git checkout Cargo.toml Cargo.lock crates/holm-cli/Cargo.toml`
    and check `git status` is clean.
-2. Look at the lock file: `grep -c '^name' Cargo.lock` counts the crates in the build.
-   Today it is about 84 crates: ours plus the crypto dependencies, each gated by deny, audit
-   and vet. Say why a small, counted list is a good place to start.
-3. Install it with `cargo install --locked cargo-vet`, then run `cargo vet --locked` and read the one-line answer. Then open
-   `supply-chain/config.toml` and find the audit sources we import (nine). Each exempted crate has a `notes` line saying why,
-   what risk we accept and when to revisit it.
+2. Look at the lock file. `grep -c '^name' Cargo.lock` counts the crates in the lock file,
+   the GUI's dependencies included. Check: you get one number. Say why every crate in that
+   count is something deny, audit and vet must check.
+3. Install the pinned version with `cargo install --locked cargo-vet --version 0.10.2`, then
+   run `cargo vet --locked` and read the one-line answer. Then open `supply-chain/config.toml`
+   and find the `[imports.*]` tables, the audit sources we trust. Check: there are nine.
+   Each exempted crate has a `notes` line saying why it is exempt. The longer notes, such as
+   the one for `proptest`, also say what risk we accept and when to revisit it.
 
 ## Read next
 
 - [Specifying Dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html) (The Cargo Book)
 - [The Rust Programming Language, ch. 14: More about Cargo and crates.io](https://doc.rust-lang.org/book/ch14-00-more-about-cargo.html)
+- Previous: [Lesson 00](00-setup-and-cargo.md)
+- Next: [Lesson 02](02-ownership-and-drop.md)
+- [The index](README.md)
