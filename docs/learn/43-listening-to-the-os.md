@@ -3,8 +3,8 @@
 ## Why this matters
 
 A vault left open on a Mac that sleeps, locks its screen or switches user is open to
-whoever wakes it. Holm already locks when idle and when minimised. This task makes it
-lock when the operating system says "the person stepped away": sleep, screens asleep,
+whoever wakes it. Holm already locks when idle and when minimised. It also locks when
+the operating system says "the person stepped away": sleep, screens asleep,
 screen lock, and the session going inactive (fast user switch, logout).
 
 The GUI hears these from AppKit. The terminal shell has no AppKit run loop, so it
@@ -29,7 +29,7 @@ notices a sleep another way: the clocks disagree when it wakes.
 All of it obeys the vault's `lock_on_sleep` setting, and every sleep lock clears a
 copied password through `PendingClear`.
 
-## Rust ideas in this task
+## Rust ideas here
 
 ### 1. Observers and blocks
 
@@ -54,6 +54,7 @@ let flag = Arc::clone(&self.flag);
 let block = RcBlock::new(move |_note: NonNull<NSNotification>| {
     flag.store(true, Ordering::SeqCst);
 });
+let queue = NSOperationQueue::mainQueue();
 let token = unsafe {
     center.addObserverForName_object_queue_usingBlock(Some(name), None, Some(&queue), &block)
 };
@@ -65,8 +66,9 @@ Two differences from Kotlin:
   to unregister and logs a warning. Here `impl Drop for LockEvents` removes every
   token, so the observers live exactly as long as the value. You cannot forget.
 - **The call is `unsafe`.** The compiler cannot check Objective-C's rules, so each
-  `unsafe` block has a `// SAFETY:` comment that says why this call is fine. Holm keeps
-  all of them in one file, `window.rs`, and every other module forbids `unsafe`.
+  `unsafe` block has a `// SAFETY:` comment that says why this call is fine. In
+  `holm-platform`, `window.rs` allows `unsafe` with a written reason at the top of the
+  file; a module like `tty.rs` says `#![forbid(unsafe_code)]`.
 
 ### 2. `Arc<AtomicBool>` as a one-bit mailbox
 
@@ -84,13 +86,12 @@ between a read and a reset is never lost. The GUI calls `take` once per frame. K
 an `AtomicBoolean` with `getAndSet(false)`, written from the receiver and read on the
 main thread.
 
-Why `Arc` and not `Rc`? The block may be called by AppKit on any thread it chooses for
-the queue. `Arc<AtomicBool>` is `Send + Sync`, so that is safe whatever thread it runs on.
-`Rc<Cell<bool>>` would still compile: objc2's `addObserverForName_object_queue_usingBlock`
-takes a `&DynBlock<dyn Fn(..)>` with no `Send` bound. But the method is `unsafe`, and its
-documented safety rule says the block must be sendable, because AppKit may run it on
-another thread. An `Rc` there is a data race the compiler does not catch. That is why the
-`// SAFETY:` comment names the `Arc<AtomicBool>` capture: the rule is ours to keep.
+Why `Arc` and not `Rc`? The block is handed to AppKit, which keeps it and calls it later.
+Holm asks for the main queue, but the `// SAFETY:` comment does not lean on that: the
+block touches nothing but an `Arc<AtomicBool>`, which is `Send + Sync`, so it is safe on
+any thread. An `Rc` is neither, and sharing one across threads is a data race. The call
+is `unsafe`, so the compiler does not check this for us; the `// SAFETY:` comment names
+the `Arc<AtomicBool>` capture to show the rule is kept.
 
 `LockEvents::install()` returns `None` off the main thread
 (`MainThreadMarker::new()?`), because AppKit's workspace belongs to the main thread.
@@ -100,18 +101,28 @@ another thread. An `Rc` there is a data race the compiler does not catch. That i
 
 A Mac asleep stops the monotonic clock (`Instant`) but not the wall clock
 (`SystemTime`). So after a wake, the wall clock has moved further than the monotonic
-one. `SleepWatch` stores both at each mark and compares the two distances:
+one. `SleepWatch` stores both at each mark and compares the two distances in `slept`:
 
 ```rust
-// gained = (wall now - wall then) - (mono now - mono then)
-.is_some_and(|gained| gained > SLEEP_GAP_SECS)
+let Some(wall) = clock.now_unix().0.checked_sub(self.wall.0) else {
+    return false;
+};
+if wall <= 0 {
+    return false;
+}
+let mono = clock.monotonic().saturating_sub(self.mono).as_secs();
+let Ok(mono) = i64::try_from(mono) else {
+    return false;
+};
+wall.checked_sub(mono)
+    .is_some_and(|gained| gained > SLEEP_GAP_SECS)
 ```
 
-The wall steps use `checked_sub` and the monotonic step uses `saturating_sub` (it
-never goes backwards, so it can't underflow anyway); there is no addition. A strange
-wall clock gives `None`, not a panic or a wrap. A wall clock set *back* gives a negative gain, which is "no sleep". A
-wall clock set *forward* by more than 5 s reads as a sleep and locks: a false lock is
-safe, a missed one is not.
+The wall steps use `checked_sub` and the monotonic step uses `saturating_sub` (it never
+goes backwards, so it can't underflow anyway); there is no addition. A difference that
+does not fit returns `false`, never a panic or a wrap. A wall clock set *back* returns
+`false` early: never a sleep. A wall clock set *forward* by more than 5 s reads as a sleep
+and locks: a false lock is safe, a missed one is not.
 
 Kotlin parallel from lesson 38: `System.currentTimeMillis()` against
 `SystemClock.uptimeMillis()`, which also stops in deep sleep. The difference between
@@ -121,16 +132,24 @@ This is how the shell sees a sleep without any OS callback.
 
 The shell also notices fast user switching and the login window without a callback:
 `/dev/console` belongs to whoever owns the screen (root at the login window). The shell
-notes the owner's uid at start and at each unlock (`std::fs::metadata` and
-`MetadataExt::uid()`, std only, no `unsafe`), and the same interrupt reads it again at
-most once a second. A new owner locks the shell as a sleep does. An owner that can't be
+notes the owner's uid at start and at each unlock, and the same interrupt reads it again
+at most once a second (`CONSOLE_EVERY`). The read is `console_owner` in
+`crates/holm-cli/src/term.rs`, std only, no `unsafe`:
+
+```rust
+use std::os::unix::fs::MetadataExt;
+std::fs::metadata(CONSOLE).ok().map(|m| m.uid())
+```
+
+A new owner locks the shell as a sleep does. An owner that can't be
 read counts as no change, so an error never locks. It still cannot see a screen lock
 (Ctrl-Cmd-Q) that neither sleeps nor switches users, and the docs say so. Kotlin: polling
 a value on a timer when you can't register a `BroadcastReceiver`.
 
 ### 4. A closure borrowed per call
 
-The shell passes the check into the terminal read as `Option<&dyn Fn() -> bool>`:
+The shell passes the check into the terminal read as `Option<&dyn Fn() -> bool>`, named
+in `crates/holm-cli/src/term.rs`:
 
 ```rust
 pub type Interrupt<'a> = Option<&'a dyn Fn() -> bool>;
@@ -143,7 +162,7 @@ instead of setting a listener field.
 `LineOpts` holds that reference, so it cannot `#[derive(Debug)]` (a closure has no
 `Debug`). It gets a hand-written one that prints only whether an interrupt is set.
 
-## Exercises
+## Try it
 
 1. Set `SLEEP_GAP_SECS` to 0 and run `cargo test -p holm-core --locked sleep_watch`.
    `sleep_watch_ignores_small_skew` fails. Why would a gap that small lock on ordinary
@@ -151,11 +170,14 @@ instead of setting a listener field.
 2. In `LockEvents::take`, replace `swap(false, ..)` with a `load` followed by a
    `store(false, ..)`. Describe the event that could be lost between the two lines.
    Put it back.
-3. Remove the `impl Drop for LockEvents`. Nothing in the tests fails. Why is it still
+3. Remove the `impl Drop for LockEvents`. The tests may well still pass. Why is it still
    wrong? (Hint: what calls the block after the app is gone?)
 
 ## Read next
 
-- [Lesson 38: One clear for every client](38-one-clear-for-every-client.md)
-- [Lesson 27: Locking without a frame](27-locking-without-a-frame.md)
+- Previous: [Lesson 42: One list, four shapes](42-one-list-four-shapes.md)
+- Next: [Lesson 44: The list and its memory](44-the-list-and-its-memory.md)
+- Related: [Lesson 38: One clear for every client](38-one-clear-for-every-client.md)
+- Related: [Lesson 27: Locking without a frame](27-locking-without-a-frame.md)
 - [`std::sync::atomic::AtomicBool`](https://doc.rust-lang.org/std/sync/atomic/struct.AtomicBool.html)
+- [The index](README.md)

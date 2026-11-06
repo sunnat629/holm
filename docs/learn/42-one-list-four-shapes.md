@@ -16,9 +16,9 @@ Reveal button that shows it for 30 seconds, and a Copy button that goes through 
 auto-clearing clipboard path as the login password. A recovery phrase asks for the master
 password on every reveal. The worker checks that password (`Job::RevealPhrase`), and a
 wrong password counts toward the same throttle as the unlock screen. The phrase then shows
-for 60 seconds.
+for 60 seconds. Custom fields follow the built-in ones on every item type.
 
-## Rust ideas in this task
+## Rust ideas here
 
 ### 1. An exhaustive `match` over the item's data
 
@@ -33,35 +33,47 @@ match item.data() {
 }
 ```
 
-The list has no `_ =>` arm. If the core gains a fifth item type, this code stops compiling
+The match has no `_ =>` arm. If the core gains a fifth item type, this code stops compiling
 until someone decides how the new type is shown. The subtitle in `rows.rs` uses the same
 pattern over `ItemType`.
 
 In Kotlin you'd write `when (data) { is Login -> …; is CryptoAddress -> … }` over a
-`sealed class ItemData`. As a `when` used as an expression, that is exhaustive too. A Rust
-`match` is always exhaustive, even when it is used as a statement.
+`sealed class ItemData`. Since Kotlin 1.7 that must be exhaustive too, as an expression or
+a statement. A Rust `match` has always been checked this way.
 
 ### 2. A gated secret behind a worker job
 
-The phrase is a `GatedSecret`, and the core gives it no public accessor. The only way out is
-`Session::reveal_phrase(id, &password)`, which checks the password first. That check costs
-a full Argon2 run, so it goes to the worker thread like an unlock does:
+The phrase is a `GatedSecret`. The view never reads it from the item: it gets the words
+only after the session checks the master password. That check costs a full Argon2 run, so
+it goes to the worker thread like an unlock does. The gate builds the job like this:
 
 ```rust
-Job::RevealPhrase { id, password } => {
-    let result = session
-        .reveal_phrase(id, &password)
-        .map(|words| phrase = Some(SecretText::new(words.to_owned())));
-    drop(password);
-    result
+job = Some(Job::RevealPhrase {
+    id: item.id(),
+    password: gate.take_master_password(),
+});
+```
+
+`take_master_password()` moves the typed password into the job and leaves the field empty.
+The words come back in a `SecretText`, which wipes itself when it is dropped, and
+`on_phrase_done` stores them only if the gate is still open:
+
+```rust
+match (result, phrase) {
+    (Ok(()), Some(words)) => {
+        self.phrase_gate = None;
+        self.gate_error = None;
+        self.reveal(RevealField::Phrase, now);
+        self.phrase = Some(words);
+    }
+    (Ok(()), None) => self.gate_error = Some(messages::PHRASE_FAILED),
+    (Err(e), _) => self.gate_error = Some(messages::phrase_error(e)),
 }
 ```
 
-The password moves into the job with `take_master_password()`, which leaves the field
-empty, and the worker drops (wipes) it. The words come back in a `SecretText`, which wipes
-itself when it is dropped. `ItemView::hide` sets that `Option` to `None`, so hiding the
-phrase also frees and wipes it. A wrong password stays on the gate with a fixed line. The
-app's `finish` keeps the item view for this job kind instead of treating a failure as fatal.
+`ItemView::hide` sets `phrase` to `None`, so hiding the phrase also drops and wipes it. A
+wrong password stays on the gate with a fixed line (`PHRASE_WRONG_PASSWORD`). The app's
+`finish` keeps the item view for this job kind instead of treating a failure as fatal.
 
 In Kotlin you'd write `viewModelScope.launch(Dispatchers.Default) { … }` and post the
 result back. A Kotlin `String` can't be wiped, though, and here the type system tracks who
@@ -96,21 +108,22 @@ other.
 
 **Honest limit.** Painting a revealed secret hands egui a `String` copy of it (the galley
 cache). That copy lives for about one frame after the field hides, and it is freed without
-being wiped. This is the same limit as in lesson 37. Since the final fix wave the login
-password is painted too, like every other revealed secret, so no revealed secret is in the
-AccessKit tree.
+being wiped. This is the same limit as in lesson 37. The login password is painted too,
+like every other revealed secret, so no revealed secret is in the AccessKit tree.
 
-## Exercises
+## Try it
 
 1. Give the crypto memo row a 15-second timer instead of 30. Only `RevealField::shows_for`
    needs to change. Check: `cargo test -p holm-gui --locked --lib item_view`
-2. Add a test that the Copy note line is gone after you select another item. Check:
-   `cargo test -p holm-gui --locked --test item_types`
+2. Add a unit test in `item_view.rs` that reveals `RevealField::Password`, calls `tick`
+   with `focused = false`, and checks that `is_revealed()` is false. Check:
+   `cargo test -p holm-gui --locked --lib item_view`
 3. Temporarily add a fifth variant to `ItemType` in a scratch branch, and read the errors
    the compiler gives in `rows.rs`. Then undo it. Check: `cargo build -p holm-gui --locked`
 
 ## Read next
 
-- [Lesson 37: Hold to reveal](37-hold-to-reveal.md)
-- [Lesson 36: Thin screens over the core](36-thin-screens-over-the-core.md)
-- [Lesson 38: One clear for every client](38-one-clear-for-every-client.md)
+- Previous: Lesson 41, from [the index](README.md)
+- Next: [Lesson 43: Listening to the OS](43-listening-to-the-os.md)
+- Related: [Lesson 37: Hold to reveal](37-hold-to-reveal.md)
+- [The index](README.md)
