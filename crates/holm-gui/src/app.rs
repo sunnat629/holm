@@ -141,9 +141,9 @@ pub struct HolmApp {
     screen: Screen,
     /// Argon2 costs for a new vault.
     kdf: KdfParams,
-    /// Set by [`lock`](Self::lock) for every reason: the next frame drops all text-edit
-    /// state (undo history) so typed text cannot come back through Cmd+Z after unlock,
-    /// and all scroll-area state, so the list reopens at the top.
+    /// Set by [`lock`](Self::lock) for every reason: the next frame wipes egui's UI
+    /// memory (see [`apply_forget`](Self::apply_forget)), so typed text cannot come back
+    /// through Cmd+Z after unlock and the list reopens at the top.
     forget_text_state: bool,
     /// The UI's clock.
     ui_clock: Box<dyn Clock>,
@@ -318,16 +318,31 @@ impl HolmApp {
         self
     }
 
-    /// Drops every text-edit state (undo history) and scroll offset once after a lock. A
-    /// field keeps its id across lock and unlock, so without this its old history would
-    /// answer Cmd+Z.
+    /// Wipes the egui UI memory that could hold vault content, once after a lock.
+    ///
+    /// Cleared: all of egui's id-keyed data (text-edit state and its undo history, scroll
+    /// offsets, collapsing headers, any other widget state), so a field that keeps its id
+    /// across lock and unlock cannot answer Cmd+Z and the list reopens at the top; the
+    /// remembered areas (popups, windows); the focused widget and any running text input;
+    /// animations; and cached images.
+    ///
+    /// Text layouts (galleys) are not touched here: egui evicts unused ones at the end of
+    /// the next frame, and the global zeroing allocator wipes them when they are freed.
+    /// The font glyph atlas holds only glyph shapes, no vault text, so it is left alone,
+    /// as are the theme, the style and the window size. Shrinking the window on lock is
+    /// deliberately not done: it is janky, and the window can be minimised instead.
     fn apply_forget(&mut self, ctx: &egui::Context) {
         if self.forget_text_state {
-            ctx.data_mut(|d| {
-                d.remove_by_type::<egui::text_edit::TextEditState>();
-                // The list reopens at the top, not where the user was.
-                d.remove_by_type::<egui::scroll_area::State>();
+            ctx.data_mut(|d| d.clear());
+            ctx.memory_mut(|m| {
+                m.reset_areas();
+                m.stop_text_input();
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
             });
+            ctx.clear_animations();
+            ctx.forget_all_images();
             self.forget_text_state = false;
         }
     }

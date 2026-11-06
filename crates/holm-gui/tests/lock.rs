@@ -17,7 +17,7 @@ use common::{
     make_vault_with_auto_lock, make_vault_without_lock_on_sleep, run_until, test_app,
     test_app_with_clipboard, vault_path,
 };
-use eframe::egui::{Event, Key, Modifiers, ViewportId, pos2};
+use eframe::egui::{Event, Id, Key, Modifiers, ViewportId, pos2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use holm_core::session::Session;
@@ -840,6 +840,55 @@ fn assert_undo_restores_nothing(harness: &mut Harness<'static, HolmApp>) {
     harness.key_press_modifiers(Modifiers::COMMAND, Key::Z);
     harness.run();
     assert_eq!(field_value(harness, "File path"), "", "path undo is empty");
+}
+
+/// After a manual lock and one more frame, nothing painted and no accessibility node
+/// carries the item's title, password or username.
+#[test]
+fn lock_leaves_no_vault_text_on_screen() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    add_example(&mut harness);
+    assert!(nodes_with(&harness, ROW_TITLE) > 0, "the row is drawn");
+    harness.get_by_label("Lock").click();
+    harness.run();
+    harness.run();
+    assert_locked(&harness, "Locked.");
+    for needle in [ROW_TITLE, SECRET, "ada@example.com"] {
+        assert!(!painted(&harness, needle), "{needle} painted while locked");
+        assert_eq!(
+            nodes_with(&harness, needle),
+            0,
+            "{needle} in a node while locked"
+        );
+    }
+}
+
+/// The forget step clears all of egui's id-keyed data, not just text-edit and scroll
+/// state: a marker of another type, stored before the lock, is gone after it.
+#[test]
+fn lock_clears_egui_widget_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock) = open(dir.path());
+    type_into(&mut harness, "Search", "EXAMPLE");
+    let marker = Id::unique("vault-content-marker");
+    harness
+        .ctx
+        .data_mut(|d| d.insert_temp(marker, String::from(ROW_TITLE)));
+    assert_eq!(
+        harness.ctx.data(|d| d.get_temp::<String>(marker)),
+        Some(String::from(ROW_TITLE))
+    );
+    harness.get_by_label("Lock").click();
+    harness.run();
+    harness.run();
+    assert_locked(&harness, "Locked.");
+    assert_eq!(
+        harness.ctx.data(|d| d.get_temp::<String>(marker)),
+        None,
+        "widget data kept while locked"
+    );
+    assert_no_text_state(&harness);
 }
 
 #[test]
