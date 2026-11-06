@@ -69,7 +69,7 @@ fn toggling_applies_at_once_and_survives_a_restart() {
     let (app, _clock) = test_app_with_capture(dir.path(), Box::new(again.clone()));
     assert!(app.hide_from_capture());
     assert_eq!(again.calls.borrow().as_slice(), &[true]);
-    let mut harness = harness(app);
+    let mut harness = common::harness(app);
     harness.run();
     // Re-applied each frame while on, for windows opened later.
     assert!(again.calls.borrow().len() > 1);
