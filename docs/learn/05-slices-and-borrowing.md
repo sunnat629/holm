@@ -8,7 +8,7 @@ decryption checks the tag first. If anything was changed, decryption fails and r
 plaintext at all. `seal` encrypts, `open` decrypts. Tests check it against Wycheproof
 and IETF vectors (`mod kat` in `aead.rs`) and against libsodium (`oracle/tests/xchacha.rs`).
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### Slices, arrays and `Vec`: three ways to hold bytes
 
@@ -92,6 +92,8 @@ impl Nonce {
   caller no longer has it. A second `seal` with the same variable does not compile:
   ``error[E0382]: use of moved value: `nonce` ``.
 - To store the nonce in the file, call `nonce.as_bytes()` (a borrow) *before* sealing.
+  `oracle/tests/xchacha.rs` does this: `let nonce_bytes = *nonce.as_bytes();` copies the 24
+  bytes (arrays of `u8` are `Copy`), and only then is `nonce` passed to `seal`.
 - `open` takes `&[u8; 24]` because reading a stored nonce back is not reuse.
 
 In Kotlin you'd write: `fun seal(key: SecretKey, nonce: ByteArray, ...)`. Nothing stops
@@ -247,3 +249,6 @@ plaintext and no hint.
 
 - [The Rust Programming Language, ch. 4: Understanding Ownership](https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html)
 - [ch. 10.3: Validating References with Lifetimes](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html)
+
+Previous: [Lesson 04](04-constants-overflow-and-features.md). Next: [Lesson 06](06-parsing-bytes-safely.md).
+Back to [the index](README.md).

@@ -9,7 +9,7 @@ against a floor and a ceiling before any memory is allocated. Tests check our Ar
 the RFC's published answer, and a separate `oracle/` workspace checks it against libsodium, a
 second, independent implementation.
 
-## Rust ideas in this task
+## Rust ideas in this lesson
 
 ### `const` and associated constants
 
@@ -180,9 +180,11 @@ Line by line:
 
 Why is `oracle/` a separate workspace, with its own `Cargo.toml` and `Cargo.lock`?
 `libsodium-sys-stable` has `ureq`, an HTTP client, as a build dependency, and Holm's
-`cargo deny` policy bans network crates such as `ureq`. Cargo has no "optional dev-dependency", so a dev-dependency of `holm-crypto` would join
-the main dependency graph and fail `cargo deny`. As its own workspace, the oracle keeps that
-crate out of the product's graph. `scripts/ci-local.sh` runs its gates separately.
+`cargo deny` policy bans network crates such as `ureq`. Cargo has no "optional
+dev-dependency", so a dev-dependency of `holm-crypto` would join the main dependency graph
+and fail `cargo deny`. As its own workspace, the oracle keeps that crate out of the
+product's graph. The root `Cargo.toml` lists it under `exclude`, and `scripts/ci-local.sh`
+runs its gates separately.
 
 In Kotlin you'd write: unit tests in `src/test/kotlin` with `internal` access, and a separate
 Gradle module (say `:oracle`, with a `testImplementation` dependency on libsodium bindings)
@@ -222,17 +224,23 @@ temporaries (1 KiB blocks and short hash outputs) are not wiped; `docs/CRYPTO.md
    compiling. Check: `cargo test -p holm-crypto u32_overflow` prints
    `test kdf::tests::u32_overflow_panics_in_debug - should panic ... ok`.
    Then run `cargo test -p holm-crypto --release u32_overflow`. Check: it fails with
-   `test did not panic as expected`, because release builds wrap instead of panicking. Undo
-   with `git checkout crates/holm-crypto/src/kdf.rs`.
+   `test did not panic as expected`. The root `Cargo.toml` has no `[profile.release]`, so
+   Cargo's default release profile applies, and it turns overflow checks off: the
+   multiplication wraps instead of panicking. Undo with
+   `git checkout crates/holm-crypto/src/kdf.rs`.
 3. In `oracle/Cargo.toml`, change the `holm-crypto` line to
    `holm-crypto = { path = "../crates/holm-crypto" }` (no feature). Check:
    `cargo test --manifest-path oracle/Cargo.toml --locked` fails with
    ``unresolved import `holm_crypto::kdf::argon2id_raw` ``, plus a note
-   `found an item that was configured out` that points at the `#[cfg(...)]` line in `kdf.rs`. The first build compiles libsodium and takes a while.
-   Undo with `git checkout oracle/Cargo.toml`.
+   `found an item that was configured out` that points at the `#[cfg(...)]` line in
+   `kdf.rs`. The first build compiles libsodium and takes a while. Undo with
+   `git checkout oracle/Cargo.toml`.
 
 ## Read next
 
 - [The Rust Programming Language, ch. 3.2: Data Types (integer overflow)](https://doc.rust-lang.org/book/ch03-02-data-types.html)
 - [ch. 11.3: Test Organization](https://doc.rust-lang.org/book/ch11-03-test-organization.html)
 - [ch. 14.3: Cargo Workspaces](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html)
+
+Previous: [Lesson 03](03-errors-and-results.md). Next: [Lesson 05](05-slices-and-borrowing.md).
+Back to [the index](README.md).
