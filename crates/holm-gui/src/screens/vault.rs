@@ -32,7 +32,7 @@ use crate::file_dialog::DialogKind;
 use crate::fonts::display;
 use crate::messages;
 use crate::rows::{ItemRow, build_rows};
-use crate::widgets::avatar::{avatar, avatar_colour, avatar_letter};
+use crate::widgets::avatar::{avatar, avatar_colour, avatar_letter, chip_dot};
 use crate::worker::{Job, JobKind, TransferResult};
 use holm_platform::transfer::TransferError;
 
@@ -600,15 +600,43 @@ impl VaultView {
         let mut pick = None;
         let mut toggle_expiring = false;
         ui.horizontal_wrapped(|ui| {
-            let mut chip = |filter: CategoryFilter, label: &str| {
-                if ui.selectable_label(current == filter, label).clicked() {
+            let dark = ui.visuals().dark_mode;
+            // A category chip passes its dot colour; the dot and label sit together.
+            let mut chip = |filter: CategoryFilter, label: &str, dot: Option<egui::Color32>| {
+                let clicked = match dot {
+                    Some(colour) => {
+                        // No nested `horizontal`: in a wrapping row it cannot wrap and
+                        // would widen the panel. Start a new row when dot and label
+                        // would not both fit, so they stay together.
+                        let text = egui::WidgetText::from(label)
+                            .into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Extend),
+                                f32::INFINITY,
+                                egui::TextStyle::Button,
+                            )
+                            .size()
+                            .x;
+                        let spacing = ui.spacing();
+                        let need =
+                            8.0 + spacing.item_spacing.x + text + 2.0 * spacing.button_padding.x;
+                        if ui.available_size_before_wrap().x < need {
+                            ui.end_row();
+                        }
+                        chip_dot(ui, colour);
+                        ui.selectable_label(current == filter, label).clicked()
+                    }
+                    None => ui.selectable_label(current == filter, label).clicked(),
+                };
+                if clicked {
                     pick = Some(filter);
                 }
             };
-            chip(CategoryFilter::All, CHIP_ALL);
-            chip(CategoryFilter::Uncategorised, CHIP_NONE);
+            chip(CategoryFilter::All, CHIP_ALL, None);
+            chip(CategoryFilter::Uncategorised, CHIP_NONE, None);
             for (id, name) in &self.chips {
-                chip(CategoryFilter::Only(*id), name.as_str());
+                let colour = avatar_colour(Some(id.colour_index()), dark);
+                chip(CategoryFilter::Only(*id), name.as_str(), Some(colour));
             }
             // Its own toggle, not a category: it combines with the chip picked above.
             ui.separator();

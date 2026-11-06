@@ -18,6 +18,14 @@ pub const MAX_CATEGORY_NAME_CHARS: usize = 64;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CategoryId(pub(crate) u32);
 
+impl CategoryId {
+    /// A stable small number for picking a display colour. Not secret.
+    #[must_use]
+    pub fn colour_index(self) -> usize {
+        usize::try_from(self.0).unwrap_or(0)
+    }
+}
+
 /// A named category.
 pub struct Category {
     pub(crate) id: CategoryId,

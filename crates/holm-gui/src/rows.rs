@@ -52,8 +52,8 @@ pub struct ItemRow {
     pub subtitle: Text,
     /// The name of the item's category, if it has one. Never a secret.
     pub category: Option<Text>,
-    /// The category's index in the session's category list, which picks the avatar
-    /// colour. `None` when the item has no category.
+    /// The category's colour index (`CategoryId::colour_index`), which picks the avatar
+    /// colour. `None` when the item has no category, or its category is not in the list.
     pub category_slot: Option<usize>,
     /// The soonest custom-field reminder as a badge. `None` when no field has one.
     pub expiry_badge: Option<ExpiryBadge>,
@@ -98,18 +98,16 @@ pub fn build_rows(
     let mut rows: Vec<ItemRow> = summaries
         .iter()
         .map(|s| {
-            let slot = s
+            let found = s
                 .category
-                .and_then(|id| categories.iter().position(|c| c.id() == id));
+                .and_then(|id| categories.iter().find(|c| c.id() == id));
             ItemRow {
                 id: s.id,
                 kind: s.item_type,
                 title: Text::new(s.title.to_owned()),
                 subtitle: Text::new(subtitle(s).to_owned()),
-                category: slot
-                    .and_then(|i| categories.get(i))
-                    .map(|c| Text::new(c.name().to_owned())),
-                category_slot: slot,
+                category: found.map(|c| Text::new(c.name().to_owned())),
+                category_slot: found.map(|c| c.id().colour_index()),
                 expiry_badge: s
                     .soonest_expiry
                     .map(|expiry| ExpiryBadge::from(expiry_status(expiry, today))),
@@ -283,8 +281,8 @@ mod tests {
             Some("Projects")
         );
         assert!(rows[1].category.is_none());
-        // Projects follows the built-in Personal, Work and Community.
-        assert_eq!(rows[0].category_slot, Some(3));
+        // The slot is the category's own colour index, not its place in the list.
+        assert_eq!(rows[0].category_slot, Some(work.colour_index()));
         assert_eq!(rows[1].category_slot, None);
     }
 
