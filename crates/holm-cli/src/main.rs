@@ -15,6 +15,9 @@ use holm_platform::clipboard::ConcealedClipboard;
 use holm_platform::paths::default_vault_path;
 
 fn main() -> ExitCode {
+    if holm_platform::hardening::disable_core_dumps().is_err() {
+        eprintln!("Holm could not disable core dumps.");
+    }
     // The arguments are the only thing read from the process environment.
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let stderr = io::stderr();

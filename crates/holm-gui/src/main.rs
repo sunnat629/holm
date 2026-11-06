@@ -14,6 +14,9 @@ fn main() -> ExitCode {
 
 #[cfg(target_os = "macos")]
 fn main() -> ExitCode {
+    if holm_platform::hardening::disable_core_dumps().is_err() {
+        eprintln!("Holm could not disable core dumps.");
+    }
     macos::run()
 }
 
