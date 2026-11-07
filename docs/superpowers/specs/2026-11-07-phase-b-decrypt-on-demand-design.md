@@ -57,7 +57,9 @@ KDF, the salt and the DEK wrap do not change.
 | 164 | 8 | records region length | parser framing, index AEAD |
 | 172 | | end of header (`HEADER_LEN_V2` = 172) | |
 
-- **Wrap AAD** is bytes `0..60`, unchanged from v1.
+- **Wrap AAD** is bytes `0..60`, the same span as v1. That span holds the format version
+  (bytes 8..10), so a v1 wrapped DEK copied into a v2 header does not unwrap. Migration
+  re-wraps while the KEK still exists (4.1).
 - **Index AAD** is bytes `0..172`, the whole header.
 - **Key block** is bytes `0..132`: magic, version, KDF costs, salt, wrap nonce and wrapped DEK.
   It changes only on create and on a password change (which also makes a new DEK). It is part
@@ -143,34 +145,45 @@ What each part stops:
 | Truncate or extend the file | Header framing: `172 + index_len + records_len` must equal the file length. | Parse, before Argon2 |
 | Swap in an old index (with its header) over new records | The old header's `records_len` and the old table do not match the new region; any changed record has a different nonce. | Unlock or first reveal |
 | Use the index blob as a record, or the reverse | Different AAD (`HOLMVLT\0`… vs `HOLMREC\0`…, different length). | Open |
-| Use a v1 body as a v2 index (same DEK after migration) | v1 body AAD is the 164-byte v1 header with version 1; the v2 index AAD is 172 bytes with version 2. | Open |
+| Splice a record from a backup copy (`save_backup`, or an older copy of this vault) | Backup copies share the key block and the DEK, so the AAD alone does not stop this when the id and generation match. Only the nonce pinned in the index does (see below). | First reveal |
+| Use a v1 body as a v2 index | Migration makes a new DEK (4.1), so the v1 body is under another key. The AADs also differ (164-byte v1 header with version 1, 172-byte v2 header with version 2). | Open |
 | Change the zero filler | Filler must be all zero and exactly `roundup(sum, 16384) - sum` bytes. | Unlock |
 | Replace the whole file with an older copy | Not caught. Needs state outside the file. Unchanged non-goal (THREAT-MODEL, Rollback row). | Never |
 
 The nonce pins the record: nonces never repeat under one DEK, so for a given (DEK, nonce, AAD)
-exactly one ciphertext authenticates. The generation in the AAD is a second, readable guard:
-an older record of the same item fails even if a nonce were somehow repeated. No hash and no
+exactly one ciphertext authenticates. The generation in the AAD is a second, readable guard
+against an older record of the same item.
+
+**Backup copies are the case where only the nonce holds.** Every copy written by `save_backup`,
+and every older copy of the same vault, has the same key block and the same DEK. Two different
+genuine records can carry the same id and the same generation: for example, an edit seals
+generation N+1, its save fails, the user makes a backup that holds it, quits, and edits the same
+item again in a later session, which seals another generation N+1. The AAD of the two records
+is identical. What tells them apart is the nonce in the index: the current index names the
+nonce of the record it wrote, and the backup's record has another nonce, so it fails to open.
+`tamper_record_from_backup_copy` checks exactly this case. No hash and no
 file-level MAC are added. The index is already the authenticated commitment to the set, and
 a hash would be a new primitive in the format.
 
 **Record authentication is lazy.** Unlock authenticates the header and the index and checks
 the framing. It does not decrypt the records, because doing so would put every secret in RAM
 at unlock, which is what Phase B removes. A damaged record is found when it is opened (reveal,
-copy, edit, export, password change) and gives `CoreError::DamagedItem`. Only someone who can
+copy, edit, export, password change) and gives `CoreError::DamagedItem(ItemId)`. Only someone who can
 write the file can cause that, and they can also delete the file, so the loss is the same.
 
 ### 2.6 Plaintexts
 
 **Index plaintext** (body schema 4): `u16` version 4, then postcard of settings, categories,
-the entry list and the next category id, then the existing canonical 16 KiB padding (`pad`,
+the entry list, the next category id and, last, the migration backup note (`Option`, 4.3),
+then the existing canonical 16 KiB padding (`pad`,
 `unpad`, unchanged). Each entry, in this order: id, type and type-specific public data
 (Login: username, URLs, has-password, has-notes; Crypto: chain, has-address, has-memo,
 has-notes; Phrase: has-notes; Note: has-body), title, category, favourite, created, updated,
 trashed, custom field entries (position, label, kind, Text or Date value if public, used flags
 for codes, expiry), and the table entry (generation, nonce, ct_len).
 
-The empty vault's index is the same 51 bytes as the schema-1 golden with byte 0 set to 4,
-because with no items the entry layout never appears.
+The empty vault's index is the 51 bytes of the schema-1 golden with byte 0 set to 4, then one
+`0` byte (no backup note): 52 bytes. With no items the entry layout never appears.
 
 **Record plaintext** (record schema 1): `u16` version 1, then postcard of the item type tag,
 the type's sealed values (Login: password, notes; Crypto: address, memo, notes; Phrase:
@@ -199,11 +212,16 @@ old build stops at `NewerSchema` first.
   there is one valid file per state.
 - What the file still shows: the index size in 16 KiB blocks and the records size in 16 KiB
   blocks. Record count and record boundaries are not visible in one file.
-- What a series of copies shows (Time Machine snapshots, backups): unchanged records keep
-  their exact bytes, so comparing two copies shows which byte ranges changed, roughly how many
-  records were re-sealed, and their size in 256-byte blocks. This is forced by "re-seal only
-  what changed": re-sealing everything on every save needs every plaintext in RAM. It is
-  accepted and documented (section 6).
+- What a series of copies shows (Time Machine snapshots, the migration backup, any backup):
+  unchanged records keep their exact bytes, so comparing two copies shows:
+  - **record count and boundaries**, recovered from the aligned unchanged spans (each span
+    that survives between copies is one or more whole records, and enough copies cut the
+    region into single records);
+  - **which record changed**, by position, and its size in 256-byte blocks;
+  - **whether an edit was secret or public**: a secret edit re-seals the item's record, a
+    public edit (title, username, URL, label, custom Text, used flag) changes the index only.
+  The contents stay hidden. This is forced by "re-seal only what changed": re-sealing every
+  record on every save needs every plaintext in RAM. It is accepted and documented (section 6).
 
 ### 2.8 Parser limits
 
@@ -240,7 +258,14 @@ exclusive temp file, sync, rename, sync directory (`FsStore`, unchanged).
    old sealed record.
 3. **Seal the index** with a fresh nonce; the header carries the new index nonce and lengths.
 4. **Assemble** header, index ciphertext, record ciphertexts in index order, filler.
-5. **Replace** through `VaultStore::replace`. Dirty is cleared only on success.
+5. **Write** through the one write gate, `Session::write_vault(bytes)`. Dirty is cleared only
+   on success.
+
+**One write gate.** Every write of the vault file goes through `write_vault`: `commit` (every
+edit, import included, since import commits) and `change_password`. No other code calls
+`store.replace`. While a migration is pending, `write_vault` first takes the v1 backup (4.2,
+step 3) and refuses to write if that fails. So no path can replace a v1 file without its
+backup, a password change during a pending migration included.
 
 **Nonce rules.**
 
@@ -251,14 +276,34 @@ exclusive temp file, sync, rename, sync directory (`FsStore`, unchanged).
   is no code path that seals with a stored nonce: stored nonces are bytes, and `seal` only
   takes a `Nonce`, which only `Nonce::random()` makes.
 - The index is sealed fresh on every save.
-- Generation is a `u64` that only goes up. Reaching `u64::MAX` is refused (it cannot happen in
-  practice).
+- Generation is a `u64` that only goes up. An edit of a record already at `u64::MAX` is
+  refused with `CoreError::GenerationExhausted(ItemId)` before anything is sealed, and nothing
+  changes (test `edit_at_max_generation_refused`). It cannot happen in practice, but the
+  increment is checked, never wrapping.
 
 **Backup** (`save_backup`) writes the current index, sealed fresh, and the same record bytes
-to the backup store. **Password change** makes a new KEK, DEK and key block, then opens each
-record with the old DEK and re-seals it with the new DEK and the new key block, one record at a
-time, so one item's plaintext is in RAM at a time. Keys and records are swapped only after the
-write succeeds, as `change_password` does today.
+to the backup store. It writes a separate store, not the vault, so it does not use the gate.
+
+**Password change** makes a new KEK, DEK and key block, then opens each record with the old DEK
+and re-seals it with the new DEK and the new key block, one record at a time, so one item's
+plaintext is in RAM at a time. The new keys, the new record set and the new index (new
+generations and nonces) are built as one value, `VaultState { keys, index, records }`, and the
+session swaps its whole state in one move:
+
+- write succeeds: adopt the new `VaultState`, clear dirty;
+- write fails and the file still holds the old bytes: keep the old `VaultState`, return
+  `Store`;
+- write fails and the file may have changed (`PasswordChangeUncertain`, today's logic in
+  `change_password`): adopt the new `VaultState` as one unit and mark dirty. Keys, records and
+  index never come from different states, so the session can never hold new keys with records
+  sealed under the old DEK. Test: `change_password_uncertain_adopts_records`.
+
+**A damaged record stops the bulk operations.** If any record fails to open during a password
+change or an export, the whole operation stops, nothing is written (no new vault file, no
+export file), and the error is `DamagedItem(id)` naming the item, so the GUI and CLI can show
+its title. The user can then fix or delete that item and retry. Silently skipping it would
+drop the item from the new file or the export. Tests: `change_password_damaged_record_stops`,
+`export_damaged_record_stops`.
 
 ## 4. Migration from format v1 (body v1 to v3)
 
@@ -266,33 +311,53 @@ write succeeds, as `change_password` does today.
 
 `unlock` reads the header version first:
 
-- **Version 1:** open as today (`envelope::open`, `VaultData::decode`). Then, still inside
-  `unlock`, split each item into its index entry and its record and seal the record under the
-  **same DEK**. Right after sealing, open the record again and compare it with the item's
-  secrets, while that plaintext is in RAM anyway. Then drop `VaultData`, which wipes it. The
-  session now holds the same state as a v2 unlock, plus the original file bytes (ciphertext,
-  not secret) for the backup. `migration_pending()` is true. Not dirty: locking without an
-  edit loses nothing and writes nothing.
+The header is read with `format::parse_any`, which dispatches on the version.
+`Header::parse` stays the v1-only parser and compares against `FORMAT_V1`, not against
+`FORMAT_VERSION` (which becomes 2 when Holm writes v2). The uncounted KDF-policy pre-check in
+`unlock` (`session/mod.rs`, today `Header::parse` at line 201) uses `parse_any`, so a v2 file
+with out-of-policy costs is refused without a throttle strike, as a v1 file is.
+
+- **Version 1:** open as today (`envelope::open`, `VaultData::decode`), but keep the KEK
+  until the migration keys exist. Still inside `unlock`:
+  1. Make a **new DEK** and a fresh wrap nonce. Build the v2 key block with the v1 file's KDF
+     costs and salt and version 2. Wrap the new DEK with the KEK under the v2 wrap AAD (bytes
+     `0..60` of the v2 header). The v1 wrapped DEK cannot be reused: its AAD holds version 1.
+  2. Self-check the wrap: unwrap the new wrapped DEK with the KEK and compare it with the new
+     DEK in constant time. Then drop the KEK and the old DEK.
+  3. Split each item into its index entry and its record, and seal the record under the new
+     DEK and the v2 key block. Right after sealing, open the record again and compare it with
+     the item's secrets, while that plaintext is in RAM anyway.
+  4. Drop `VaultData`, which wipes it.
+
+  Any failure in 1 to 3 fails the unlock with the error it would give today (`Crypto` for
+  randomness), and nothing is written. The session now holds the same state as a v2 unlock,
+  plus the original file bytes (ciphertext, not secret) for the backup. `migration_pending()`
+  is true. Not dirty: locking without an edit loses nothing and writes nothing.
+  `verify_password` (phrase gate, export, settings) works against the in-memory v2 header,
+  which has the same salt and costs as the file, so the same password passes.
 - **Version 2:** parse, unwrap, open the index, check framing, copy record slices.
 - **Any other version:** `Format(UnsupportedVersion(v))`, as today. Nothing is written.
 
-Why keep the DEK: the KEK is gone by the first save, so a new DEK cannot be wrapped then
-without asking for the password again. Keeping it exposes nothing new: an old v1 copy plus the
-password already gives the DEK, and a normal save keeps the DEK today too. The index and record
-AADs differ from the v1 body AAD, so nothing sealed under v1 can be read as v2.
+Why a new DEK rather than re-wrapping the old one: both need the KEK, which exists only during
+unlock, so they cost the same. A new DEK means nothing sealed in the v1 format is ever under
+the v2 data key, so no v1 ciphertext (the body, or the backup) can be offered to the v2
+reader under the right key. It does not change who can read what: the password still opens
+both the backup and the v2 file, because the salt is unchanged.
 
 ### 4.2 Writing (the first save)
 
 1. Build the full v2 file in memory (section 3).
-2. Self-check: `Header::parse` on the new bytes, open the index with the in-memory DEK, check
-   framing. Records were already checked at unlock. A failure stops here: `MigrationFailed`,
-   nothing written, session dirty.
+2. Self-check: `parse_any` on the new bytes, open the index with the in-memory DEK, check
+   framing. The wrap was checked by unwrapping it at unlock (4.1, step 2), and the records were
+   checked as they were sealed. A failure stops here: `MigrationFailed`, nothing written,
+   session dirty.
 3. Keep a backup of the **original v1 bytes**: `VaultStore::keep_backup_copy(tag, bytes)`. The
    file is `<vault file>.v1-<16 hex>.bak` next to the vault, where the hex is the first 8 bytes
    of the v1 body nonce (public, unique per v1 save). Exclusive create, mode 0600, sync, sync
    directory. If that name exists with the same bytes, it counts as done. If it exists with
    other bytes, stop: `MigrationFailed`, nothing else written.
-4. `replace` the vault with the v2 bytes. On error, as today: old or new is on disk, the
+4. `replace` the vault with the v2 bytes. Steps 3 and 4 are the write gate (section 3); the
+   first save may be an edit, an import or a password change. On error, as today: old or new is on disk, the
    session stays dirty, a later save retries. The backup stays either way.
 5. On success: drop the kept v1 bytes, `migration_pending()` becomes false.
 
@@ -307,9 +372,22 @@ at migration. To go back: quit Holm, move the v2 file away, rename the backup to
 install the older Holm. Edits made after migration are not in the backup, and the manual says
 so. Holm writes no v1 files after Phase B; CSV export stays the escape hatch to another tool.
 
-The backup is never deleted by Holm. Like any backup it keeps deleted items and still opens
-with the old password after a password change (THREAT-MODEL, Never claim 4). The GUI says this
-once, after the migrating save.
+**The backup is never deleted silently** (provisional owner ruling, 2026-11-07; the owner may
+still override). Like any backup it keeps deleted items and still opens with the old password
+after a password change (THREAT-MODEL, Never claim 4).
+
+- The index records the backup: `migration_backup: Option<BackupNote { tag, prompt }>`, where
+  `prompt` is `AfterUnlock`, `AfterPasswordChange` or `Done`.
+- After the next good unlock of the v2 file, the GUI offers to delete it ("Delete the old
+  copy" or "Keep it").
+- After a password change while the note is still there, the GUI asks again, more strongly:
+  the backup still opens with the old password.
+- Every prompt says that deleting the file does not remove copies in Time Machine or other
+  backups, or data the SSD may still hold.
+- Delete calls `VaultStore::remove_backup_copy(tag)` and clears the note. A missing file
+  clears the note too. Keep moves `prompt` on and never deletes.
+- The CLI prints one line on stderr with the backup's path when the note is set, and never
+  deletes it.
 
 ### 4.4 Old binaries
 
@@ -340,9 +418,11 @@ file size, at most 64 MiB, usually under 1 MiB.
 
 ### 5.2 Core API
 
-- `Session::entry(id) -> Result<&ItemEntry, CoreError>` and `active_entries()`: replace
-  `item()` and `active_items()`. Search, the list, badges and the detail view's public rows
-  read entries only.
+- `Session::entry(&self, id) -> Result<EntryView<'_>, CoreError>` and `active_entries()`:
+  replace `item()` and `active_items()`. Search, the list, badges and the detail view's public
+  rows read entries only. `EntryView` is a **permanent** borrowed wrapper, not a stand-in for
+  `&ItemEntry`: B6 builds it over today's resident `Item`, B9 over `ItemEntry`, and callers
+  never see which. It exposes public fields and presence flags only, no secret.
 - `Session::reveal(id, slot: SecretSlot) -> Result<SecretText, CoreError>`: decrypts the
   record into a `SecretBuf`, decodes it into wiping types, moves the one requested value out
   as a `SecretText`, drops the rest. `SecretSlot` is `Password`, `Notes`, `Address`, `Memo`,
@@ -353,8 +433,11 @@ file size, at most 64 MiB, usually under 1 MiB.
   For editing, CLI edit and export only. The caller drops it when the form takes its values.
 - `Session::set_code_used(id, position, index, used)`: index-only change.
 - `Session::migration_pending() -> bool`.
-- `CoreError::DamagedItem`: a record failed to open or failed its cross-check. Not
-  `WrongPasswordOrCorrupt`: the password was already proven by the index.
+- `CoreError::DamagedItem(ItemId)`: a record failed to open or failed its cross-check. Not
+  `WrongPasswordOrCorrupt`: the password was already proven by the index. Bulk operations
+  (password change, export) stop on it and name the item (3).
+- `CoreError::GenerationExhausted(ItemId)`: an edit of a record at generation `u64::MAX`.
+- `CoreError::MigrationFailed`: the in-RAM migration self-check or the backup step failed (4).
 
 `Item`, `ItemInput`, `ItemData` and `CustomField` keep their types and rules. They are now the
 "open item", not the resident one.
@@ -396,16 +479,21 @@ RAM in `holm shell`.
 
 ### 6.1 Closed or reduced
 
-- **Plaintext secrets in a memory capture while unlocked.** A swapped-out page, a hibernation
-  image, a crash report from a dependency, a heap read bug, or a dump grepped for strings shows
-  no password, note, phrase or custom secret, except the one value currently revealed (and,
-  during a reveal call, that one item's record). Today every secret is there.
+- **Plaintext secrets in a partial memory capture while unlocked.** A single swapped-out
+  page, a heap read bug, freed memory handed to other code, or a partial dump grepped for
+  strings shows no password, note, phrase or custom secret, except the one value currently
+  revealed (and, during a reveal call, that one item's record). Today every secret is there.
+  This holds only while the capture does not also hold the DEK (6.2).
 - **Secrets lingering after use.** A revealed value is dropped when it hides, not at lock.
 - **Size of what leaks per item from the file.** Record boundaries and count are hidden in the
   encrypted index; per-record padding hides secret lengths from snapshot comparison.
 
 ### 6.2 Not closed
 
+- **Hibernation images and crash dumps.** Both are full-process (or full-RAM) captures, so
+  they hold the DEK and every record ciphertext together. Anyone holding one can decrypt
+  everything as below. Phase B does not close them; full-disk encryption (FileVault) and
+  turning off crash-dump upload remain the advice.
 - **The DEK is in RAM.** Anyone who gets a full memory image while unlocked, plus the format
   description, can find the 32-byte key (try each aligned window against the index AEAD) and
   decrypt every record, which is also in that image. Phase B moves the attack from "grep the
@@ -417,15 +505,22 @@ RAM in `holm shell`.
 - **The revealed value.** It is in Holm's buffer and in egui's galley while shown.
 - **Index metadata in RAM.** Titles, usernames, URLs, chains, labels, custom text values,
   dates, used flags and presence flags are resident in the clear while unlocked.
-- **Change pattern across copies.** Two copies of the file show which records changed and their
-  256-byte size class (2.7). v1 showed only that something changed. Accepted.
+- **Change pattern across copies.** Two copies of the file show the record count and
+  boundaries (from aligned unchanged spans), which record changed and its 256-byte size
+  class, and whether an edit touched a secret (record re-sealed) or only public fields (index
+  only) (2.7). v1 showed only that something changed. Accepted.
+- **Backup copies share the key block.** The vault and every copy of it made before the next
+  password change share the key block and the DEK, so a record from one copy carries a valid
+  AEAD in the other. Only the index's pinned nonce stops a splice (2.5).
 - **Whole-file rollback.** Unchanged non-goal.
 - **The migration backup.** It is a full v1 vault on disk with the old password, kept until
-  the user deletes it.
+  the user deletes it. Holm never deletes it silently; it offers to (4.3). Deleting it does not
+  remove Time Machine copies or SSD remnants.
 - **Lazy record authentication.** A damaged record is only found when opened.
 
-THREAT-MODEL.md gets a row for "memory capture while unlocked" (Partly: no plaintext secrets
-except the shown one; the key is resident) and the change-pattern note. Never claim 5 stays.
+THREAT-MODEL.md gets a row for "partial memory capture while unlocked" (Partly: no plaintext
+secrets except the shown one; the key is resident), a "not closed" row for hibernation and
+crash dumps, and the change-pattern note. Never claim 5 stays.
 
 ## 7. Test and fuzz plan
 
@@ -465,13 +560,25 @@ targets stay (v1 files are still read).
 `tamper_flip_every_byte` (small file: every flip is refused at parse, unlock or the reveal of
 the one item it hit, never returns changed data), `tamper_filler_nonzero`,
 `tamper_records_len_not_canonical`, `tamper_index_ct_len_out_of_range`,
-`tamper_v1_body_as_v2_index`.
+`tamper_v1_body_as_v2_index`, `tamper_record_from_backup_copy` (a backup copy and the vault
+each hold a different record with the same item id and generation; splicing the backup's
+record into the vault fails because the index pins the other nonce).
 
 ### 7.4 Migration, compat and crash tests
 
 `migration_backup_write_fails_vault_untouched`, `migration_replace_fails_then_retry`,
 `migration_backup_exists_same_bytes`, `migration_backup_exists_other_bytes_refuses`,
-`migration_lock_before_save_writes_nothing`, `newer_format_version_refused_untouched`,
+`migration_lock_before_save_writes_nothing`, `migration_rewraps_under_v2_aad` (the v1 wrapped
+DEK is not in the v2 header, and the new one unwraps with the KEK),
+`v1_wrap_in_v2_header_fails` (copying the v1 wrap fields into a v2 header gives
+`WrongPasswordOrCorrupt`), `change_password_while_migration_pending` (the v1 backup is
+written first, then the v2 file under the new password; the backup opens with the old
+password), `import_while_migration_pending_takes_backup`, `only_write_gate_replaces` (a
+counting `MemStore` sees every replace preceded by the backup while pending),
+`change_password_uncertain_adopts_records`, `change_password_damaged_record_stops`,
+`export_damaged_record_stops`, `edit_at_max_generation_refused`,
+`kdf_policy_precheck_v2_uncounted`, `backup_note_prompts` (after unlock, after password
+change, delete clears the note, missing file clears the note), `newer_format_version_refused_untouched`,
 `body_schema_below_4_in_v2_malformed`, crash tests at each migration step in the existing
 `holm-platform` crash harness, and a local CI script step that runs the last released `holm`
 (0.1.x tag) on the v2 golden and expects `unsupported vault format version 2` and an unchanged
@@ -485,9 +592,11 @@ file.
   `chacha20poly1305` directly, not Holm's writer, so writer and reader check each other.
   `golden_v2_opens` checks every field; `golden_v2_rebuilds` checks the bytes.
 - `golden_v1_migrates`: the existing v1 golden unlocks, saves as v2, and the backup equals the
-  golden bytes. The v1 golden file itself never changes.
+  golden bytes. Then a **new** `Session` unlocks the saved v2 bytes through the real password
+  path (`Session::unlock`, Argon2 at `FLOOR`, the re-wrapped DEK), not through a fixed key, and
+  every item matches. The v1 golden file itself never changes.
 - `record_aad_golden` and `header_v2_golden`: exact bytes of an AAD and a header.
-- `default_index_golden`: the 51-byte empty index with byte 0 = 4.
+- `default_index_golden`: the 52-byte empty index (2.6).
 
 ### 7.6 Memory tests
 
@@ -519,31 +628,44 @@ details: `docs/superpowers/plans/2026-11-07-phase-b-decrypt-on-demand.md`.
 
 1. **B1 Padding with a block size.** `pad_to`, `unpad_from` with a block parameter; record
    constants; compile-time asserts.
-2. **B2 Header v2.** Parse and encode format 2 next to 1; framing rules; golden; fuzz target.
-3. **B3 Index and record wire.** Schema-4 index and schema-1 record structs, bounded decoders,
-   cross-checks; fuzz targets.
+2. **B2 Header v2.** Parse and encode format 2 next to 1; `Header::parse` compares `FORMAT_V1`;
+   `parse_any`; framing rules; golden; fuzz target.
+3. **B3 Index and record wire.** Schema-4 index (with the backup note) and schema-1 record
+   structs, bounded decoders, cross-checks; fuzz targets.
 4. **B4 Split and join.** `Item` to `(ItemEntry, RecordSecrets)` and back; property tests.
 5. **B5 Envelope v2.** Record and index seal and open with the AADs; file assemble and parse;
-   tamper tests; golden v2 with the independent writer.
-6. **B6 Read API on today's session.** `entry`, `reveal`, `open_item`, `set_code_used`, over
-   the current resident data; CLI moves to it. No format change yet.
+   wrap under the v2 AAD; tamper tests (backup-copy splice included); golden v2 with the
+   independent writer.
+6. **B6 Read API on today's session** (needs B3 and B4, for `ItemEntry` and the split).
+   `EntryView`, `entry`, `reveal`, `open_item`, `set_code_used`, over the current resident
+   data; CLI moves to it. No format change yet.
 7. **B7 GUI on the read API.** `ItemView` holds `Revealed`; copy, edit and codes through the
-   new calls; `item()` removed.
-8. **B8 Store backup copy.** `VaultStore::keep_backup_copy` in `FsStore` and `MemStore`.
-9. **B9 Session on format v2.** `Unlocked` holds index and records; v2 unlock; v1 unlock with
-   in-RAM migration; commit with record reuse; backup, password change, import, export; the
-   migrating first save.
-10. **B10 Perf, compat and memory checks.** Timing tests, old-binary script, resident test, manual
-    core check.
-11. **B11 Docs.** CRYPTO.md v2 section, THREAT-MODEL rows, DECISIONS, manual (migration and
-    reverting), ROADMAP status.
+   new calls; `item()` removed; the "use Secret for sensitive values" hint (Q1).
+8. **B8 Store backup copy.** `VaultStore::keep_backup_copy` and `remove_backup_copy` in
+   `FsStore` and `MemStore`.
+9. **B9 Session on format v2.** `VaultState` holds keys, index and records; v2 unlock;
+   `parse_any` KDF pre-check; v1 unlock with in-RAM migration (fresh DEK, v2 wrap, unwrap
+   self-check); the one write gate `write_vault`; commit with record reuse; password change,
+   import, export; the migrating first save; typed errors.
+10. **B10 Backup prompts.** The backup note in the index; GUI offer after the next good unlock,
+    stronger after a password change; CLI stderr line (4.3, Q2).
+11. **B11 Perf, compat and memory checks.** Timing tests, old-binary script, resident test,
+    manual core check.
+12. **B12 Docs.** CRYPTO.md v2 section, THREAT-MODEL rows, DECISIONS, manual (migration,
+    backup and reverting), ROADMAP status.
+
+Dependencies: B3 needs B1; B4 needs B3; B5 needs B2 and B4; B6 needs B3 and B4; B7 needs B6;
+B9 needs B5, B7 and B8; B10 needs B9; B11 and B12 come last. Task ids B1 to B9 are unchanged
+from the first draft; the backup prompts are new as B10.
 
 ## 10. What stays exactly the same
 
 - Argon2id v1.3, `KdfParams::DEFAULT`, `FLOOR`, `MAX_M_KIB`, `MAX_T`, `MAX_WORK`, p = 1, and
   `validate` before any work.
 - KEK from the NFC UTF-8 password; DEK random 32 bytes; DEK wrap with wrap AAD = bytes 0..60;
-  the 48-byte wrapped DEK; `verify_password` in constant time.
+  the 48-byte wrapped DEK; `verify_password` in constant time. The scheme is unchanged, but
+  bytes 0..60 hold the version, so a v1 wrap does not open in a v2 header: migration makes a
+  new DEK and wraps it under the v2 AAD (4.1).
 - XChaCha20-Poly1305 through `holm_crypto::aead::{seal, open}`, `Nonce::random()` only.
 - NFC password handling and the strength policy.
 - `MAX_FILE_LEN` 64 MiB, 16 KiB index padding (canonical), `MAX_ITEMS` and every field cap.
@@ -580,7 +702,10 @@ Judgment calls made in this design. Each needs the Opus security review.
 11. **Ciphertexts stay in RAM.** No re-read at reveal: no I/O in core reveals, no file-swap gap.
 12. **Migration seals records at unlock and writes at the first save.** The v1 plaintext leaves
     RAM at once; an unlock without an edit writes nothing.
-13. **Migration keeps the DEK.** The KEK is gone by then; nothing new is exposed.
+13. **Migration makes a fresh DEK and wraps it under the v2 AAD.** The wrap AAD includes the
+    version, so the v1 wrap cannot be kept. A new DEK (rather than a re-wrap of the old one)
+    means the v2 records share no key with the v1 backup. The new wrap is unwrapped again and
+    compared before the KEK is dropped.
 14. **Backup named by the v1 body nonce; same bytes count as done; other bytes stop.** No
     overwrite, and no wedge after a downgrade-and-save.
 15. **Reverting is by the backup only; no v1 writer.** Less code in the security core.
@@ -590,20 +715,41 @@ Judgment calls made in this design. Each needs the Opus security review.
 18. **Header v2 keeps bytes 0..132 identical** so the wrap path and the KDF parser are shared.
 19. **Search stays a scan of the index.** Folded keys are precomputed only if the 10 ms target
     misses.
+20. **One write gate.** `write_vault` is the only caller of `store.replace`; while migration
+    is pending it takes the backup first and refuses to write without it.
+21. **Password change adopts keys, index and records as one `VaultState`.** No path can pair
+    new keys with old records, including `PasswordChangeUncertain`.
+22. **Bulk operations stop on a damaged record and name it.** Password change and export
+    write nothing rather than drop or carry an unreadable item.
+23. **Generation `u64::MAX` is a typed error.** No wrap, no silent reuse.
+24. **The KDF pre-check reads both formats through `parse_any`.**
+25. **The backup is never deleted silently.** Holm offers to delete it (Q2).
 
 ## 12. Open risks
 
 - The DEK in RAM makes a full memory image enough to read everything (6.2). Phase B is a
   defence against partial captures and string scanning, and the docs must say so plainly.
-- Snapshot comparison shows the change pattern.
+- Hibernation images and crash dumps hold the DEK; Phase B does not help there.
+- Snapshot comparison shows record count, boundaries, which record changed, and secret versus
+  public edits.
+- Backup copies share the key block; the pinned index nonce is the only splice guard, so the
+  tamper test for it is required.
 - Metadata (titles, usernames, URLs, custom text) stays resident.
 - Old builds show a terse "unsupported vault format version 2".
-- The migration backup lingers with the old password and deleted items.
+- The migration backup lingers with the old password and deleted items until the user
+  accepts the delete prompt, and deleting it leaves Time Machine copies and SSD remnants.
 - B9 is the largest task and touches every session path; it gets the deepest review.
 
-## 13. Owner questions
+## 13. Owner rulings (provisional)
 
-1. Custom **Text** values: keep them in the index (shown without Reveal, as today), or move them
-   into the record and decrypt on opening the detail view? The design keeps them in the index.
-2. The migration **backup**: keep it until the user deletes it (the design), or offer to delete
-   it after the next successful unlock of the v2 file?
+The coordinator relayed these as provisional. The owner may still override either one; the
+design is built so that either change is local.
+
+1. **Custom Text values stay in the index** (shown without Reveal, as today). The field editor
+   gets a hint: "Use a Secret field for sensitive values." Override path: move Text into the
+   record; only B4's split and the detail view change.
+2. **The migration backup is never deleted silently.** After the next good v2 unlock, Holm
+   offers to delete it; after a password change it asks again, more strongly, since the backup
+   still opens with the old password. The prompt says deleting it does not remove Time Machine
+   copies or SSD remnants. Override path: keep-only (drop the prompt) or delete-on-confirm at
+   unlock; only B10 changes.
