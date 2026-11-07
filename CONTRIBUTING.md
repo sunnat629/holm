@@ -19,6 +19,13 @@ To check your setup without running the gates, use `bash scripts/ci-local.sh --p
 
 The script only passes on a clean working tree, so commit or stash first.
 
+A pass ends with the line `ALL GATES PASSED`. Paste it into your pull request.
+
+## No GitHub Actions minutes needed
+
+The workflows in `.github/workflows/` only run by hand. Every gate runs on your own machine
+through `scripts/ci-local.sh`, so you do not need Actions minutes to contribute.
+
 ## Dev unlock (debug builds only)
 
 To skip typing the master password while developing the GUI, set `HOLM_DEV_PASSWORD` and
@@ -52,7 +59,8 @@ One-time setup on the release Mac:
 
 Each release:
 
-1. Bump `version` in `Cargo.toml`, run `cargo update -w`, and run `bash scripts/ci-local.sh`.
+1. Bump `version` in `Cargo.toml` (and the internal `holm-*` versions next to it), update the
+   lockfiles in `Cargo.lock`, `oracle/` and `fuzz/`, and run `bash scripts/ci-local.sh`.
 2. Run `scripts/release-macos.sh --preflight`, then `scripts/release-macos.sh`.
 3. The script signs with the hardened runtime and a secure timestamp, with no entitlements,
    waits for notarisation, staples the ticket and checks the DMG and the app with `codesign`
@@ -65,12 +73,22 @@ Each release:
 - Add or update tests with every change.
 - Run `bash scripts/ci-local.sh` before you push.
 - Explain in the pull request why any new dependency is needed.
+- Open an issue first for anything bigger than a small fix, so we can agree on the approach.
+- Add a line to `CHANGELOG.md` under `[Unreleased]` when a user would notice the change.
+- Changes to the file format or the cryptography also need an entry in `docs/DECISIONS.md`
+  and `docs/CRYPTO.md`.
+- Never put secrets, real vault files, email addresses or personal paths in code, tests,
+  logs or screenshots.
+
+Maintainers review every pull request. Changes that touch crypto, the file format, passwords
+or `unsafe` get a closer security review. Nits do not block a merge.
 
 ## Security rules
 
 - No new network code. Holm stays offline.
-- No `unsafe` code, except the one allowed file, `crates/holm-platform/src/window.rs`.
-  The test-only FFI in `oracle/` is the other exception, and it never ships.
+- No `unsafe` code, except in `crates/holm-platform/src/window.rs` and
+  `crates/holm-platform/src/zeroing_alloc.rs`. The test-only FFI in `oracle/` is the other
+  exception, and it never ships.
 - Secrets live in wiping types (`zeroize`).
 - Never log secrets, including in errors, panic messages and `Debug` output.
 - Every security claim needs a test, or must be written down as a limit.

@@ -1,92 +1,89 @@
 # Holm
 
-Your passwords in one encrypted file on your own computer. No account, no cloud, no network.
+Holm is an offline password vault for macOS, written in Rust. Your secrets live in one encrypted file on your own computer. There is no account, no cloud and no network code.
 
-> **Status: pre-alpha. Do not trust Holm with real secrets yet.**
-> The file format and the code can still change. Nothing has had an outside audit.
+> **Holm is young software.** It has not had an outside audit yet. Keep a second copy of anything you cannot lose, and read the [threat model](docs/THREAT-MODEL.md) before you trust it.
 
-<!-- screenshot: added before launch -->
+## What it stores
 
-## Why Holm
+| Item | Holds |
+|---|---|
+| Login | Username, password, web addresses, notes |
+| Secure note | Free text |
+| Crypto address | Chain, address, memo, notes |
+| Recovery phrase | A seed phrase or recovery codes, notes |
 
-- **Offline only.** Holm has no network code and never sends your data anywhere itself. Until clipboard auto-clear lands, a password you copy in the macOS app stays on the clipboard, where macOS Universal Clipboard can reach your other Apple devices.
-- **One file you own.** Your vault is a single encrypted file. Copy it, back it up or delete it.
-- **Pure Rust.** `unsafe` is forbidden everywhere except one small macOS window file.
-- **Checked.** Fuzzed, with a local CI gate and dependency audits (cargo-deny, cargo-audit, cargo-vet).
-- **Open.** Dual licensed under MIT or Apache-2.0.
+Every item can carry up to ten custom fields (text, secret, multiline secret, date or recovery codes) and a category. You can mark favourites, search, filter, sort, and move items to the Trash and back.
 
-## Features today
+## Features
 
-- Create and unlock a vault, with a password strength meter and an unlock throttle.
-- Logins, crypto addresses, recovery phrases and secure notes. The macOS app lists logins
-  today. Other types arrive in the next update.
-- Categories, trash, search, filter and sort.
-- Password generator.
-- Copy password. Only the CLI clears the clipboard today; the macOS app gets clipboard auto-clear in the next update.
-- Idle auto-lock.
-- Secrets are decrypted one item at a time, when you show or copy them (vault format 2). An older vault moves to the new format on its first save and keeps a backup copy; see [the migration check](docs/manual/phase-b-migration-checklist.md).
-- Optional: hide the window from screenshots and screen sharing (macOS, off by default; it may hide Holm from some captures, but many capture tools, screen recorders and cameras can still see it).
-- Import from CSV or JSON. Exports are plaintext, and Holm warns you about it.
-- Command-line tool (`holm`) with an interactive shell.
+- Desktop app and command-line tool (`holm`), both on the same vault file.
+- Password, passphrase and username generator.
+- Copy a password and Holm clears the clipboard after a set time.
+- Auto-lock when idle, on minimise, on sleep, on screen lock and on logout.
+- Expiry reminders on custom fields, such as a card or a certificate date.
+- Import from CSV or JSON. Export to CSV or JSON, or make an encrypted backup. Plain exports are unencrypted and Holm warns you before it writes one.
+- Optional: hide the window from screenshots and screen sharing (off by default, best effort).
+- Secrets are decrypted one item at a time, only when you show or copy them.
 
-## Platform support
+## Install
 
-| Platform | Desktop app | CLI | How to get it |
-|---|---|---|---|
-| macOS | ✅ works | ✅ works | Build from source today; a downloadable app is coming next |
-| Windows | ⏳ planned | ⏳ planned | Not supported yet |
-| Linux | ⏳ planned | ⏳ planned | Not supported yet |
-| Android / iOS | 🗓 later | — | Separate design after desktop v1 |
+**DMG (Apple silicon).** Download `Holm-<version>.dmg` from the [Releases](https://github.com/sunnat629/holm/releases) page, open it and drag Holm to Applications. Check the SHA-256 that sits next to the download. If a release has no DMG yet, build from source.
 
-## Build from source (macOS)
-
-1. Install [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
-2. Run the app or the CLI:
+**From source.** You need [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
 
 ```sh
-cargo run -p holm-gui --release --locked
-cargo run -p holm-cli --release --locked -- --help
+git clone https://github.com/sunnat629/holm.git
+cd holm
+cargo run -p holm-gui --release --locked          # the app
+cargo run -p holm-cli --release --locked -- --help  # the command-line tool
 ```
 
-To build a local `Holm.app` (arm64, ad-hoc signed, not notarised), run
-`scripts/bundle-macos.sh`. It writes `target/bundle/Holm.app`; add `--zip` for a zip and
-its SHA-256.
+`scripts/bundle-macos.sh` builds a local `Holm.app` (ad-hoc signed, not notarised). `scripts/release-macos.sh` builds the signed and notarised DMG and needs a Developer ID identity.
 
-The release build is a signed and notarised DMG (arm64, version 0.1.0 beta):
-`scripts/release-macos.sh` writes `target/release-macos/Holm-<version>.dmg` and its SHA-256.
-It needs a Developer ID Application identity and the `holm-notary` notary profile, and stops
-if either is missing. See [CONTRIBUTING.md](CONTRIBUTING.md#releases).
+Windows and Linux are not supported yet. [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) has the current status.
 
-On Windows and Linux, `holm-gui` builds but only reports that it is macOS-only for now.
-The CLI is not supported there yet.
-Windows: see [docs/BUILD-WINDOWS.md](docs/BUILD-WINDOWS.md) (untested, test vaults only).
+## Quick start
 
-## Roadmap
+1. Open Holm and choose a master password. The strength meter shows how it holds up. If you forget it, nobody can recover your vault, including us.
+2. Use **New** to add a login, note, crypto address or recovery phrase.
+3. Click an item to see it. Passwords stay hidden until you reveal or copy them.
 
-- [x] Encryption core and file format
-- [x] Vault core
-- [x] macOS app
-- [x] Search, import/export, CLI
-- [ ] Hardening and polish: clipboard auto-clear, lock on sleep, all item types in the app, a downloadable macOS app
-- [ ] Release: signed installers (macOS DMG script ready for 0.1.0 beta), an outside security audit, then Windows and Linux. Mobile comes later.
+The same from a terminal:
 
-See [CHANGELOG.md](CHANGELOG.md) for what has changed so far.
+```sh
+holm init                                   # make a vault
+holm add login --title "Example" --generate  # add a login with a generated password
+holm list --search example                   # find it
+holm get 1a2b3c --copy password             # copy the password, then it is cleared
+holm shell                                  # unlock once, run many commands
+```
+
+The vault is `~/Library/Application Support/Holm/holm.vault`. Use `--vault PATH` to point at another file.
+
+## Upgrading from an older Holm
+
+Holm 0.5.0 stores each secret in its own record (vault format 2). A vault from 0.1.x moves to the new format on its first save, and Holm keeps a backup copy next to it. **Older Holm versions cannot open a format 2 vault.** They show "This file isn't a Holm vault, or it is damaged." and leave the file alone. See the [changelog](CHANGELOG.md) for how to go back.
 
 ## Security
 
-Report problems privately, as [SECURITY.md](SECURITY.md) explains. Read
-[THREAT-MODEL.md](docs/THREAT-MODEL.md) for what Holm does and does not protect against,
-and [CRYPTO.md](docs/CRYPTO.md) for how the vault is encrypted.
+- Argon2id turns your master password into a key. XChaCha20-Poly1305 encrypts the vault and authenticates every header field.
+- Heap blocks are zeroed on free (not stack, AppKit or GPU memory). Core dumps are off, and the lock clears window state.
+- `unsafe` code is forbidden in the crypto and core crates. The platform crate keeps a few reviewed blocks for macOS windows and the wiping allocator.
+- `scripts/ci-local.sh` runs the dependency audits (cargo-deny, cargo-audit, cargo-vet), a short fuzz run and the benchmark gates. Mutation testing, the SBOM, the reproducible-build check and long fuzz runs have their own scripts and notes in `docs/DECISIONS.md` (Phase C).
+
+Read [docs/CRYPTO.md](docs/CRYPTO.md) for how the file is built and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) for what Holm does and does not defend against. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request. New to the project?
-Start with issues labelled [good first issue](https://github.com/sunnat629/holm/labels/good%20first%20issue).
-
-## Learn Rust with Holm
+Bug reports, ideas and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test and open a pull request. Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 New to Rust? [Learn Rust with Holm](docs/learn/README.md) is a short course that uses this code.
 
+## Roadmap
+
+[docs/ROADMAP.md](docs/ROADMAP.md) lists what is done and what comes next: an independent audit, then Windows and Linux. Mobile comes later.
+
 ## Licence
 
-Dual licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Dual licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

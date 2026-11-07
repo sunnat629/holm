@@ -2,19 +2,17 @@
 
 ## Reporting a vulnerability
 
-Report it privately. Open the **Security** tab of this repository, then choose
-**Report a vulnerability**. Do not open a public issue or pull request for a security problem.
+Report it privately with GitHub private vulnerability reporting. Open the **Security** tab of
+this repository, then choose **Report a vulnerability**. Do not open a public issue or pull
+request for a security problem.
 
-security contact: TBD by owner
-
-Until the owner names a contact here, the private report on the Security tab is the only channel.
 Please include the version (`holm --version`), what you did, and what you expected to happen.
 Do not send a real vault file or a real master password.
 
 ## Supported versions
 
-Holm is pre-alpha, and no version is supported yet. We fix problems on `main` on a
-best-effort basis.
+Only the latest release is supported. Holm has not had an outside audit yet. We fix problems on
+`main` on a best-effort basis.
 
 ## What to expect
 
