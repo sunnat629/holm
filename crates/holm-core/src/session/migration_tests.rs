@@ -99,14 +99,14 @@ fn items_without_codes() -> Vec<Item> {
     items
 }
 
-fn data_with(items: Vec<Item>) -> VaultData {
+pub(super) fn data_with(items: Vec<Item>) -> VaultData {
     let mut d = VaultData::new_default();
     d.items = items;
     d
 }
 
 /// A v1 file holding `body`, locked with `PW` at the floor costs.
-fn v1_file(body: &[u8]) -> Vec<u8> {
+pub(super) fn v1_file(body: &[u8]) -> Vec<u8> {
     envelope::create(&pw(PW), &FLOOR, body).unwrap().1
 }
 

@@ -221,6 +221,8 @@ no_network_gate() {
   fi
 }
 gate no-network no_network_gate
+# Phase B: an old CLI (newest v0.1.* tag, else origin/main) must refuse a v2 vault and leave it unchanged.
+gate compat-old-binary bash scripts/compat-old-binary.sh
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable

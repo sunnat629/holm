@@ -810,6 +810,9 @@ fn load(bytes: Vec<u8>, password: &MasterPassword) -> Result<Loaded, CoreError> 
 mod migration_tests;
 
 #[cfg(test)]
+mod timing_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::clock::FakeClock;
