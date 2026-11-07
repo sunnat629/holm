@@ -62,7 +62,7 @@ KDF, the salt and the DEK wrap do not change.
   re-wraps while the KEK still exists (4.1).
 - **Index AAD** is bytes `0..172`, the whole header.
 - **Key block** is bytes `0..132`: magic, version, KDF costs, salt, wrap nonce and wrapped DEK.
-  It changes only on create and on a password change (which also makes a new DEK). It is part
+  It changes only on create, migration and password change (each makes a new DEK). It is part
   of every record's AAD.
 
 ### 2.3 What goes in the index and what is sealed
@@ -346,7 +346,10 @@ both the backup and the v2 file, because the salt is unchanged.
 
 ### 4.2 Writing (the first save)
 
-1. Build the full v2 file in memory (section 3).
+1. Set `migration_backup = Some(BackupNote { tag, prompt: AfterUnlock })` in the in-memory
+   index, then build the full v2 file in memory (section 3). The note is inside the first v2
+   file, so a crash or quit after step 4 still leaves the prompt on disk. If the write fails,
+   the note stays in RAM and the retry writes it.
 2. Self-check: `parse_any` on the new bytes, open the index with the in-memory DEK, check
    framing. The wrap was checked by unwrapping it at unlock (4.1, step 2), and the records were
    checked as they were sealed. A failure stops here: `MigrationFailed`, nothing written,
@@ -356,8 +359,10 @@ both the backup and the v2 file, because the salt is unchanged.
    of the v1 body nonce (public, unique per v1 save). Exclusive create, mode 0600, sync, sync
    directory. If that name exists with the same bytes, it counts as done. If it exists with
    other bytes, stop: `MigrationFailed`, nothing else written.
-4. `replace` the vault with the v2 bytes. Steps 3 and 4 are the write gate (section 3); the
-   first save may be an edit, an import or a password change. On error, as today: old or new is on disk, the
+4. `replace` the vault with the v2 bytes. Steps 3 and 4 are the write gate (section 3): it
+   only takes the backup and, after a good replace, clears the pending migration; it never
+   edits the index. The first save may be an edit, an import or a password change (which sets
+   the note's prompt to `AfterPasswordChange` in step 1). On error, as today: old or new is on disk, the
    session stays dirty, a later save retries. The backup stays either way.
 5. On success: drop the kept v1 bytes, `migration_pending()` becomes false.
 
@@ -377,7 +382,9 @@ still override). Like any backup it keeps deleted items and still opens with the
 after a password change (THREAT-MODEL, Never claim 4).
 
 - The index records the backup: `migration_backup: Option<BackupNote { tag, prompt }>`, where
-  `prompt` is `AfterUnlock`, `AfterPasswordChange` or `Done`.
+  `prompt` is `AfterUnlock`, `AfterPasswordChange` or `Done`. The note is put into the index
+  with `prompt: AfterUnlock` before the migrating file is built (4.2, step 1), so the first v2
+  file on disk already carries it.
 - After the next good unlock of the v2 file, the GUI offers to delete it ("Delete the old
   copy" or "Keep it").
 - After a password change while the note is still there, the GUI asks again, more strongly:
@@ -485,8 +492,9 @@ RAM in `holm shell`.
   revealed (and, during a reveal call, that one item's record). Today every secret is there.
   This holds only while the capture does not also hold the DEK (6.2).
 - **Secrets lingering after use.** A revealed value is dropped when it hides, not at lock.
-- **Size of what leaks per item from the file.** Record boundaries and count are hidden in the
-  encrypted index; per-record padding hides secret lengths from snapshot comparison.
+- **Size of what leaks per item from the file.** Record boundaries and count are hidden in one
+  file (they sit in the encrypted index; a series of copies shows them, 6.2); per-record
+  padding hides secret lengths from snapshot comparison.
 
 ### 6.2 Not closed
 

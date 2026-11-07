@@ -275,7 +275,10 @@ new `Session` through `Session::unlock` with the password (Argon2 at `FLOOR`), n
 **Write gate:** `fn write_vault(&mut self, bytes: &[u8]) -> Result<(), CoreError>` is the only
 caller of `store.replace` (commit, import, change_password). While `migration` is `Some`, it
 first runs `keep_backup_copy(tag, v1 bytes)` and returns `MigrationFailed` without replacing if
-that fails; after a good replace it sets the backup note and clears `migration`.
+that fails; after a good replace it clears `migration`. The gate never edits the index: before
+the migrating file is built, the caller's save path sets
+`index.migration_backup = Some(BackupNote { tag, prompt: AfterUnlock })` (or
+`AfterPasswordChange` for a password change), so the note is inside the first v2 file (§4.2).
 
 **Unlock:** the `KdfPolicy` pre-check (session/mod.rs ~201) uses `parse_any`, so a v2 file with
 bad costs is refused before the throttle counts it. The v1 path (`migrate.rs`), while the KEK
@@ -305,6 +308,8 @@ Test-only `Session::resident_bytes()`.
 `only_write_gate_replaces`, `change_password_uncertain_adopts_records`,
 `change_password_damaged_record_stops`, `export_damaged_record_stops`,
 `edit_at_max_generation_refused`, `kdf_policy_precheck_v2_uncounted`,
+`migration_note_persisted_in_first_v2_file` (decode the index of the first v2 bytes written:
+the note is `AfterUnlock` with the backup's tag; after a failed replace and retry, still there),
 `newer_format_version_refused_untouched`, `damaged_record_reveal_is_damaged_item`,
 `resident_state_has_no_secret_marker`, crash tests `crash_migration_after_backup`,
 `crash_migration_during_replace`.
