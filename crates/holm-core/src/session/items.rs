@@ -8,11 +8,13 @@ use holm_crypto::MasterPassword;
 use super::Session;
 use crate::body::VaultData;
 use crate::error::CoreError;
-use crate::fields::{CustomField, validate_fields};
-use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
+use crate::fields::{CustomField, FieldValue, RecoveryCode, validate_fields};
+use crate::item::{Item, ItemData, ItemId, ItemInput, SecretSlot, Timestamp};
 use crate::rules::MAX_ITEMS;
 use crate::settings::Settings;
 use crate::store::VaultStore;
+use crate::text::SecretText;
+use crate::view::EntryView;
 
 /// Adds a new item to `data`: checks the item cap and the category, draws a fresh id
 /// (redrawn on collision), sets `created = updated = now` and pushes it.
@@ -94,6 +96,118 @@ impl<S: VaultStore> Session<S> {
     pub fn active_items(&self) -> Result<impl Iterator<Item = &Item> + '_, CoreError> {
         let data = &self.unlocked()?.data;
         Ok(data.items.iter().filter(|i| i.trashed.is_none()))
+    }
+
+    /// A view of the item with this id, trashed or not: public fields and presence
+    /// flags, no secret.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::NotFound`].
+    pub fn entry(&self, id: ItemId) -> Result<EntryView<'_>, CoreError> {
+        self.item(id).map(EntryView::new)
+    }
+
+    /// Views of the items not in Trash, in stored order.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`].
+    pub fn active_entries(&self) -> Result<impl Iterator<Item = EntryView<'_>> + '_, CoreError> {
+        Ok(self.active_items()?.map(EntryView::new))
+    }
+
+    /// One secret value of an item, in a new wiping [`SecretText`]. The recovery phrase
+    /// is not a slot; it has its own password gate ([`Session::reveal_phrase`]).
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::NotFound`], [`CoreError::NoSuchSecret`] if
+    /// the item has no value in that slot, or [`CoreError::DamagedItem`] if its record
+    /// cannot be opened.
+    pub fn reveal(&self, id: ItemId, slot: SecretSlot) -> Result<SecretText, CoreError> {
+        let item = self.item(id)?;
+        let found: Option<&SecretText> = match (slot, item.data()) {
+            (SecretSlot::Field { position }, _) => {
+                match item.fields().get(usize::from(position)).map(|f| f.value()) {
+                    Some(FieldValue::Secret(v) | FieldValue::MultilineSecret(v)) => Some(v),
+                    _ => None,
+                }
+            }
+            (SecretSlot::Code { position, index }, _) => {
+                match item.fields().get(usize::from(position)).map(|f| f.value()) {
+                    Some(FieldValue::RecoveryCodes(codes)) => {
+                        codes.get(usize::from(index)).map(RecoveryCode::code)
+                    }
+                    _ => None,
+                }
+            }
+            (SecretSlot::Password, ItemData::Login { password, .. }) => Some(password),
+            (
+                SecretSlot::Notes,
+                ItemData::Login { notes, .. }
+                | ItemData::CryptoAddress { notes, .. }
+                | ItemData::RecoveryPhrase { notes, .. },
+            ) => Some(notes),
+            (SecretSlot::Address, ItemData::CryptoAddress { address, .. }) => Some(address),
+            (SecretSlot::Memo, ItemData::CryptoAddress { memo, .. }) => Some(memo),
+            (SecretSlot::Body, ItemData::SecureNote { body }) => Some(body),
+            _ => None,
+        };
+        found
+            .map(|v| SecretText::new(v.expose().to_owned()))
+            .ok_or(CoreError::NoSuchSecret)
+    }
+
+    /// The whole item, owned, in wiping types. For editing, CLI edit and export; the
+    /// caller drops it as soon as the form has taken the values.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::NotFound`], [`CoreError::DamagedItem`].
+    pub fn open_item(&self, id: ItemId) -> Result<Item, CoreError> {
+        self.item(id).map(Item::duplicate)
+    }
+
+    /// Marks one recovery code used or unused and saves. Changes `updated`.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::NotFound`], [`CoreError::InTrash`],
+    /// [`CoreError::NoSuchSecret`] if `position` is not a recovery codes field or
+    /// `index` is past its last code, or the errors of a save.
+    pub fn set_code_used(
+        &mut self,
+        id: ItemId,
+        position: u8,
+        index: u8,
+        used: bool,
+    ) -> Result<(), CoreError> {
+        let now = self.now_unix();
+        let data = &mut self.unlocked_mut()?.data;
+        let pos = self::position(data, id)?;
+        if data.items[pos].trashed.is_some() {
+            return Err(CoreError::InTrash);
+        }
+        let item = &mut data.items[pos];
+        let Some(code) = item
+            .fields
+            .get_mut(usize::from(position))
+            .and_then(|f| f.codes_mut())
+            .and_then(|codes| codes.get_mut(usize::from(index)))
+        else {
+            return Err(CoreError::NoSuchSecret);
+        };
+        let old_used = code.used();
+        code.set_used(used);
+        let old_updated = std::mem::replace(&mut item.updated, now);
+        let (field, code_index) = (usize::from(position), usize::from(index));
+        self.commit_or_undo(move |d| {
+            d.items[pos].updated = old_updated;
+            if let Some(code) = d.items[pos]
+                .fields
+                .get_mut(field)
+                .and_then(|f| f.codes_mut())
+                .and_then(|codes| codes.get_mut(code_index))
+            {
+                code.set_used(old_used);
+            }
+        })
     }
 
     /// Adds an item and saves.

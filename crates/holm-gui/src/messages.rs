@@ -93,6 +93,12 @@ pub const FIELD_RESERVED: &str = "That name is reserved. Choose another.";
 /// The vault would grow past its size limit.
 pub const TOO_LARGE_TO_SAVE: &str =
     "The vault is too large to save this change. Nothing was changed.";
+/// One item's sealed record failed to open.
+pub const ITEM_DAMAGED: &str =
+    "This item is damaged and cannot be opened. The rest of the vault is fine.";
+/// Moving the vault to the current file format failed.
+pub const MIGRATION_FAILED: &str =
+    "Holm could not move this vault to the new file format. Nothing was changed.";
 /// The change is in memory but not on disk.
 pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on disk yet.";
 /// The stored password is longer than the edit form can hold.
@@ -263,7 +269,7 @@ const LABELS: [&str; 8] = [
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 68] = [
+const ALL: [&str; 70] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -293,6 +299,8 @@ const ALL: [&str; 68] = [
     FIELD_RESERVED,
     TOO_LARGE_TO_SAVE,
     NOT_SAVED,
+    ITEM_DAMAGED,
+    MIGRATION_FAILED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
     CLIPBOARD_CHANGED,
@@ -372,6 +380,7 @@ pub fn unlock_error(e: &CoreError) -> &'static str {
         CoreError::NoVault => NO_VAULT,
         CoreError::Store(_) => READ_FAILED,
         CoreError::Throttled { .. } => TOO_MANY_TRIES,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
         _ => UNLOCK_FAILED,
     }
 }
@@ -418,6 +427,8 @@ pub fn field_error(e: &FieldError) -> &'static str {
 pub fn save_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
         _ => NOT_SAVED,
     }
 }

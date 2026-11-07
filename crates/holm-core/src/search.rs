@@ -13,12 +13,13 @@ use zeroize::Zeroizing;
 
 use crate::category::CategoryId;
 use crate::error::CoreError;
-use crate::fields::{CalendarDate, fewest_codes_left, from_unix_secs, is_expiring, soonest_expiry};
-use crate::item::{Item, ItemData, ItemId, ItemType, Timestamp};
+use crate::fields::{CalendarDate, from_unix_secs};
+use crate::item::{Item, ItemId, ItemType, Timestamp};
 use crate::rules::EXPIRING_WITHIN_DAYS;
 use crate::session::Session;
 use crate::store::VaultStore;
 use crate::text::fold;
+use crate::view::{EntryView, PublicView};
 
 /// Which category an item must belong to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -140,44 +141,38 @@ pub(crate) fn cmp_title_asc(a: &Item, b: &Item) -> Ordering {
         .then_with(|| a.id().cmp(&b.id()))
 }
 
-fn subtitle(item: &Item) -> Option<&str> {
-    match item.data() {
-        ItemData::Login { username, urls, .. } => {
-            if username.is_empty() {
-                urls.first().map(|u| u.as_str())
-            } else {
-                Some(username.as_str())
-            }
-        }
-        ItemData::CryptoAddress { chain, .. } => Some(chain.as_str()),
-        _ => None,
-    }
+/// The same order for views.
+fn cmp_view_title_asc(a: &EntryView<'_>, b: &EntryView<'_>) -> Ordering {
+    let (ta, tb) = (fold(a.title()), fold(b.title()));
+    ta.as_str()
+        .cmp(tb.as_str())
+        .then_with(|| a.id().cmp(&b.id()))
 }
 
 fn contains(needle: &str, field: &str) -> bool {
     fold(field).contains(needle)
 }
 
-fn text_matches(needle: &str, item: &Item, category_name: Option<&str>) -> bool {
-    if contains(needle, item.title()) {
+fn text_matches(needle: &str, entry: &EntryView<'_>, category_name: Option<&str>) -> bool {
+    if contains(needle, entry.title()) {
         return true;
     }
     if category_name.is_some_and(|n| contains(needle, n)) {
         return true;
     }
-    // Labels only. This does not call `CustomField::value` or `SecretText::expose`.
-    if item
+    // Labels only. A secret never reaches this function: the view holds none.
+    if entry
         .fields()
         .iter()
         .any(|field| contains(needle, field.label()))
     {
         return true;
     }
-    match item.data() {
-        ItemData::Login { username, urls, .. } => {
-            contains(needle, username.as_str()) || urls.iter().any(|u| contains(needle, u.as_str()))
+    match entry.public() {
+        PublicView::Login { username, urls, .. } => {
+            contains(needle, username) || urls.iter().any(|u| contains(needle, u))
         }
-        ItemData::CryptoAddress { chain, .. } => contains(needle, chain.as_str()),
+        PublicView::CryptoAddress { chain, .. } => contains(needle, chain),
         _ => false,
     }
 }
@@ -197,9 +192,10 @@ impl<S: VaultStore> Session<S> {
         let data = &self.unlocked()?.data;
         let today = from_unix_secs(self.now_unix().0);
         let needle = fold(query.text.trim());
-        let mut hits: Vec<&Item> = data
+        let mut hits: Vec<EntryView<'_>> = data
             .items
             .iter()
+            .map(EntryView::new)
             .filter(|i| match query.view {
                 View::Active => i.trashed().is_none(),
                 View::Trash => i.trashed().is_some(),
@@ -223,14 +219,14 @@ impl<S: VaultStore> Session<S> {
             })
             .filter(|i| {
                 if query.expiring_only {
-                    today.is_some_and(|day| is_expiring(i.fields(), day, EXPIRING_WITHIN_DAYS))
+                    today.is_some_and(|day| i.is_expiring(day, EXPIRING_WITHIN_DAYS))
                 } else {
                     true
                 }
             })
             .collect();
         match query.sort {
-            Sort::TitleAsc => hits.sort_by(|a, b| cmp_title_asc(a, b)),
+            Sort::TitleAsc => hits.sort_by(|a, b| cmp_view_title_asc(a, b)),
             Sort::UpdatedDesc => hits.sort_by(|a, b| {
                 b.updated()
                     .cmp(&a.updated())
@@ -248,14 +244,14 @@ impl<S: VaultStore> Session<S> {
                 id: i.id(),
                 item_type: i.item_type(),
                 title: i.title(),
-                subtitle: subtitle(i),
+                subtitle: i.subtitle(),
                 favourite: i.favourite(),
                 category: i.category(),
                 created: i.created(),
                 updated: i.updated(),
                 trashed: i.trashed(),
-                soonest_expiry: soonest_expiry(i.fields()),
-                codes_left: fewest_codes_left(i.fields()),
+                soonest_expiry: i.soonest_expiry(),
+                codes_left: i.fewest_codes_left(),
             })
             .collect())
     }

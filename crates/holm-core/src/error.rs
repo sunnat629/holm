@@ -98,6 +98,10 @@ pub enum CoreError {
     /// before anything is sealed, and nothing changes.
     #[error("item {0} cannot be changed again")]
     GenerationExhausted(ItemId),
+    /// Moving a version 1 vault to the current format failed its self-check or its
+    /// backup step. Nothing was written.
+    #[error("the vault could not be moved to the new format; nothing was changed")]
+    MigrationFailed,
     /// The item has no secret value in that slot, or the slot is the recovery phrase,
     /// which only `reveal_phrase` returns.
     #[error("the item has no such secret value")]

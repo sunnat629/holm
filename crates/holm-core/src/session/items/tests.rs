@@ -595,3 +595,188 @@ fn set_fields_refuses_trash() {
     );
     assert!(s.item(id).unwrap().fields().is_empty());
 }
+
+fn secret_field(label: &str, v: &str) -> CustomField {
+    try_field(t(label), FieldValue::Secret(st(v)), None).unwrap()
+}
+
+fn codes_field(codes: &[&str]) -> CustomField {
+    use crate::fields::RecoveryCode;
+    let codes = codes
+        .iter()
+        .map(|c| RecoveryCode::new(st(c), false))
+        .collect();
+    try_field(t("codes"), FieldValue::RecoveryCodes(codes), None).unwrap()
+}
+
+#[test]
+fn reveal_each_slot() {
+    use crate::item::SecretSlot;
+    let (mut s, _) = created();
+    let login_id = s.add_item(login("L", "pw-1")).unwrap();
+    s.set_custom_fields(
+        login_id,
+        vec![
+            plain_field("plain"),
+            secret_field("tok", "tok-1"),
+            codes_field(&["c0", "c1"]),
+        ],
+    )
+    .unwrap();
+    let addr = s.add_item(crypto("C")).unwrap();
+    let body = s.add_item(note("N", "body-1")).unwrap();
+    let get = |s: &S, id, slot| s.reveal(id, slot).map(|v| v.expose().to_owned());
+    assert_eq!(get(&s, login_id, SecretSlot::Password).unwrap(), "pw-1");
+    assert_eq!(get(&s, login_id, SecretSlot::Notes).unwrap(), "n");
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 1 }).unwrap(),
+        "tok-1"
+    );
+    assert_eq!(
+        get(
+            &s,
+            login_id,
+            SecretSlot::Code {
+                position: 2,
+                index: 1
+            }
+        )
+        .unwrap(),
+        "c1"
+    );
+    assert_eq!(get(&s, addr, SecretSlot::Address).unwrap(), "addr-EXAMPLE");
+    assert_eq!(get(&s, addr, SecretSlot::Memo).unwrap(), "memo-1");
+    assert_eq!(get(&s, body, SecretSlot::Body).unwrap(), "body-1");
+    // Wrong slot for the kind, plain field, out of range, code index past end.
+    assert_eq!(
+        get(&s, body, SecretSlot::Password),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 0 }),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 9 }),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(
+            &s,
+            login_id,
+            SecretSlot::Code {
+                position: 2,
+                index: 2
+            }
+        ),
+        Err(CoreError::NoSuchSecret)
+    );
+    s.lock();
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Password),
+        Err(CoreError::Locked)
+    );
+}
+
+#[test]
+fn reveal_phrase_slot_refused() {
+    use crate::item::SecretSlot;
+    let (mut s, _) = created();
+    let id = s.add_item(phrase("P", "abandon ability")).unwrap();
+    // Notes of a phrase item are a normal slot; the phrase has no slot at all.
+    assert_eq!(s.reveal(id, SecretSlot::Notes).unwrap().expose(), "pn");
+    for slot in [
+        SecretSlot::Password,
+        SecretSlot::Body,
+        SecretSlot::Address,
+        SecretSlot::Memo,
+    ] {
+        assert_eq!(s.reveal(id, slot).err(), Some(CoreError::NoSuchSecret));
+    }
+}
+
+#[test]
+fn open_item_equals_stored() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "pw-1")).unwrap();
+    s.set_custom_fields(id, vec![secret_field("tok", "tok-1"), codes_field(&["c0"])])
+        .unwrap();
+    let copy = s.open_item(id).unwrap();
+    let stored = s.item(id).unwrap();
+    assert_eq!(copy.id(), stored.id());
+    assert_eq!(copy.title(), stored.title());
+    assert_eq!(copy.updated(), stored.updated());
+    assert_eq!(copy.fields().len(), 2);
+    assert_eq!(login_password_of(&copy), "pw-1");
+    s.lock();
+    assert_eq!(s.open_item(id).err(), Some(CoreError::Locked));
+    assert_eq!(s.entry(id).err(), Some(CoreError::Locked));
+}
+
+fn login_password_of(item: &Item) -> String {
+    match item.data() {
+        ItemData::Login { password, .. } => password.expose().to_owned(),
+        _ => panic!("not a login"),
+    }
+}
+
+#[test]
+fn entry_views_follow_stored_order_and_trash() {
+    let (mut s, _) = created();
+    let a = s.add_item(login("A", "x")).unwrap();
+    let b = s.add_item(crypto("B")).unwrap();
+    s.trash(b).unwrap();
+    let e = s.entry(a).unwrap();
+    assert_eq!(e.title(), "A");
+    assert!(e.trashed().is_none());
+    assert!(s.entry(b).unwrap().trashed().is_some());
+    let titles: Vec<String> = s
+        .active_entries()
+        .unwrap()
+        .map(|e| e.title().to_owned())
+        .collect();
+    assert_eq!(titles, ["A"]);
+}
+
+#[test]
+fn set_code_used_saves() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "x")).unwrap();
+    s.set_custom_fields(id, vec![codes_field(&["c0", "c1"])])
+        .unwrap();
+    s.set_code_used(id, 0, 1, true).unwrap();
+    assert!(!s.is_dirty());
+    let codes = |s: &S| match s.item(id).unwrap().fields()[0].value() {
+        FieldValue::RecoveryCodes(c) => c.iter().map(|c| c.used()).collect::<Vec<_>>(),
+        _ => panic!("not codes"),
+    };
+    assert_eq!(codes(&s), [false, true]);
+    s.set_code_used(id, 0, 1, false).unwrap();
+    assert_eq!(codes(&s), [false, false]);
+    s.trash(id).unwrap();
+    assert_eq!(s.set_code_used(id, 0, 0, true), Err(CoreError::InTrash));
+}
+
+#[test]
+fn set_code_used_out_of_range() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "x")).unwrap();
+    s.set_custom_fields(id, vec![plain_field("p"), codes_field(&["c0"])])
+        .unwrap();
+    let before = s.item(id).unwrap().updated();
+    assert_eq!(
+        s.set_code_used(id, 1, 1, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        s.set_code_used(id, 0, 0, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        s.set_code_used(id, 7, 0, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(s.item(id).unwrap().updated(), before);
+    s.lock();
+    assert_eq!(s.set_code_used(id, 1, 0, true), Err(CoreError::Locked));
+}

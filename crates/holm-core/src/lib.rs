@@ -114,6 +114,7 @@ pub mod store;
 pub mod strength;
 pub mod text;
 pub mod throttle;
+pub mod view;
 // Until the session reads and writes format v2 (task B9), nothing outside tests calls these.
 #[allow(dead_code)]
 pub(crate) mod wire;

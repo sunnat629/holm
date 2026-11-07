@@ -94,6 +94,10 @@ pub enum CliError {
     Output,
     /// Any other error.
     Failed,
+    /// One item's sealed record failed to open. The rest of the vault is fine.
+    ItemDamaged,
+    /// Moving the vault to the current file format failed. Nothing was written.
+    MigrationFailed,
     /// A password typed again to confirm an action is wrong.
     WrongPassword,
     /// A typed confirmation was not the word asked for.
@@ -218,6 +222,12 @@ impl fmt::Display for CliError {
             CliError::GenerateFailed => "Holm couldn't generate a value. Try again.",
             CliError::Output => "Holm couldn't write its output.",
             CliError::Failed => "Something went wrong. Nothing was changed.",
+            CliError::ItemDamaged => {
+                "This item is damaged and cannot be opened. The rest of the vault is fine."
+            }
+            CliError::MigrationFailed => {
+                "Holm could not move this vault to the new file format. Nothing was changed."
+            }
             CliError::WrongPassword => "That password is wrong. Nothing was done.",
             CliError::NotConfirmed => "Not confirmed. Nothing was changed.",
             CliError::TypeChange => {
@@ -457,6 +467,8 @@ pub fn read_error(e: &CoreError) -> CliError {
             retry_after_secs: *retry_after_secs,
         },
         CoreError::NotFound | CoreError::NotAPhrase => CliError::NotFound,
+        CoreError::DamagedItem(_) => CliError::ItemDamaged,
+        CoreError::MigrationFailed => CliError::MigrationFailed,
         _ => CliError::Failed,
     }
 }
@@ -482,6 +494,8 @@ pub fn write_error(e: &CoreError) -> CliError {
         },
         CoreError::WeakPassword(_) => CliError::WeakPassword,
         CoreError::VaultExists => CliError::FileExists,
+        CoreError::DamagedItem(_) => CliError::ItemDamaged,
+        CoreError::MigrationFailed => CliError::MigrationFailed,
         _ => CliError::Failed,
     }
 }
