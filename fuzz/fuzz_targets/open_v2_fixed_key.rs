@@ -30,7 +30,11 @@ fuzz_target!(|data: &[u8]| {
     }
     let opened = open_v2_all(&file, &kek);
     if file == sealed {
-        assert_eq!(opened, Ok(usize::from(count % 5)), "an unchanged file must open");
+        assert_eq!(
+            opened,
+            Ok(usize::from(count % 5)),
+            "an unchanged file must open"
+        );
     } else {
         assert!(opened.is_err(), "a changed file opened");
     }
