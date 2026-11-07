@@ -82,6 +82,8 @@ pub(crate) struct Unlocked {
     pub(crate) idle: IdleTimer,
     /// Set while the vault was a v1 file that has not been saved as v2 yet.
     pub(crate) migration: Option<V1Origin>,
+    /// True once the owner dismissed the backup prompt in this unlock.
+    pub(crate) backup_dismissed: bool,
 }
 
 /// What [`Session::lock`] did.
@@ -232,6 +234,7 @@ impl<S: VaultStore> Session<S> {
             dirty: false,
             idle: IdleTimer::new(self.clock.as_ref()),
             migration: None,
+            backup_dismissed: false,
         });
         Ok(())
     }
@@ -321,11 +324,23 @@ impl<S: VaultStore> Session<S> {
                 (state, Some(origin))
             }
         };
+        let mut state = state;
+        // A note whose copy is gone (the owner deleted it by hand) is dropped from
+        // memory. The next save writes that; until then it is checked again each
+        // unlock. A store that cannot tell leaves the note alone.
+        if migration.is_none()
+            && let Some(note) = &state.index.migration_backup
+            && note.prompt != BackupPrompt::Done
+            && self.store.backup_copy_exists(&note.tag) == Ok(false)
+        {
+            state.index.migration_backup = None;
+        }
         self.open = Some(Unlocked {
             state,
             dirty: false,
             idle: IdleTimer::new(self.clock.as_ref()),
             migration,
+            backup_dismissed: false,
         });
         Ok(())
     }
@@ -349,6 +364,65 @@ impl<S: VaultStore> Session<S> {
     #[must_use]
     pub fn migration_pending(&self) -> bool {
         self.open.as_ref().is_some_and(|u| u.migration.is_some())
+    }
+
+    /// The migration backup prompt to show now, if any (spec 4.3, Q2).
+    ///
+    /// `Some` only when the vault was saved as v2, the index still has a note that is
+    /// not done, and the owner has not dismissed the prompt since this unlock. Holm
+    /// never deletes the backup on its own: [`Session::delete_migration_backup`] is the
+    /// only way, and it needs the owner's yes.
+    #[must_use]
+    pub fn backup_prompt(&self) -> Option<BackupPrompt> {
+        let open = self.open.as_ref()?;
+        if open.migration.is_some() || open.backup_dismissed {
+            return None;
+        }
+        match open.state.index.migration_backup.as_ref()?.prompt {
+            BackupPrompt::Done => None,
+            p => Some(p),
+        }
+    }
+
+    /// Hides the backup prompt until the next unlock. The file is kept and the note
+    /// stays at its current step, so the prompt returns after a later unlock.
+    pub fn dismiss_backup_prompt(&mut self) {
+        if let Some(open) = self.open.as_mut() {
+            open.backup_dismissed = true;
+        }
+    }
+
+    /// Deletes the migration backup copy after the owner said yes, marks the note done
+    /// and saves. Deleting does not remove Time Machine copies or SSD remnants; the
+    /// prompt text says so. A copy that is already gone counts as deleted. Does
+    /// nothing while a migration is pending or when there is no note.
+    ///
+    /// # Errors
+    /// [`CoreError::Locked`], [`CoreError::Store`] if the copy could not be removed
+    /// (the note stays), or the errors of [`Session::save`] (the copy is gone and the
+    /// next unlock drops the stale note).
+    pub fn delete_migration_backup(&mut self) -> Result<(), CoreError> {
+        let open = self.open.as_ref().ok_or(CoreError::Locked)?;
+        if open.migration.is_some() {
+            return Ok(());
+        }
+        let Some(tag) = open
+            .state
+            .index
+            .migration_backup
+            .as_ref()
+            .map(|n| n.tag.clone())
+        else {
+            return Ok(());
+        };
+        match self.store.remove_backup_copy(&tag) {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(e) => return Err(CoreError::Store(e)),
+        }
+        if let Some(note) = self.unlocked_mut()?.state.index.migration_backup.as_mut() {
+            note.prompt = BackupPrompt::Done;
+        }
+        self.commit()
     }
 
     /// The throttle's failure count and wait, for the unlock screen.
@@ -447,21 +521,34 @@ impl<S: VaultStore> Session<S> {
         for (entry, r) in st.index.entries.iter_mut().zip(new_refs) {
             old_refs.push(core::mem::replace(&mut entry.record, r));
         }
-        // The note before this call, to put back with the old refs.
+        // The note before this call, to put back with the old refs. A pending
+        // migration gets the stronger note; so does a saved vault whose note is still
+        // at the first step.
         let old_note = if let Some(origin) = &open.migration {
             st.index.migration_backup.replace(BackupNote {
                 tag: origin.tag.clone(),
                 prompt: BackupPrompt::AfterPasswordChange,
             })
+        } else if let Some(note) = st
+            .index
+            .migration_backup
+            .as_ref()
+            .filter(|n| n.prompt == BackupPrompt::AfterUnlock)
+        {
+            let tag = note.tag.clone();
+            st.index.migration_backup.replace(BackupNote {
+                tag,
+                prompt: BackupPrompt::AfterPasswordChange,
+            })
         } else {
             None
         };
-        let had_migration = open.migration.is_some();
+        let note_touched = open.migration.is_some() || old_note.is_some();
         let restore = move |st: &mut VaultState, old_refs: Vec<RecordRef>| {
             for (entry, r) in st.index.entries.iter_mut().zip(old_refs) {
                 entry.record = r;
             }
-            if had_migration {
+            if note_touched {
                 st.index.migration_backup = old_note;
             }
         };
@@ -490,6 +577,7 @@ impl<S: VaultStore> Session<S> {
                 open.state.keys = new_keys;
                 open.state.records = new_records;
                 open.dirty = false;
+                open.backup_dismissed = false;
                 Ok(())
             }
             Err(GateError::Backup) => {
@@ -505,6 +593,7 @@ impl<S: VaultStore> Session<S> {
                 open.state.keys = new_keys;
                 open.state.records = new_records;
                 open.dirty = true;
+                open.backup_dismissed = false;
                 Err(CoreError::PasswordChangeUncertain(e))
             }
         }

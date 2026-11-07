@@ -756,3 +756,104 @@ fn old_header_type_is_still_v1() {
     };
     assert_eq!(Header::encode(&h)[8..10], 1u16.to_le_bytes());
 }
+
+// Backup prompts (spec 4.3, Q2).
+
+fn saved_after_migration() -> (S, String) {
+    let file = v1_current(plain_items());
+    let tag = tag_of(&file);
+    let mut s = v1_session(file);
+    s.save().unwrap();
+    (s, tag)
+}
+
+#[test]
+fn backup_note_prompts() {
+    let file = v1_current(plain_items());
+    let mut s = v1_session(file);
+    // Nothing to ask while the migration is only in memory: no copy exists yet.
+    assert_eq!(s.backup_prompt(), None);
+    s.save().unwrap();
+    assert_eq!(s.backup_prompt(), Some(BackupPrompt::AfterUnlock));
+    // A vault that never migrated has no prompt.
+    let (mut fresh, _) = session();
+    fresh.create(&pw(PW), &FLOOR).unwrap();
+    assert_eq!(fresh.backup_prompt(), None);
+}
+
+#[test]
+fn backup_prompt_after_unlock() {
+    let (mut s, tag) = saved_after_migration();
+    s.dismiss_backup_prompt();
+    assert_eq!(s.backup_prompt(), None);
+    // Dismissing keeps the file and the note at the same step.
+    assert!(s.store.backups.contains_key(&tag));
+    s.lock();
+    s.unlock(&pw(PW)).unwrap();
+    assert_eq!(s.backup_prompt(), Some(BackupPrompt::AfterUnlock));
+}
+
+#[test]
+fn backup_prompt_stronger_after_password_change() {
+    let (mut s, tag) = saved_after_migration();
+    s.dismiss_backup_prompt();
+    s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR).unwrap();
+    // The stronger prompt shows at once, even after a dismissal, and the copy stays.
+    assert_eq!(s.backup_prompt(), Some(BackupPrompt::AfterPasswordChange));
+    assert!(s.store.backups.contains_key(&tag));
+    s.lock();
+    s.unlock(&pw(NEW_PW)).unwrap();
+    assert_eq!(s.backup_prompt(), Some(BackupPrompt::AfterPasswordChange));
+}
+
+#[test]
+fn backup_delete_clears_note() {
+    let (mut s, tag) = saved_after_migration();
+    s.delete_migration_backup().unwrap();
+    assert!(!s.store.backups.contains_key(&tag));
+    assert_eq!(s.backup_prompt(), None);
+    // The note is `Done` in the file, so no later unlock asks again.
+    let state = open_file(&stored(&s), PW);
+    let note = state.index.migration_backup.as_ref().unwrap();
+    assert_eq!(note.prompt, BackupPrompt::Done);
+    s.lock();
+    s.unlock(&pw(PW)).unwrap();
+    assert_eq!(s.backup_prompt(), None);
+}
+
+#[test]
+fn backup_missing_file_clears_note() {
+    let (mut s, tag) = saved_after_migration();
+    s.store.backups.remove(&tag);
+    s.lock();
+    s.unlock(&pw(PW)).unwrap();
+    assert_eq!(s.backup_prompt(), None);
+    assert!(s.unlocked().unwrap().state.index.migration_backup.is_none());
+    // Deleting a copy that is already gone is not an error.
+    s.delete_migration_backup().unwrap();
+}
+
+#[test]
+fn backup_never_deleted_without_yes() {
+    let (mut s, tag) = saved_after_migration();
+    let calls = |s: &S| s.store.backups.contains_key(&tag);
+    // Unlock, lock, edits, dismiss, password change and save never remove the copy.
+    s.dismiss_backup_prompt();
+    s.save().unwrap();
+    s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR).unwrap();
+    s.lock();
+    s.unlock(&pw(NEW_PW)).unwrap();
+    assert!(calls(&s));
+    // Only the explicit yes removes it.
+    s.delete_migration_backup().unwrap();
+    assert!(!calls(&s));
+}
+
+#[test]
+fn backup_delete_while_migration_pending_does_nothing() {
+    let file = v1_current(plain_items());
+    let mut s = v1_session(file);
+    s.delete_migration_backup().unwrap();
+    assert!(s.migration_pending());
+    assert!(s.store.backups.is_empty());
+}

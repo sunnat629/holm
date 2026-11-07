@@ -36,6 +36,10 @@ pub const MAX_PASSWORD_BYTES: usize = MAX_MASTER_CHARS * 4;
 /// Shown after each wrong password.
 pub const WRONG_PASSWORD: &str = "That password didn't open this vault. Either the password is wrong, or the file was changed or damaged.";
 
+/// The one stderr line printed after unlock while a migration backup copy is still
+/// kept. The command line never deletes it.
+pub const BACKUP_KEPT: &str = "Note: a copy of the vault from before the upgrade is still kept next to it (a .bak file). Delete it yourself once you are sure the upgrade worked. Deleting does not remove Time Machine copies or SSD remnants.";
+
 /// An unlocked vault and the folder lock that guards it.
 ///
 /// The session is declared first so it drops (and wipes its keys) before the lock is
@@ -120,6 +124,9 @@ pub fn open(
     let mut session = Session::new(FsStore::new(path), (env.clock)());
     for _ in 0..MAX_TRIES {
         if unlock_once(&mut session, term)? {
+            if session.backup_prompt().is_some() {
+                writeln!(err, "{BACKUP_KEPT}")?;
+            }
             return Ok(Opened {
                 session,
                 _lock: lock,

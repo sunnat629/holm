@@ -339,7 +339,7 @@ pub(crate) struct BackupNote {
 
 /// How far the backup prompts have got.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BackupPrompt {
+pub enum BackupPrompt {
     /// Ask after the next good unlock.
     AfterUnlock,
     /// Ask again after a password change.
