@@ -65,6 +65,13 @@ The vault is `~/Library/Application Support/Holm/holm.vault`. Use `--vault PATH`
 
 Holm 0.5.0 stores each secret in its own record (vault format 2). A vault from 0.1.x moves to the new format on its first save, and Holm keeps a backup copy next to it. **Older Holm versions cannot open a format 2 vault.** They show "This file isn't a Holm vault, or it is damaged." and leave the file alone. See the [changelog](CHANGELOG.md) for how to go back.
 
+## Learn how it works
+
+- [Architecture](docs/ARCHITECTURE.md): the crates, where secrets live in memory, and how a change reaches the disk.
+- [How encryption works](docs/HOW-ENCRYPTION-WORKS.md): from master password to bytes on disk, and what Holm does not protect against.
+- [The file format](docs/FILE-FORMAT.md): the vault file byte by byte, and the v1 to v2 migration.
+- [Learn Rust with Holm](docs/learn/README.md): a lesson-by-lesson course built on this code.
+
 ## Security
 
 - Argon2id turns your master password into a key. XChaCha20-Poly1305 encrypts the vault and authenticates every header field.
