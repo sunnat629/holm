@@ -37,7 +37,7 @@ upstream, and tell us too.
 ## How to check a build yourself
 
 `scripts/repro-check.sh` builds the release binaries twice from a clean export of `HEAD` and
-compares their SHA-256. `scripts/sbom.sh` writes a CycloneDX list of every dependency. See the
+compares their SHA-256: two local rebuilds on the same toolchain, OS and CPU give identical binaries. That does not show that a downloaded app matches a rebuild. `scripts/sbom.sh` writes a CycloneDX list of every dependency. See the
 "Phase C" section of [docs/DECISIONS.md](docs/DECISIONS.md) for what is and is not reproducible
 (the Developer ID signature, its timestamp, the notarisation ticket and the DMG are not).
 

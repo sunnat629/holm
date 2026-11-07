@@ -3,7 +3,7 @@
 ## Why this matters
 
 "Trust me" is not a security property. Phase C gives a reviewer five things they can run: rebuild
-the binary and get the same bytes, list every dependency, throw hostile input at the parsers for
+the binary on the same machine and get the same bytes, list every dependency, throw hostile input at the parsers for
 hours, check that the tests would notice a broken line, and see that the program did not get
 slower. None of them proves Holm is correct. Each one makes a certain kind of mistake easier to
 find.
@@ -26,8 +26,8 @@ A build is reproducible when the same source, tools and flags give the same byte
 - Incremental build state. `CARGO_INCREMENTAL=0`.
 - Your shell. `env -i` starts from nothing, then passes only what is needed.
 
-The script exports `HEAD` with `git archive` into two different directories, so a path that
-leaks into the binary would show up as a difference. Our result: identical. The control
+The script exports `HEAD` with `git archive` into two different directories, so the two builds do not share a checkout path.
+Our result: two local rebuilds gave identical binaries. This shows the build is repeatable on one machine; it does not prove no path leaks, and it says nothing about another machine. The control
 experiment (no remap) was also identical for workspace code, because cargo passes workspace paths
 relative; the remap matters for `$CARGO_HOME` and registry paths, which are user specific.
 What stays different on purpose: the Developer ID signature, its timestamp, the notarisation

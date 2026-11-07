@@ -75,8 +75,10 @@ fn bench_kdf_default() {
     println!("BENCH kdf_default_ms={:.1}", ms(best));
 }
 
-/// Search over 10,000 synthetic items: a miss (scans every field of every item), a hit on
-/// a title fragment, and a category/type filter with the empty query.
+/// Search over 10,000 synthetic items with three queries: a miss (scans every field of every
+/// item), a hit on a title fragment, and the empty query (default filters, so it matches and
+/// sorts every item). Each is the minimum of 9 runs. The two typed queries are reported as the
+/// worst of the two (`search_10k_ms`), the empty query on its own (`search_10k_empty_ms`).
 #[test]
 #[ignore = "timing probe; run by scripts/bench-gates.sh in release mode"]
 fn bench_search_10k() {

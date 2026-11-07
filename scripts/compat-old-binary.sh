@@ -14,7 +14,7 @@ root="$(pwd -P)"
 ref="${1:-}"
 if [ -z "$ref" ]; then
   ref="$(git tag --list 'v0.1.*' --sort=-v:refname | head -n 1)"
-  [ -n "$ref" ] || ref="7f751d8" # OLD_MAIN_FALLBACK: merge of perf/phase-a, no format v2
+  [ -n "$ref" ] || ref="7f751d88e35c9b27aa5a2a678d2bfab00534befe" # OLD_MAIN_FALLBACK: merge of perf/phase-a, no format v2
 fi
 git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || { echo "FAIL  compat: unknown ref $ref"; exit 1; }
 

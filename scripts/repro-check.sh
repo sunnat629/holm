@@ -10,6 +10,8 @@
 # signature added later by release-macos.sh is NOT reproducible (docs/DECISIONS.md, C1).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# shellcheck source=lib/remap.sh
+. scripts/lib/remap.sh
 keep=0
 case "${1:-}" in "") ;; --keep) keep=1 ;; *) echo "usage: $0 [--keep]" >&2; exit 2 ;; esac
 
@@ -37,7 +39,7 @@ build() { # label
       CARGO_INCREMENTAL=0 \
       SOURCE_DATE_EPOCH="$epoch" \
       CARGO_TARGET_DIR="$work/$1/target" \
-      RUSTFLAGS="--remap-path-prefix=$dir=/holm-src --remap-path-prefix=$cargo_home=/cargo-home --remap-path-prefix=$HOME/.rustup=/rustup" \
+      RUSTFLAGS="$(holm_remap_flags "$dir" "$cargo_home")" \
       cargo build --release --locked -p holm-cli -p holm-gui
   )
 }

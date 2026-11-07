@@ -29,7 +29,8 @@ cargo fuzz --version >/dev/null 2>&1 ||
 stamp="$(date -u +%Y%m%dT%H%MZ)"
 logdir="fuzz/artifacts/long-$stamp"
 mkdir -p "$logdir"
-targets="$(cd fuzz/fuzz_targets && ls ./*.rs | sed -E 's|^\./||; s|\.rs$||')"
+targets="$(cd fuzz/fuzz_targets && ls ./*.rs 2>/dev/null | sed -E 's|^\./||; s|\.rs$||')"
+[ -n "$targets" ] || { echo "fuzz-long: no targets found in fuzz/fuzz_targets" >&2; exit 2; }
 echo "fuzz-long: $(echo "$targets" | wc -w | tr -d ' ') targets, $minutes min each, logs in $logdir"
 
 bad=0

@@ -44,10 +44,12 @@ app="target/bundle/Holm.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-# Own target dir, so the changed RUSTFLAGS do not invalidate the normal cache. The remaps keep the
+# Own target dir, so the changed RUSTFLAGS do not invalidate the normal cache. The shared remap (scripts/lib/remap.sh, same as scripts/repro-check.sh) keeps the
 # builder's home directory and checkout path out of the binary's panic messages and debug paths.
 root="$(pwd -P)"
-remap="--remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup --remap-path-prefix=$root=/holm"
+# shellcheck source=lib/remap.sh
+. "$root/scripts/lib/remap.sh"
+remap="$(holm_remap_flags "$root" "${CARGO_HOME:-$HOME/.cargo}")"
 CARGO_TARGET_DIR=target/bundle-build RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }$remap" \
   cargo build --release --locked -p holm-gui
 cp target/bundle-build/release/holm-gui "$app/Contents/MacOS/Holm"

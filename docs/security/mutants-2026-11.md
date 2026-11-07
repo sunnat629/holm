@@ -1,7 +1,10 @@
 # Mutation testing report, November 2026
 
 Tool: cargo-mutants 27.1.0, run on this Mac under `nice -n 19` with at most 2 jobs.
-Toolchain 1.99.1. A mutant is a small code change (an operator swapped, a body replaced
+Toolchain 1.99.1. Tested tree: the `src` of every crate is identical to commit
+`7f751d88e35c9b27aa5a2a678d2bfab00534befe` (main before Phase B; the Phase C base). This run is
+**pre-Phase-B**: it says nothing about format v2 or the code Phase B added or changed. File and
+line references below are to that commit. A mutant is a small code change (an operator swapped, a body replaced
 by a default). "Caught" means a test failed. "Missed" means every test still passed.
 "Unviable" means the mutant did not compile.
 
@@ -29,20 +32,30 @@ Killed with new tests (test files only, no `src` change):
 
 | Location | Mutant | Test |
 |---|---|---|
-| `body.rs:246` `check_structure` | `>` to `>=` and `>` to `==` on the item cap | `crates/holm-core/tests/body_limits.rs`: exactly 50,000 items decode; 50,001 are refused |
+| `body.rs` `check_structure` (item cap check) | `>` to `>=` and `>` to `==` on the item cap | `crates/holm-core/tests/body_limits.rs`: exactly 50,000 items decode; 50,001 are refused |
 | `padding.rs:98` `unpad` | `acc \| b` to `acc ^ b` in the padding fold | `crates/holm-core/tests/padding_tail.rs`: two equal non-zero tail bytes, and bytes that cancel under XOR, are refused |
 
 Left, with the reason (none is a security gap):
 
 | Location | Mutant | Why it is not a gap |
 |---|---|---|
-| `body.rs:246:41` | `\|\|` to `&&` | Equivalent. The list readers (`BoundedVec<_, MAX_ITEMS>` and `<_, MAX_CATEGORIES>`) already refuse an over-cap list before `check_structure` runs, so the second check cannot fire from `decode`. It is kept as a second line of defence for `encode`. |
+| `body.rs` `check_structure`, the `\|\|` in the second cap check | `\|\|` to `&&` | Equivalent. The list readers (`BoundedVec<_, MAX_ITEMS>` and `<_, MAX_CATEGORIES>`) already refuse an over-cap list before `check_structure` runs, so the second check cannot fire from `decode`. It is kept as a second line of defence for `encode`. |
 | `padding.rs:83:26` | `\|\|` to `&&` in `unpad` | Equivalent. For an empty buffer the next line, `split_first_chunk`, returns `BadPadding` anyway. |
 | `wire.rs:49` and `wire.rs:103` | `expecting` returns `Ok(Default)` | Only the wording of a serde error that Holm turns into the opaque `Malformed`. No behaviour changes. |
 | `wire.rs:113` (2 mutants) | `MAX + 1` becomes `MAX - 1` or `MAX * 1` | Only the number inside the same error text. |
 | `wire.rs:60` (3 mutants) | `>` changed in `visit_string` | Postcard hands strings to `visit_str`/`visit_borrowed_str`, never `visit_string`, so this path is not reachable from our decoder. The same cap in `visit_str` (line 55) is caught. |
 
 ## Not run
+
+**Follow-up after Phase B (deferred, not run).** Phase B added or changed these
+`holm-core` files. None of them was mutation-tested. The files tested above (`body`, `envelope`,
+`format`, `padding`, `wire`, `error`) also changed in Phase B, so their results above describe the
+old versions and need a re-run on the post-Phase-B tree. Files Phase B added: `envelope_v2`,
+`record`, `index`, `migrate`, `store`, `view`. Files Phase B changed: `body`, `envelope`, `error`,
+`export`, `fields`, `format`, `import/mod`, `item`, `padding`, `search`, `session/categories`,
+`session/items`, `session/mod`, `text`, `wire`. Highest value first: `envelope_v2`, `record`,
+`index`, `migrate`, `store`, `view`, then the changed `session/*`, `search`, `body`, `envelope`.
+The same command below applies. Do not treat v2 as mutation-tested until this is done.
 
 These `holm-core` files were left out for time (the run copies the tree for every mutant and
 the machine was busy): `rules`, `text`, `settings`, `category`, `error`, `search`,
