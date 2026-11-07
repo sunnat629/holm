@@ -7,6 +7,30 @@ Every lesson has the same five parts: what we built, Rust ideas, why it matters 
 security, three exercises, and what to read next in
 [The Rust Programming Language](https://doc.rust-lang.org/book/).
 
+## Start here
+
+Read the three guides first. They give you the picture, and the lessons then fill in the Rust.
+
+1. [Architecture](../ARCHITECTURE.md): the crates, the dependency direction, where secrets live, the write gate. Lessons 07, 15 and 24.
+2. [How encryption works](../HOW-ENCRYPTION-WORKS.md): from master password to bytes on disk, and what Holm does not protect against. Lessons 04, 05 and 02.
+3. [The file format](../FILE-FORMAT.md): the header, index, records and migration, byte by byte. Lessons 06, 13, 67 and 69.
+4. Then lessons 00 to 71 below, in order.
+
+Pointers by topic:
+
+| Topic | Lessons |
+|---|---|
+| Setup, supply chain | 00, 01, 09 |
+| Secret types and memory | 02, 66 |
+| Errors | 03 |
+| Argon2, AEAD, parsing bytes | 04, 05, 06 |
+| Property tests, fuzzing, mutation tests | 08, 21, 71 |
+| Versioned formats and schemas | 13, 52, 61, 67 |
+| Files, fsync, migration | 18, 41, 69 |
+| GUI and the worker thread | 22 to 28, 36 to 40 |
+| CLI | 33 to 35 |
+| Measuring and releases | 70, 71 |
+
 | Lesson | Topic |
 |---|---|
 | 00 | [Setup and Cargo](00-setup-and-cargo.md): Install Rust, Cargo workspaces, `fn main`, `let`, and `forbid(unsafe_code)`. |
