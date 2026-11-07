@@ -64,7 +64,12 @@ mod macos {
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_title("Holm")
-                .with_inner_size([900.0, 600.0]),
+                .with_inner_size([900.0, 600.0])
+                // An empty icon on purpose. With no icon set, eframe 0.37 would load its own
+                // egui logo and apply it as the app icon at runtime, which hides the bundle's
+                // Holm.icns in the Dock. eframe treats an empty `IconData` as "none" and skips
+                // the call, so macOS keeps the bundle icon. No image bytes go in the binary.
+                .with_icon(egui::IconData::default()),
             renderer: eframe::Renderer::Glow,
             clipboard_shortcuts: false,
             // A flat 2D UI needs none of these. They are the eframe defaults, spelled out

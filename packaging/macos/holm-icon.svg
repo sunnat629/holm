@@ -1,10 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Holm app icon. Flat, hand-written, no font and no external reference.
-       Colours come from the app's theme: egui dark panel #1b1b1b and the
-       strength-meter green #2e9d4f (crates/holm-gui/src/widgets/strength_meter.rs). -->
-  <rect x="100" y="100" width="824" height="824" rx="184" ry="184" fill="#1b1b1b"/>
-  <!-- The H: two stems and a crossbar, drawn as plain rectangles. -->
-  <rect x="302" y="272" width="120" height="480" fill="#2e9d4f"/>
-  <rect x="602" y="272" width="120" height="480" fill="#2e9d4f"/>
-  <rect x="302" y="452" width="420" height="120" fill="#2e9d4f"/>
+  <rect x="82" y="88" width="860" height="852" rx="228" fill="#0b4b4d"/>
+  <path fill="#f1e6d2" d="M206 740 232 688Q236 678 247 674L258 668Q269 664 269 650V374Q269 362 258 356L250 350Q244 347 244 338V304Q244 294 254 289L358 242Q366 238 374 242L423 274Q433 280 433 292V362Q433 374 445 374H579Q591 374 591 362V292Q591 280 601 274L650 242Q658 238 666 242L770 289Q780 294 780 304V338Q780 347 774 351L766 357Q755 364 755 376V650Q755 664 767 669L780 676Q786 680 790 690L816 740 704 728 643 752H380L322 730Z"/>
+  <path fill="#0a3a3d" d="M368 748V588a144 144 0 0 1 288 0V748Z"/>
+  <path fill="#0f5a5a" d="M384 748V588a128 128 0 0 1 256 0V748Z"/>
+  <path fill="#0a3a3d" d="M418 748V592a94 94 0 0 1 188 0V748Z"/>
+  <circle cx="512" cy="480" r="12" fill="#f1e6d2"/>
+  <circle cx="427" cy="516" r="12" fill="#f1e6d2"/>
+  <circle cx="597" cy="516" r="12" fill="#f1e6d2"/>
+  <circle cx="401" cy="632" r="12" fill="#f1e6d2"/>
+  <circle cx="623" cy="632" r="12" fill="#f1e6d2"/>
+  <path d="M512 557V510M553 580 593 557M553 628 593 651M512 651V698M471 628 431 651M471 580 431 557" fill="none" stroke="#e0703f" stroke-width="22" stroke-linecap="round"/>
+  <circle cx="512" cy="604" r="47" fill="none" stroke="#e0703f" stroke-width="26"/>
+  <path fill="#12605f" d="M154 754C199 741 227 738 265 722 285 713 314 714 336 714 359 714 379 738 405 737 442 737 481 744 512 752 555 748 594 747 617 735 648 716 676 698 699 695 714 690 737 713 762 723 799 736 833 741 868 754 771 778 662 765 577 771 441 778 285 772 154 754Z"/>
+  <path fill="#1b7f7a" d="M236 790C302 768 711 768 786 788 747 804 584 798 551 808 513 821 642 816 672 832 607 850 416 850 352 834 382 822 499 822 469 811 435 798 279 806 236 790Z"/>
 </svg>
