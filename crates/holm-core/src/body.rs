@@ -243,26 +243,10 @@ impl VaultData {
     /// The cross-checks: the limits, unique category ids and names, the next category
     /// id above every id in use, unique item ids, and every item's category exists.
     fn check_structure(&self) -> Result<(), BodyError> {
-        if self.items.len() > MAX_ITEMS || self.categories.len() > MAX_CATEGORIES {
+        if self.items.len() > MAX_ITEMS {
             return Err(BodyError::Invalid);
         }
-
-        let mut ids: Vec<CategoryId> = self.categories.iter().map(|c| c.id).collect();
-        ids.sort_unstable();
-        if ids.windows(2).any(|w| w[0] == w[1]) {
-            return Err(BodyError::Invalid);
-        }
-        if ids.last().is_some_and(|max| max.0 >= self.next_category_id) {
-            return Err(BodyError::Invalid);
-        }
-        let mut keys = Vec::with_capacity(self.categories.len());
-        for c in &self.categories {
-            keys.push(name_key(c.name()));
-        }
-        keys.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
-        if keys.windows(2).any(|w| w[0].as_str() == w[1].as_str()) {
-            return Err(BodyError::Invalid);
-        }
+        let ids = check_categories(&self.categories, self.next_category_id)?;
 
         let mut item_ids: Vec<ItemId> = self.items.iter().map(|i| i.id).collect();
         item_ids.sort_unstable();
@@ -281,7 +265,38 @@ impl VaultData {
     }
 }
 
-fn encode_wire(out: &impl serde::Serialize, schema: u16) -> Result<SecretBuf, BodyError> {
+/// The category cross-checks, shared with the v2 index: the count limit, unique ids,
+/// a next id above every id in use, and unique names. Returns the ids, sorted.
+pub(crate) fn check_categories(
+    categories: &[Category],
+    next_category_id: u32,
+) -> Result<Vec<CategoryId>, BodyError> {
+    if categories.len() > MAX_CATEGORIES {
+        return Err(BodyError::Invalid);
+    }
+    let mut ids: Vec<CategoryId> = categories.iter().map(|c| c.id).collect();
+    ids.sort_unstable();
+    if ids.windows(2).any(|w| w[0] == w[1]) {
+        return Err(BodyError::Invalid);
+    }
+    if ids.last().is_some_and(|max| max.0 >= next_category_id) {
+        return Err(BodyError::Invalid);
+    }
+    let mut keys = Vec::with_capacity(categories.len());
+    for c in categories {
+        keys.push(name_key(c.name()));
+    }
+    keys.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
+    if keys.windows(2).any(|w| w[0].as_str() == w[1].as_str()) {
+        return Err(BodyError::Invalid);
+    }
+    Ok(ids)
+}
+
+pub(crate) fn encode_wire(
+    out: &impl serde::Serialize,
+    schema: u16,
+) -> Result<SecretBuf, BodyError> {
     let size = postcard::serialize_with_flavor(out, postcard::ser_flavors::Size::default())
         .map_err(|_| BodyError::Encode)?;
     let total = size.checked_add(VERSION_LEN).ok_or(BodyError::Encode)?;
