@@ -576,6 +576,39 @@ fn change_password_while_migration_pending() {
 }
 
 #[test]
+fn uncertain_password_change_retry_keeps_stronger_note() {
+    let file = v1_current(plain_items());
+    let tag = tag_of(&file);
+    let mut s = v1_session(file);
+    s.store.fail_after_write = Some(full());
+    assert_eq!(
+        s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR),
+        Err(CoreError::PasswordChangeUncertain(full()))
+    );
+    assert!(s.migration_pending());
+    // The retry must not fall back to the weaker `AfterUnlock` prompt.
+    s.save().unwrap();
+    let state = open_file(&stored(&s), NEW_PW);
+    let note = state.index.migration_backup.as_ref().unwrap();
+    assert_eq!(note.tag, tag);
+    assert_eq!(note.prompt, BackupPrompt::AfterPasswordChange);
+}
+
+#[test]
+fn failed_password_change_puts_back_the_old_note() {
+    let file = v1_current(plain_items());
+    let mut s = v1_session(file);
+    // The first save lands the `AfterUnlock` note in memory, but the replace fails.
+    s.store.fail_next_write = Some(full());
+    assert!(s.save().is_err());
+    // The password change fails at the backup copy: the note must not change.
+    s.store.fail_backup_copy = Some(full());
+    assert!(s.change_password(&pw(PW), &pw(NEW_PW), &FLOOR).is_err());
+    let note = s.unlocked().unwrap().state.index.migration_backup.as_ref();
+    assert_eq!(note.map(|n| n.prompt), Some(BackupPrompt::AfterUnlock));
+}
+
+#[test]
 fn change_password_backup_fails_keeps_v1() {
     let file = v1_current(plain_items());
     let mut s = v1_session(file.clone());

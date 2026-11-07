@@ -447,17 +447,24 @@ impl<S: VaultStore> Session<S> {
         for (entry, r) in st.index.entries.iter_mut().zip(new_refs) {
             old_refs.push(core::mem::replace(&mut entry.record, r));
         }
-        let restore = |st: &mut VaultState, old_refs: Vec<RecordRef>| {
+        // The note before this call, to put back with the old refs.
+        let old_note = if let Some(origin) = &open.migration {
+            st.index.migration_backup.replace(BackupNote {
+                tag: origin.tag.clone(),
+                prompt: BackupPrompt::AfterPasswordChange,
+            })
+        } else {
+            None
+        };
+        let had_migration = open.migration.is_some();
+        let restore = move |st: &mut VaultState, old_refs: Vec<RecordRef>| {
             for (entry, r) in st.index.entries.iter_mut().zip(old_refs) {
                 entry.record = r;
             }
+            if had_migration {
+                st.index.migration_backup = old_note;
+            }
         };
-        if let Some(origin) = &open.migration {
-            st.index.migration_backup = Some(BackupNote {
-                tag: origin.tag.clone(),
-                prompt: BackupPrompt::AfterPasswordChange,
-            });
-        }
         let built = {
             let refs: Vec<&SealedRecord> = new_records.iter().collect();
             envelope_v2::assemble(&mut new_keys, &st.index, &refs)
@@ -610,7 +617,11 @@ impl<S: VaultStore> Session<S> {
     pub(crate) fn commit(&mut self) -> Result<(), CoreError> {
         let open = self.open.as_mut().ok_or(CoreError::Locked)?;
         open.dirty = true;
-        if let Some(origin) = &open.migration {
+        // Only the first save of a migration sets the note; a retry after a password
+        // change must keep the stronger `AfterPasswordChange` prompt.
+        if let Some(origin) = &open.migration
+            && open.state.index.migration_backup.is_none()
+        {
             open.state.index.migration_backup = Some(BackupNote {
                 tag: origin.tag.clone(),
                 prompt: BackupPrompt::AfterUnlock,

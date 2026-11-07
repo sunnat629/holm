@@ -17,7 +17,7 @@ use crate::error::CoreError;
 use crate::fields::{CalendarDate, FieldValue, RecoveryCode, try_field};
 use crate::index::{Index, ItemEntry, RecordRef};
 use crate::item::{Item, ItemData, ItemId, Timestamp};
-use crate::record::{RecordSecrets, split};
+use crate::record::{RecordSecrets, join, split};
 use crate::text::{GatedSecret, SecretText, Text};
 
 /// Seals `body_plaintext` into a complete vault file under `kek`.
@@ -233,6 +233,8 @@ pub fn check_decode_record(bytes: &[u8]) {
         return;
     };
     let first = secrets.encode().expect("a decoded record re-encodes");
+    // An accepted record must also join back with the entry it was decoded against.
+    join(&entry, secrets).expect("an accepted record joins its entry");
     let back = RecordSecrets::decode(first.expose(), &entry).expect("its encoding decodes");
     let second = back.encode().expect("re-encodes again");
     assert_eq!(second.expose(), first.expose(), "encoding is not stable");
@@ -321,6 +323,61 @@ mod tests {
             bytes.extend_from_slice(&record_fixture_bytes(which));
             std::fs::write(rec.join(format!("fixture_{which}")), bytes).expect("write seed");
         }
+        // A real index: the four fixtures sealed, and ten entries with distinct ids.
+        let keys =
+            envelope_v2::create_keys_with_kek(&kek(7), [1; 32], &KdfParams::FLOOR).expect("keys");
+        let (four, _) = seal_items(&keys, fixture_items()).expect("seals");
+        std::fs::write(
+            idx.join("fixtures_index"),
+            four.encode().expect("encodes").expose(),
+        )
+        .expect("write seed");
+        let ten: Vec<Item> = (0..10u8)
+            .map(|n| {
+                let mut items = fixture_items();
+                let mut item = items.swap_remove(usize::from(n) % 4);
+                item.id = ItemId::from_hex(&format!("{:02x}", n + 1).repeat(16)).expect("hex");
+                item
+            })
+            .collect();
+        let (ten, _) = seal_items(&keys, ten).expect("seals");
+        assert_eq!(ten.entries.len(), 10);
+        std::fs::write(
+            idx.join("ten_entries_index"),
+            ten.encode().expect("encodes").expose(),
+        )
+        .expect("write seed");
+        // The biggest record every cap allows, against the first fixture entry.
+        let mut bytes = vec![0u8];
+        bytes.extend_from_slice(&maxed_record_bytes());
+        std::fs::write(rec.join("maxed"), bytes).expect("write seed");
+    }
+
+    /// The plaintext of a login with every secret at its cap and ten maxed fields.
+    fn maxed_record_bytes() -> Vec<u8> {
+        use crate::rules::{MAX_MULTILINE_SECRET_BYTES, MAX_NOTE_BYTES, MAX_SECRET_BYTES};
+        let big = |n: usize| secret(&"a".repeat(n));
+        let fields = (0..10)
+            .map(|k| {
+                try_field(
+                    Text::new(format!("F{k}")),
+                    FieldValue::MultilineSecret(big(MAX_MULTILINE_SECRET_BYTES)),
+                    None,
+                )
+                .expect("a valid field")
+            })
+            .collect();
+        let item = fixture_item(
+            9,
+            ItemData::Login {
+                username: Text::new("u".to_owned()),
+                password: big(MAX_SECRET_BYTES),
+                urls: vec![],
+                notes: big(MAX_NOTE_BYTES),
+            },
+            fields,
+        );
+        split(item).1.encode().expect("encodes").expose().to_vec()
     }
 
     /// Writes the `open_v2_fixed_key` fuzz seeds (KEK `[7; 32]`). Run once:

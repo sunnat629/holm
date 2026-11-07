@@ -437,7 +437,7 @@ pub(crate) fn join(entry: &ItemEntry, secrets: RecordSecrets) -> Result<Item, Bo
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::category::CategoryId;
     use crate::fields::{CalendarDate, FieldValue};
@@ -915,7 +915,7 @@ mod tests {
         assert!(d.contains("Login"));
     }
 
-    mod props {
+    pub(crate) mod props {
         use super::*;
         use crate::index::{Index, RecordRef};
         use proptest::prelude::*;
@@ -941,7 +941,7 @@ mod tests {
         type DateParts = (u16, u8, u8);
 
         #[derive(Clone, Debug)]
-        struct Spec {
+        pub(crate) struct Spec {
             title: String,
             favourite: bool,
             created: i64,
@@ -988,7 +988,7 @@ mod tests {
             ]
         }
 
-        fn spec() -> impl Strategy<Value = Spec> {
+        pub(crate) fn spec() -> impl Strategy<Value = Spec> {
             (
                 "[A-Za-z][A-Za-z0-9 ]{0,19}",
                 any::<bool>(),
@@ -1011,7 +1011,7 @@ mod tests {
                 )
         }
 
-        fn build(n: u8, s: &Spec) -> Item {
+        pub(crate) fn build(n: u8, s: &Spec) -> Item {
             let data = match &s.data {
                 DataSpec::Login(u, p, r, nt) => ItemData::Login {
                     username: t(u),

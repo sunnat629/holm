@@ -279,3 +279,34 @@ fn v2_file_never_over_cap() {
     assert_eq!(back.entries.len(), 255);
     assert_eq!(got.len(), 255);
 }
+
+mod props {
+    use super::*;
+    use crate::record::tests::props::{build, spec};
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        /// Any set of valid items seals into a v2 file that opens again with the same
+        /// records, and every record opens to the bytes it was sealed from.
+        #[test]
+        fn vault_v2_roundtrip_any(specs in prop::collection::vec(spec(), 0..=5)) {
+            let items: Vec<_> = (1u8..).zip(&specs).map(|(n, s)| build(n, s)).collect();
+            let want: Vec<Vec<u8>> = (1u8..)
+                .zip(&specs)
+                .map(|(n, s)| record_bytes(&split(build(n, s)).1))
+                .collect();
+            let kek = kek(5);
+            let (_keys, _index, _records, file) = seal_v2_items(&kek, items).unwrap();
+            let (keys, index, records) = open_v2_with_kek(&file, &kek).unwrap();
+            prop_assert_eq!(index.entries.len(), specs.len());
+            prop_assert_eq!(records.len(), specs.len());
+            for ((entry, sealed), want) in index.entries.iter().zip(&records).zip(&want) {
+                let secrets = open_record(&keys, sealed, entry).unwrap();
+                prop_assert_eq!(&record_bytes(&secrets), want);
+            }
+            prop_assert_eq!(open_v2_all(&file, &kek), Ok(specs.len()));
+        }
+    }
+}
