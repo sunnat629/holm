@@ -4,6 +4,10 @@
 #   scripts/release-macos.sh              preflight, build, sign, notarise, staple, verify
 #   scripts/release-macos.sh --preflight  only check the signing identity and the notary profile
 #
+# After the DMG is done, an SBOM per binary (CycloneDX JSON, scripts/sbom.sh) is written next
+# to it. This step is optional: it is skipped with a note when cargo-cyclonedx is missing, and
+# a failure there never undoes the DMG. HOLM_SBOM=0 skips it, HOLM_SBOM=1 makes it required.
+#
 # Needs, on this Mac, before anything is built:
 #   - exactly one valid "Developer ID Application: ... (G4685Q3YAY)" identity in the keychain
 #     (set HOLM_SIGN_IDENTITY to its SHA-1 hash when there is more than one), and
@@ -134,3 +138,19 @@ trap - EXIT
 (cd "$out" && shasum -a 256 "$(basename "$dmg")" >"$(basename "$dmg").sha256")
 echo "wrote $dmg"
 cat "$dmg.sha256"
+
+# --- Optional: SBOM next to the DMG (Holm-<version>-holm-gui.cdx.json, ...-holm-cli.cdx.json). ---
+sbom_mode="${HOLM_SBOM:-auto}"
+if [ "$sbom_mode" = "0" ]; then
+  echo "sbom: skipped (HOLM_SBOM=0)"
+elif [ "$sbom_mode" = "1" ] || cargo cyclonedx --version >/dev/null 2>&1; then
+  if bash scripts/sbom.sh "$out" "Holm-$version-"; then
+    (cd "$out" && shasum -a 256 "Holm-$version-"*.cdx.json)
+  elif [ "$sbom_mode" = "1" ]; then
+    die "SBOM step failed and HOLM_SBOM=1 requires it"
+  else
+    echo "sbom: FAILED; the DMG is fine, run scripts/sbom.sh by hand" >&2
+  fi
+else
+  echo "sbom: skipped (cargo-cyclonedx not installed; see scripts/sbom.sh)"
+fi

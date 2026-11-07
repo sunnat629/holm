@@ -23,6 +23,7 @@ cargo install --locked cargo-fuzz --version 0.13.2
 | `decode_index` | raw bytes (seeded from `fuzz/seeds/decode_index/`) | `Index::decode` (schema 4) never panics and never makes one allocation over 64 MiB (`-malloc_limit_mb=64`); an accepted index re-encodes, and that encoding is stable |
 | `decode_record` | one byte picking a fixed index entry, then record plaintext (seeded from `fuzz/seeds/decode_record/`) | `RecordSecrets::decode` never panics or allocates over 64 MiB; an accepted record re-encodes, and that encoding is stable |
 | `decode_body` | raw bytes (seeded from `fuzz/seeds/decode_body/`) | `VaultData::decode` never panics and never makes one allocation over 64 MiB (`-malloc_limit_mb=64`); an accepted body re-encodes, and that encoding is stable |
+| `decode_body_v1` | raw bytes behind a schema 1 version prefix (seeded from `fuzz/seeds/decode_body_v1/`) | the same checks as `decode_body`, and a v1 body always re-encodes as the current schema |
 | `import_csv` | raw bytes as a CSV import file (seeded from the import fixtures) | `import::parse` never panics or allocates over 64 MiB; an accepted file never yields more than `MAX_IMPORT_ROWS` rows |
 | `import_json` | raw bytes as a JSON import file (seeded from the import fixtures) | the same checks for the JSON importer |
 
@@ -58,14 +59,15 @@ cargo +nightly-2026-10-12 fuzz run open_v2_fixed_key fuzz/corpus/open_v2_fixed_k
 cargo +nightly-2026-10-12 fuzz run decode_index fuzz/corpus/decode_index fuzz/seeds/decode_index -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run decode_record fuzz/corpus/decode_record fuzz/seeds/decode_record -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run decode_body fuzz/corpus/decode_body fuzz/seeds/decode_body -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run decode_body_v1 fuzz/corpus/decode_body_v1 fuzz/seeds/decode_body_v1 -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run import_csv fuzz/corpus/import_csv fuzz/seeds/import_csv -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run import_json fuzz/corpus/import_json fuzz/seeds/import_json -- -max_total_time=30 -malloc_limit_mb=64
 ```
 
 ## Long run
 
-All seven targets for 600 s each, weekly, before the Phase 2a security review and before the Phase 4 security review
-(all seven targets, including `import_csv` and `import_json`).
+All twelve targets for 600 s each, weekly, before the Phase 2a security review and before the Phase 4 security review
+(all twelve targets, including `import_csv` and `import_json`).
 Same commands with `-max_total_time=600`. The manual workflow
 `.github/workflows/fuzz.yml` does the same on GitHub. Fuzzing finds bugs; a clean
 run does not prove there are none.
@@ -85,3 +87,9 @@ A crash writes its input to `fuzz/artifacts/<target>/crash-<hash>`.
 ## Deferred
 
 - The `cargo-cyclonedx` SBOM moves to Phase 6.
+
+## Long runs
+
+`bash scripts/fuzz-long.sh [minutes-per-target]` (default 1440) runs every target under
+`nice -n 19`, keeps the corpora in `fuzz/corpus/` and writes logs and any crash input under
+`fuzz/artifacts/` (git-ignored). It exits 1 if a target crashed. It is not part of `ci-local.sh`.

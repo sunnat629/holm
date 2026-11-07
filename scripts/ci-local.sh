@@ -223,6 +223,9 @@ no_network_gate() {
 gate no-network no_network_gate
 # Phase B: an old CLI (newest v0.1.* tag, else origin/main) must refuse a v2 vault and leave it unchanged.
 gate compat-old-binary bash scripts/compat-old-binary.sh
+# Timing budgets (unlock KDF within 25% of the recorded baseline, search over 10,000 items,
+# `holm --version` startup). Budgets live in scripts/bench-budgets.env. Release build.
+gate bench bash scripts/bench-gates.sh
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable
