@@ -91,10 +91,7 @@ pub fn value_of(
     if let CopyField::Custom(index) = field {
         return custom_value(session, id, index);
     }
-    let public = session
-        .entry(id)
-        .map_err(|_| CliError::NotFound)?
-        .public();
+    let public = session.entry(id).map_err(|_| CliError::NotFound)?.public();
     let secret = |slot| -> Result<Zeroizing<String>, CliError> {
         let text = session.reveal(id, slot).map_err(|e| read_error(&e))?;
         Ok(Zeroizing::new(text.expose().to_owned()))
@@ -106,7 +103,7 @@ pub fn value_of(
                 .reveal_phrase(id, &password)
                 .map_err(|e| read_error(&e))?;
             // Straight from the vault's buffer into a wiping one.
-            Zeroizing::new(phrase.to_owned())
+            Zeroizing::new(phrase.expose().to_owned())
         }
         (CopyField::Password, PublicView::Login { .. }) => secret(SecretSlot::Password)?,
         (CopyField::Username, PublicView::Login { username, .. }) => {

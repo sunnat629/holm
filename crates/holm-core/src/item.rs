@@ -256,56 +256,6 @@ impl Item {
     pub fn item_type(&self) -> ItemType {
         self.data.item_type()
     }
-
-    /// A second, independent copy: every secret goes into a new wiping allocation.
-    /// For `open_item` only; the source was already valid, so no rule runs.
-    pub(crate) fn duplicate(&self) -> Item {
-        let data = match &self.data {
-            ItemData::Login {
-                username,
-                password,
-                urls,
-                notes,
-            } => ItemData::Login {
-                username: Text::new(username.as_str().to_owned()),
-                password: SecretText::new(password.expose().to_owned()),
-                urls: urls
-                    .iter()
-                    .map(|u| Text::new(u.as_str().to_owned()))
-                    .collect(),
-                notes: SecretText::new(notes.expose().to_owned()),
-            },
-            ItemData::CryptoAddress {
-                chain,
-                address,
-                memo,
-                notes,
-            } => ItemData::CryptoAddress {
-                chain: Text::new(chain.as_str().to_owned()),
-                address: SecretText::new(address.expose().to_owned()),
-                memo: SecretText::new(memo.expose().to_owned()),
-                notes: SecretText::new(notes.expose().to_owned()),
-            },
-            ItemData::RecoveryPhrase { phrase, notes } => ItemData::RecoveryPhrase {
-                phrase: GatedSecret::new(SecretText::new(phrase.expose().to_owned())),
-                notes: SecretText::new(notes.expose().to_owned()),
-            },
-            ItemData::SecureNote { body } => ItemData::SecureNote {
-                body: SecretText::new(body.expose().to_owned()),
-            },
-        };
-        Item {
-            id: self.id,
-            title: Text::new(self.title.as_str().to_owned()),
-            category: self.category,
-            favourite: self.favourite,
-            created: self.created,
-            updated: self.updated,
-            trashed: self.trashed,
-            data,
-            fields: self.fields.iter().map(CustomField::duplicate).collect(),
-        }
-    }
 }
 
 impl fmt::Debug for Item {

@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 use crate::category::CategoryId;
 use crate::error::CoreError;
 use crate::fields::{CalendarDate, from_unix_secs};
-use crate::item::{Item, ItemId, ItemType, Timestamp};
+use crate::item::{ItemId, ItemType, Timestamp};
 use crate::rules::EXPIRING_WITHIN_DAYS;
 use crate::session::Session;
 use crate::store::VaultStore;
@@ -134,15 +134,7 @@ impl fmt::Debug for ItemSummary<'_> {
 }
 
 /// Folded title order, then id. Shared with other listings.
-pub(crate) fn cmp_title_asc(a: &Item, b: &Item) -> Ordering {
-    let (ta, tb) = (fold(a.title()), fold(b.title()));
-    ta.as_str()
-        .cmp(tb.as_str())
-        .then_with(|| a.id().cmp(&b.id()))
-}
-
-/// The same order for views.
-fn cmp_view_title_asc(a: &EntryView<'_>, b: &EntryView<'_>) -> Ordering {
+pub(crate) fn cmp_title_asc(a: &EntryView<'_>, b: &EntryView<'_>) -> Ordering {
     let (ta, tb) = (fold(a.title()), fold(b.title()));
     ta.as_str()
         .cmp(tb.as_str())
@@ -189,11 +181,11 @@ impl<S: VaultStore> Session<S> {
     /// reminders that are already past. A clock outside years 1 through 9999
     /// matches nothing while that flag is set. Today is computed once, here.
     pub fn search(&self, query: &Query) -> Result<Vec<ItemSummary<'_>>, CoreError> {
-        let data = &self.unlocked()?.data;
+        let index = &self.unlocked()?.state.index;
         let today = from_unix_secs(self.now_unix().0);
         let needle = fold(query.text.trim());
-        let mut hits: Vec<EntryView<'_>> = data
-            .items
+        let mut hits: Vec<EntryView<'_>> = index
+            .entries
             .iter()
             .map(EntryView::new)
             .filter(|i| match query.view {
@@ -213,7 +205,7 @@ impl<S: VaultStore> Session<S> {
                 }
                 let name = i
                     .category()
-                    .and_then(|c| data.categories.iter().find(|k| k.id() == c))
+                    .and_then(|c| index.categories.iter().find(|k| k.id() == c))
                     .map(|k| k.name());
                 text_matches(&needle, i, name)
             })
@@ -226,7 +218,7 @@ impl<S: VaultStore> Session<S> {
             })
             .collect();
         match query.sort {
-            Sort::TitleAsc => hits.sort_by(|a, b| cmp_view_title_asc(a, b)),
+            Sort::TitleAsc => hits.sort_by(|a, b| cmp_title_asc(a, b)),
             Sort::UpdatedDesc => hits.sort_by(|a, b| {
                 b.updated()
                     .cmp(&a.updated())

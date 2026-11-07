@@ -396,7 +396,7 @@ fn login_edit_keeps_custom_fields() {
     session
         .unlock(&MasterPassword::new(PASSWORD.to_owned()))
         .unwrap();
-    let item = session.item(id).unwrap();
+    let item = session.open_item(id).unwrap();
     assert_eq!(item.title(), RENAMED);
     assert_eq!(item.fields().len(), 1);
     assert_eq!(item.fields()[0].label(), "PIN");
@@ -444,11 +444,13 @@ fn edit_fields_on_a_note_saves_to_disk() {
     session
         .unlock(&MasterPassword::new(PASSWORD.to_owned()))
         .unwrap();
-    let note = session
-        .active_items()
+    let note_id = session
+        .active_entries()
         .unwrap()
-        .find(|item| item.title() == NOTE)
-        .expect("the note");
+        .find(|e| e.title() == NOTE)
+        .expect("the note")
+        .id();
+    let note = session.open_item(note_id).unwrap();
     let labels: Vec<&str> = note.fields().iter().map(CustomField::label).collect();
     assert_eq!(
         labels,

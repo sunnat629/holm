@@ -2,12 +2,11 @@ use super::super::Session;
 use super::super::tests::{
     PW, WRONG, created, created_locked, failures, open_file, pw, secs, stored,
 };
-use crate::body::VaultData;
-use crate::envelope::{self, VaultError};
+use super::open_at;
+use crate::envelope::VaultError;
 use crate::error::CoreError;
 use crate::fields::{CustomField, FieldValue, try_field};
 use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
-use crate::padding::MAX_BODY_LEN;
 use crate::rules::{Field, FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_MULTILINE_SECRET_BYTES};
 use crate::settings::{Settings, SettingsError};
 use crate::store::{MemStore, StoreError};
@@ -100,12 +99,8 @@ fn seed_item(input: ItemInput) -> Item {
     }
 }
 
-fn data_mut(s: &mut S) -> &mut VaultData {
-    &mut s.unlocked_mut().unwrap().data
-}
-
 fn count(s: &S) -> usize {
-    s.unlocked().unwrap().data.items.len()
+    s.stored_count()
 }
 
 fn plain_field(label: &str) -> CustomField {
@@ -195,7 +190,10 @@ fn every_type_survives_save_and_reopen() {
         }
         _ => panic!("type changed"),
     }
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "one two three");
+    assert_eq!(
+        s.reveal_phrase(p, &pw(PW)).unwrap().expose(),
+        "one two three"
+    );
 }
 
 #[test]
@@ -271,12 +269,12 @@ fn empty_phrase_on_update_keeps_phrase() {
     let p = s.add_item(phrase("p", "alpha beta")).unwrap();
     s.update_item(p, phrase("p2", "")).unwrap();
     assert_eq!(s.item(p).unwrap().title(), "p2");
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "alpha beta");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "alpha beta");
     s.update_item(p, phrase("p2", "gamma")).unwrap();
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "gamma");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "gamma");
     s.lock();
     s.unlock(&pw(PW)).unwrap();
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "gamma");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "gamma");
 }
 
 #[test]
@@ -332,7 +330,8 @@ fn active_items_skips_trash_in_stored_order() {
     let b = s.add_item(login("B", "x")).unwrap();
     s.add_item(login("C", "x")).unwrap();
     s.trash(b).unwrap();
-    let titles: Vec<&str> = s.active_items().unwrap().map(Item::title).collect();
+    let items: Vec<Item> = s.active_items().unwrap().collect();
+    let titles: Vec<&str> = items.iter().map(Item::title).collect();
     assert_eq!(titles, ["A", "C"]);
     s.lock();
     assert_eq!(s.active_items().err(), Some(CoreError::Locked));
@@ -374,21 +373,24 @@ fn deleted_forever_secret_absent_from_new_file() {
     let needle = b"EXAMPLE-zq9-unique";
     let (mut s, _) = created();
     let id = s.add_item(login("a", "EXAMPLE-zq9-unique")).unwrap();
-    let (_, plain) = envelope::open(&stored(&s), &pw(PW)).unwrap();
-    assert!(plain.expose().windows(needle.len()).any(|w| w == needle));
-    drop(plain);
+    let state = open_file(&stored(&s), PW);
+    let secret = open_at(&state, 0).unwrap();
+    assert!(
+        matches!(secret.data(), ItemData::Login { password, .. } if password.expose().as_bytes() == needle)
+    );
+    drop(state);
     s.trash(id).unwrap();
     s.delete_forever(id).unwrap();
-    let (_, plain) = envelope::open(&stored(&s), &pw(PW)).unwrap();
-    assert!(!plain.expose().windows(needle.len()).any(|w| w == needle));
-    assert_eq!(open_file(&stored(&s), PW).item_count(), 0);
+    let state = open_file(&stored(&s), PW);
+    assert!(state.index.entries.is_empty() && state.records.is_empty());
+    assert!(!stored(&s).windows(needle.len()).any(|w| w == needle));
 }
 
 #[test]
 fn item_limit() {
     let (mut s, _) = created();
     for _ in 0..MAX_ITEMS {
-        data_mut(&mut s).items.push(seed_item(note("n", "b")));
+        s.seed(seed_item(note("n", "b")));
     }
     assert_eq!(
         s.add_item(note("one more", "b")),
@@ -398,25 +400,10 @@ fn item_limit() {
     assert!(!s.is_dirty());
 }
 
-/// Seeds big logins until fewer than one more fits. Returns the encoded size of
-/// one big login and the ids of the seeded items.
+/// Seeds big logins until fewer than one more fits. Returns the sealed size of one
+/// big login and the ids of the seeded items.
 fn fill_to_the_brim(s: &mut S) -> (usize, Vec<ItemId>) {
-    let base = data_mut(s).encode().unwrap().expose().len();
-    data_mut(s).items.push(seed_item(big_login("probe")));
-    let with_one = data_mut(s).encode().unwrap().expose().len();
-    data_mut(s).items.clear();
-    let size = with_one - base;
-    let n = (MAX_BODY_LEN - base) / size;
-    let mut ids = Vec::new();
-    for i in 0..n {
-        let item = seed_item(big_login(&format!("big {i}")));
-        ids.push(item.id);
-        data_mut(s).items.push(item);
-    }
-    let len = data_mut(s).encode().unwrap().expose().len();
-    assert!(len <= MAX_BODY_LEN);
-    assert!(len + size > MAX_BODY_LEN);
-    (size, ids)
+    s.seed_to_the_brim(|i| seed_item(big_login(&format!("big {i}"))))
 }
 
 #[test]
@@ -518,7 +505,7 @@ fn reveal_phrase_is_gated_and_throttled() {
         Err(CoreError::Throttled { .. })
     ));
     clock.advance(secs(2));
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "alpha beta");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "alpha beta");
 }
 
 #[test]

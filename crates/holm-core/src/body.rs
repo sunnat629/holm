@@ -325,7 +325,7 @@ pub(crate) fn reject_if_newer(version: u16, newest: u16) -> Result<(), BodyError
 }
 
 #[cfg(test)]
-fn encode_v1_for_test(data: &VaultData) -> SecretBuf {
+pub(crate) fn encode_v1_for_test(data: &VaultData) -> SecretBuf {
     use crate::wire::{BodyOutV1, ItemOutV1};
     let out = BodyOutV1 {
         settings: SettingsWire::new(&data.settings),
@@ -337,7 +337,7 @@ fn encode_v1_for_test(data: &VaultData) -> SecretBuf {
 }
 
 #[cfg(test)]
-fn encode_v2_for_test(data: &VaultData) -> Vec<u8> {
+pub(crate) fn encode_v2_for_test(data: &VaultData) -> Vec<u8> {
     let out = BodyOut {
         settings: SettingsWire::new(&data.settings),
         categories: data.categories.iter().map(CategoryOut::new).collect(),
@@ -889,7 +889,7 @@ mod tests {
     mod schema2 {
         use super::*;
         use crate::fields::{FieldKind, FieldValue, parse_date, parse_recovery_codes, try_field};
-        use crate::format::{FORMAT_VERSION, HEADER_LEN};
+        use crate::format::{FORMAT_V1, HEADER_LEN};
         use crate::padding::MAX_BODY_LEN;
         use crate::rules::{
             MAX_CUSTOM_FIELDS, MAX_LABEL_CHARS, MAX_LINE_BYTES, MAX_MULTILINE_SECRET_BYTES,
@@ -1146,7 +1146,7 @@ mod tests {
 
         #[test]
         fn header_untouched() {
-            assert_eq!(FORMAT_VERSION, 1);
+            assert_eq!(FORMAT_V1, 1);
             assert_eq!(HEADER_LEN, 164);
         }
 

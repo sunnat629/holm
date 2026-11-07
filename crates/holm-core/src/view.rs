@@ -5,12 +5,13 @@
 //! A secret comes only from [`crate::session::Session::reveal`],
 //! [`crate::session::Session::open_item`] or the phrase gate.
 //!
-//! The type is permanent: it wraps the stored item whatever shape the session keeps it
-//! in, so callers do not change when the storage does.
+//! The type is permanent: it wraps the stored index entry, so callers do not change when
+//! the storage does. It reads the open index and never opens a record.
 
 use crate::category::CategoryId;
-use crate::fields::{CalendarDate, CustomField, FieldKind, FieldValue, codes_left, is_expiring};
-use crate::item::{Item, ItemData, ItemId, ItemType, Timestamp};
+use crate::fields::{CalendarDate, FieldKind, epoch_day};
+use crate::index::{EntryPublic, FieldEntry, FieldEntryKind, ItemEntry};
+use crate::item::{ItemId, ItemType, Timestamp};
 
 /// The public part of an item, by kind, with presence flags in place of the secrets.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,18 +78,18 @@ pub struct FieldView<'a> {
 }
 
 impl<'a> FieldView<'a> {
-    fn of(position: u8, field: &'a CustomField) -> FieldView<'a> {
-        let detail = match field.value() {
-            FieldValue::Text(t) => FieldDetail::Text(t.as_str()),
-            FieldValue::Date(d) => FieldDetail::Date(*d),
-            FieldValue::Secret(_) => FieldDetail::Secret,
-            FieldValue::MultilineSecret(_) => FieldDetail::MultilineSecret,
-            FieldValue::RecoveryCodes(codes) => FieldDetail::RecoveryCodes {
-                used: codes.iter().map(|c| c.used()).collect(),
-            },
+    fn of(field: &'a FieldEntry) -> FieldView<'a> {
+        let detail = match field.kind() {
+            FieldEntryKind::Text(t) => FieldDetail::Text(t.as_str()),
+            FieldEntryKind::Date(d) => FieldDetail::Date(*d),
+            FieldEntryKind::Secret => FieldDetail::Secret,
+            FieldEntryKind::MultilineSecret => FieldDetail::MultilineSecret,
+            FieldEntryKind::RecoveryCodes { used } => {
+                FieldDetail::RecoveryCodes { used: used.clone() }
+            }
         };
         FieldView {
-            position,
+            position: field.position(),
             label: field.label(),
             expiry: field.expiry(),
             detail,
@@ -146,93 +147,93 @@ impl<'a> FieldView<'a> {
 /// A borrowed view of one item: public fields and presence flags, no secret.
 #[derive(Clone, Copy)]
 pub struct EntryView<'a> {
-    item: &'a Item,
+    entry: &'a ItemEntry,
 }
 
 impl<'a> EntryView<'a> {
-    pub(crate) fn new(item: &'a Item) -> EntryView<'a> {
-        EntryView { item }
+    pub(crate) fn new(entry: &'a ItemEntry) -> EntryView<'a> {
+        EntryView { entry }
     }
 
     /// The item id.
     #[must_use]
     pub fn id(&self) -> ItemId {
-        self.item.id()
+        self.entry.id()
     }
 
     /// The title.
     #[must_use]
     pub fn title(&self) -> &'a str {
-        self.item.title()
+        self.entry.title()
     }
 
     /// The category, if any.
     #[must_use]
     pub fn category(&self) -> Option<CategoryId> {
-        self.item.category()
+        self.entry.category()
     }
 
     /// Whether the item is a favourite.
     #[must_use]
     pub fn favourite(&self) -> bool {
-        self.item.favourite()
+        self.entry.favourite()
     }
 
     /// When the item was created.
     #[must_use]
     pub fn created(&self) -> Timestamp {
-        self.item.created()
+        self.entry.created()
     }
 
     /// When the item was last changed.
     #[must_use]
     pub fn updated(&self) -> Timestamp {
-        self.item.updated()
+        self.entry.updated()
     }
 
     /// When the item was moved to the trash, if it was.
     #[must_use]
     pub fn trashed(&self) -> Option<Timestamp> {
-        self.item.trashed()
+        self.entry.trashed()
     }
 
     /// The kind of this item.
     #[must_use]
     pub fn item_type(&self) -> ItemType {
-        self.item.item_type()
+        self.entry.item_type()
     }
 
     /// The public fields and presence flags, by kind.
     #[must_use]
     pub fn public(&self) -> PublicView<'a> {
-        match self.item.data() {
-            ItemData::Login {
+        match self.entry.public() {
+            EntryPublic::Login {
                 username,
-                password,
                 urls,
-                notes,
+                has_password,
+                has_notes,
             } => PublicView::Login {
                 username: username.as_str(),
                 urls: urls.iter().map(|u| u.as_str()).collect(),
-                has_password: !password.is_empty(),
-                has_notes: !notes.is_empty(),
+                has_password: *has_password,
+                has_notes: *has_notes,
             },
-            ItemData::CryptoAddress {
+            EntryPublic::CryptoAddress {
                 chain,
-                address,
-                memo,
-                notes,
+                has_address,
+                has_memo,
+                has_notes,
             } => PublicView::CryptoAddress {
                 chain: chain.as_str(),
-                has_address: !address.is_empty(),
-                has_memo: !memo.is_empty(),
-                has_notes: !notes.is_empty(),
+                has_address: *has_address,
+                has_memo: *has_memo,
+                has_notes: *has_notes,
             },
-            ItemData::RecoveryPhrase { notes, .. } => PublicView::RecoveryPhrase {
-                has_notes: !notes.is_empty(),
+            EntryPublic::RecoveryPhrase { has_notes } => PublicView::RecoveryPhrase {
+                has_notes: *has_notes,
             },
-            ItemData::SecureNote { body } => PublicView::SecureNote {
-                has_body: !body.is_empty(),
+            EntryPublic::SecureNote { has_body } => PublicView::SecureNote {
+                has_body: *has_body,
             },
         }
     }
@@ -240,36 +241,40 @@ impl<'a> EntryView<'a> {
     /// The custom fields in their stored order.
     #[must_use]
     pub fn fields(&self) -> Vec<FieldView<'a>> {
-        (0u8..)
-            .zip(self.item.fields())
-            .map(|(position, field)| FieldView::of(position, field))
-            .collect()
+        self.entry.fields().iter().map(FieldView::of).collect()
     }
 
     /// The soonest reminder date over all fields.
     #[must_use]
     pub fn soonest_expiry(&self) -> Option<CalendarDate> {
-        self.item
+        self.entry
             .fields()
             .iter()
-            .filter_map(CustomField::expiry)
+            .filter_map(FieldEntry::expiry)
             .min()
     }
 
     /// Whether the soonest reminder falls on or before `today` plus `within_days`.
+    /// Days are UTC dates; `within_days` is widened to `i64` so a large window cannot wrap.
     #[must_use]
     pub fn is_expiring(&self, today: CalendarDate, within_days: u32) -> bool {
-        is_expiring(self.item.fields(), today, within_days)
+        let Some(soonest) = self.soonest_expiry() else {
+            return false;
+        };
+        let limit = i64::from(epoch_day(today)) + i64::from(within_days);
+        i64::from(epoch_day(soonest)) <= limit
     }
 
     /// The smallest count of unused codes over all recovery codes fields.
     #[must_use]
     pub fn fewest_codes_left(&self) -> Option<usize> {
-        self.item
+        self.entry
             .fields()
             .iter()
-            .filter_map(|f| match f.value() {
-                FieldValue::RecoveryCodes(codes) => Some(codes_left(codes).0),
+            .filter_map(|f| match f.kind() {
+                FieldEntryKind::RecoveryCodes { used } => {
+                    Some(used.iter().filter(|u| !**u).count())
+                }
                 _ => None,
             })
             .min()

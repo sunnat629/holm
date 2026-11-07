@@ -351,7 +351,11 @@ impl VaultView {
                         LoginForm::from_input(id, input, messages::TOO_LARGE_TO_SAVE),
                     )),
                     (None, Some(id)) => {
-                        match session.item(id).ok().and_then(LoginForm::from_item) {
+                        match session
+                            .open_item(id)
+                            .ok()
+                            .and_then(|i| LoginForm::from_item(&i))
+                        {
                             Some(mut f) => {
                                 f.error = Some(messages::TOO_LARGE_TO_SAVE);
                                 DetailMode::Edit(Box::new(f))
@@ -834,7 +838,7 @@ impl VaultView {
         };
         let id = form.id;
         let (notes, urls) = id
-            .and_then(|id| session.and_then(|s| s.item(id).ok()))
+            .and_then(|id| session.and_then(|s| s.open_item(id).ok()))
             .and_then(|item| match item.data() {
                 ItemData::Login { urls, notes, .. } => Some((
                     SecretText::new(notes.expose().to_owned()),
@@ -890,17 +894,17 @@ impl VaultView {
     ) -> Option<Job> {
         let item = self
             .selected
-            .and_then(|id| session.and_then(|s| s.item(id).ok()));
+            .and_then(|id| session.and_then(|s| s.open_item(id).ok()));
         let Some(item) = item else {
             ui.label(messages::SELECT_OR_ADD);
             return None;
         };
-        match show_item(ui, item, &mut self.item, now, throttle, io) {
+        match show_item(ui, &item, &mut self.item, now, throttle, io) {
             ItemAction::None => None,
             ItemAction::Job(job) => Some(job),
             ItemAction::Edit => {
                 self.item = ItemView::new();
-                match LoginForm::from_item(item) {
+                match LoginForm::from_item(&item) {
                     Some(form) => {
                         self.status = None;
                         self.mode = DetailMode::Edit(Box::new(form));

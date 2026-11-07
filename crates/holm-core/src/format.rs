@@ -28,9 +28,9 @@ use crate::padding::PAD_BLOCK;
 
 /// The eight magic bytes that start every vault file.
 pub const MAGIC: [u8; 8] = *b"HOLMVLT\0";
-/// The format version this code writes. Until the session moves to format v2
-/// it stays 1; [`Header::parse`] compares against [`FORMAT_V1`] either way.
-pub const FORMAT_VERSION: u16 = 1;
+/// The format version this code writes (format v2). A format v1 file is read and
+/// migrated; [`Header::parse`] reads v1 only, [`parse_any`] reads both.
+pub const FORMAT_VERSION: u16 = 2;
 /// Format version 1: header and one sealed body.
 pub const FORMAT_V1: u16 = 1;
 /// Format version 2: header, sealed index, per-item sealed records.
@@ -249,7 +249,7 @@ impl Header {
     pub fn encode(&self) -> [u8; HEADER_LEN] {
         let mut out = [0u8; HEADER_LEN];
         let kb = encode_key_block(
-            FORMAT_VERSION,
+            FORMAT_V1,
             &self.kdf,
             &self.salt,
             &self.wrap_nonce,

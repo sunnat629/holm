@@ -182,6 +182,17 @@ pub(crate) fn take_slot(secrets: RecordSecrets, slot: SecretSlot) -> Result<Secr
     }
 }
 
+/// Moves the recovery phrase out of the record; everything else drops (and is wiped) here.
+///
+/// # Errors
+/// [`CoreError::NotAPhrase`] if the record is of another kind.
+pub(crate) fn take_phrase(secrets: RecordSecrets) -> Result<SecretText, CoreError> {
+    match secrets.data {
+        SealedData::RecoveryPhrase { phrase, .. } => Ok(phrase.into_secret()),
+        _ => Err(CoreError::NotAPhrase),
+    }
+}
+
 /// Takes an item apart into its index entry and its record. The entry has no sealed
 /// record yet ([`RecordRef::UNSEALED`]). Consumes `item`: every secret moves, none is
 /// copied.

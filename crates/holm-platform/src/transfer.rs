@@ -127,7 +127,10 @@ pub fn export_plain<S: VaultStore>(
 ) -> Result<usize, TransferError> {
     refuse_existing(dest)?;
     let csv = session.export_csv(password).map_err(TransferError::Core)?;
-    let count = session.active_items().map_err(TransferError::Core)?.count();
+    let count = session
+        .active_entries()
+        .map_err(TransferError::Core)?
+        .count();
     write_new_private_file(dest, csv.expose()).map_err(|e| match e {
         StoreError::AlreadyExists => TransferError::Exists,
         _ => TransferError::WriteFailed,

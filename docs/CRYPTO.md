@@ -258,8 +258,9 @@ run the decoder on hostile bytes with a 64 MiB per-allocation limit.
 ## The vault body (schema v3)
 
 Holm writes schema 3 and reads schemas 1, 2 and 3. The header, the envelope, the KDF and
-the padding do not change. `FORMAT_VERSION` stays 1 and the header stays 164 bytes.
-Only the bytes inside the padding change.
+the padding do not change. This is the body of format v1. Format v2 (`FORMAT_VERSION` 2, a 172-byte header) keeps the
+same schemas only to read and migrate a v1 vault; v2 itself stores an index (schema 4) and
+one sealed record per item. See "Format v2" in the Phase B design.
 
 - The first two bytes are the body version, a `u16` little-endian. `BODY_SCHEMA_VERSION`
   is 3, `BODY_SCHEMA_V2` is 2 and `BODY_SCHEMA_V1` is 1. The `postcard` encoding follows.

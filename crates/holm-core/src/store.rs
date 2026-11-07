@@ -339,7 +339,17 @@ mod tests {
         for ok in ["a", "v1-2026", "0", &"a".repeat(32)] {
             assert_eq!(check_backup_tag(ok), Ok(()), "{ok}");
         }
-        for bad in ["", "A", "a.b", "a/b", "..", "a b", "a\\b", "é", &"a".repeat(33)] {
+        for bad in [
+            "",
+            "A",
+            "a.b",
+            "a/b",
+            "..",
+            "a b",
+            "a\\b",
+            "é",
+            &"a".repeat(33),
+        ] {
             assert_eq!(
                 check_backup_tag(bad),
                 Err(StoreError::Io(std::io::ErrorKind::InvalidInput)),
@@ -355,7 +365,10 @@ mod tests {
         assert_eq!(s.remove_backup_copy("t"), Err(StoreError::NotFound));
         s.keep_backup_copy("t", b"one").unwrap();
         assert_eq!(s.keep_backup_copy("t", b"one"), Ok(()));
-        assert_eq!(s.keep_backup_copy("t", b"two"), Err(StoreError::AlreadyExists));
+        assert_eq!(
+            s.keep_backup_copy("t", b"two"),
+            Err(StoreError::AlreadyExists)
+        );
         assert_eq!(s.backups["t"], b"one");
         assert_eq!(s.backup_copy_exists("t"), Ok(true));
         s.fail_backup_copy = Some(StoreError::Io(std::io::ErrorKind::StorageFull));
@@ -364,7 +377,10 @@ mod tests {
             Err(StoreError::Io(std::io::ErrorKind::StorageFull))
         );
         assert!(!s.backups.contains_key("u"));
-        assert_eq!(s.keep_backup_copy("T", b"x").err(), Some(StoreError::Io(std::io::ErrorKind::InvalidInput)));
+        assert_eq!(
+            s.keep_backup_copy("T", b"x").err(),
+            Some(StoreError::Io(std::io::ErrorKind::InvalidInput))
+        );
         s.remove_backup_copy("t").unwrap();
         assert_eq!(s.backup_copy_exists("t"), Ok(false));
     }

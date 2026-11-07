@@ -15,7 +15,7 @@ use std::cell::RefCell;
 
 use holm_core::clock::Clock;
 use holm_core::import::{ImportFormat, MAX_IMPORT_ROWS, parse};
-use holm_core::item::{Item, ItemData, Timestamp};
+use holm_core::item::{ItemData, Timestamp};
 use holm_core::session::Session;
 use holm_core::store::{StoreError, VaultStore};
 use holm_crypto::MasterPassword;
@@ -407,12 +407,14 @@ fn write_csv(case: usize, rows: &[Row]) -> String {
 
 /// Compares one stored item with the row it came from.
 fn check_item(s: &mut Session<Mem>, item_title: &str, r: &Row) -> Result<(), TestCaseError> {
-    let item: &Item = s
-        .active_items()
+    let id = s
+        .active_entries()
         .unwrap()
-        .find(|i| i.title() == item_title)
-        .expect("imported item");
-    let id = item.id();
+        .find(|e| e.title() == item_title)
+        .expect("imported item")
+        .id();
+    let item = s.open_item(id).unwrap();
+    let item = &item;
     prop_assert_eq!(item.favourite(), r.favourite);
     prop_assert_eq!(item.created(), Timestamp(r.created.clamp(0, NOW)));
     prop_assert_eq!(item.updated(), Timestamp(r.updated.clamp(0, NOW)));
@@ -469,7 +471,7 @@ fn check_item(s: &mut Session<Mem>, item_title: &str, r: &Row) -> Result<(), Tes
             let shown = s
                 .reveal_phrase(id, &MasterPassword::new(PW.to_owned()))
                 .unwrap();
-            prop_assert_eq!(shown, phrase.as_str());
+            prop_assert_eq!(shown.expose(), phrase.as_str());
         }
         (ItemData::SecureNote { body }, Kind::Note { body: b }) => {
             prop_assert_eq!(body.expose(), b.as_str());

@@ -58,7 +58,7 @@ fn counts(path: &Path) -> (usize, usize) {
         })
         .unwrap()
         .len();
-    (s.active_items().unwrap().count(), trashed)
+    (s.active_entries().unwrap().count(), trashed)
 }
 
 #[test]

@@ -389,9 +389,15 @@ fn check_fields(got: &[CustomField], want: &[Field]) -> Result<(), TestCaseError
 
 /// Finds the active item titled `item_title` and compares it with `e`.
 fn check_entry(s: &Session<Mem>, item_title: &str, e: &Entry) -> Result<(), TestCaseError> {
-    let Some(item) = s.active_items().unwrap().find(|i| i.title() == item_title) else {
+    let Some(id) = s
+        .active_entries()
+        .unwrap()
+        .find(|e| e.title() == item_title)
+        .map(|e| e.id())
+    else {
         return Err(TestCaseError::fail("imported item not found"));
     };
+    let item = s.open_item(id).unwrap();
     match item.data() {
         ItemData::Login { password, .. } => {
             prop_assert!(

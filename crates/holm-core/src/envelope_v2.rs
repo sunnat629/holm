@@ -23,6 +23,7 @@ use core::fmt;
 use holm_crypto::aead::{self, NONCE_LEN, Nonce, TAG_LEN};
 use holm_crypto::kdf::{KdfParams, derive_kek};
 use holm_crypto::{MasterPassword, SecretKey, random_array};
+use subtle::ConstantTimeEq;
 
 use crate::body::BodyError;
 use crate::envelope::{VaultError, dek_from_unwrapped};
@@ -57,7 +58,8 @@ impl KeysV2 {
         self.header.key_block()
     }
 
-    /// The current header.
+    /// The current header. Tests only.
+    #[cfg(test)]
     pub(crate) fn header(&self) -> &HeaderV2 {
         &self.header
     }
@@ -349,14 +351,91 @@ pub(crate) fn open_v2_with_kek(
     let dek = dek_from_unwrapped(&raw)?;
     drop(raw);
 
-    let padded = aead::open(&dek, &header.index_nonce, head, index_ct).map_err(VaultError::from)?;
+    let (index, records) = open_index_and_records(&dek, &header, head, index_ct, region)?;
+    Ok((KeysV2 { dek, header }, index, records))
+}
+
+/// Opens the index under `dek` (the whole header is its associated data), then checks the
+/// framing and copies the record ciphertexts out.
+fn open_index_and_records(
+    dek: &SecretKey,
+    header: &HeaderV2,
+    head: &[u8],
+    index_ct: &[u8],
+    region: &[u8],
+) -> Result<(Index, Vec<SealedRecord>), CoreError> {
+    let padded = aead::open(dek, &header.index_nonce, head, index_ct).map_err(VaultError::from)?;
     let plaintext = unpad(padded.expose())?;
     drop(padded);
     let index = Index::decode(plaintext.expose())?;
     drop(plaintext);
-
     let records = split_region(&index, header.records_len, region)?;
-    Ok((KeysV2 { dek, header }, index, records))
+    Ok((index, records))
+}
+
+/// Reads freshly built file bytes back with the key already in memory, with no password
+/// and no KEK: parse, open the index, check the framing. This is the migration
+/// self-check (spec 4): the bytes about to replace the only copy must open.
+///
+/// Returns the index and records as read, so the caller can compare them with what it
+/// meant to write.
+///
+/// # Errors
+/// Any error [`open_v2_with_kek`] gives after the unwrap, or
+/// [`VaultError::Crypto`] if the header read back is not the one in `keys`.
+pub(crate) fn read_back(
+    keys: &KeysV2,
+    file: &[u8],
+) -> Result<(Index, Vec<SealedRecord>), CoreError> {
+    let ParsedHeader::V2(header, index_ct, region) = parse_any(file).map_err(VaultError::from)?
+    else {
+        return Err(VaultError::Format(FormatError::UnsupportedVersion(1)).into());
+    };
+    if header != keys.header {
+        return Err(VaultError::Crypto.into());
+    }
+    let head = file
+        .get(..HEADER_LEN_V2)
+        .ok_or(VaultError::Format(FormatError::TooShort))?;
+    open_index_and_records(&keys.dek, &header, head, index_ct, region)
+}
+
+/// True if `kek` unwraps the data key held in `keys`: the wrap in the header is the one
+/// for this key and this KEK. Constant-time comparison.
+pub(crate) fn wrap_opens_to(keys: &KeysV2, kek: &SecretKey) -> bool {
+    let header = &keys.header;
+    let encoded = header.encode();
+    let Some(aad) = encoded.get(..WRAP_AAD_LEN) else {
+        return false;
+    };
+    let Ok(raw) = aead::open(kek, &header.wrap_nonce, aad, &header.wrapped_dek) else {
+        return false;
+    };
+    let Ok(candidate) = dek_from_unwrapped(&raw) else {
+        return false;
+    };
+    bool::from(
+        candidate
+            .expose()
+            .as_slice()
+            .ct_eq(keys.dek.expose().as_slice()),
+    )
+}
+
+/// Derives the KEK again from `password` and the header and checks it unwraps the data
+/// key held in `keys`.
+///
+/// # Errors
+/// [`VaultError::WrongPasswordOrCorrupt`] if the password is wrong;
+/// [`VaultError::Crypto`] or [`VaultError::OutOfMemory`] if key derivation fails.
+pub(crate) fn verify_password(keys: &KeysV2, password: &MasterPassword) -> Result<(), VaultError> {
+    let header = &keys.header;
+    let kek = derive_kek(password, &header.salt, &header.kdf)?;
+    if wrap_opens_to(keys, &kek) {
+        Ok(())
+    } else {
+        Err(VaultError::WrongPasswordOrCorrupt)
+    }
 }
 
 /// Checks the framing against the open index and copies each record's ciphertext out.

@@ -19,6 +19,7 @@ use holm_crypto::kdf::{KdfParams, derive_kek};
 use holm_crypto::{
     CryptoError, KdfParamsError, MasterPassword, SecretBuf, SecretKey, random_array,
 };
+#[cfg(test)]
 use subtle::ConstantTimeEq;
 
 use crate::format::{FormatError, HEADER_LEN, Header, WRAP_AAD_LEN};
@@ -181,6 +182,7 @@ pub(crate) fn create_with_kek(
 /// password or any change to the file; [`VaultError::BadPadding`] for an
 /// authenticated body with malformed padding; [`VaultError::Crypto`] if key
 /// derivation fails.
+#[cfg(test)]
 pub(crate) fn open(
     file: &[u8],
     password: &MasterPassword,
@@ -265,6 +267,7 @@ pub fn rekey(
 /// # Errors
 /// [`VaultError::WrongPasswordOrCorrupt`] if the password is wrong;
 /// [`VaultError::Crypto`] if key derivation fails.
+#[cfg(test)]
 pub(crate) fn verify_password(
     keys: &VaultKeys,
     password: &MasterPassword,

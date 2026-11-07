@@ -26,13 +26,14 @@ use zeroize::Zeroizing;
 use crate::category::Category;
 use crate::error::CoreError;
 use crate::fields::{FieldKind, FieldValue, codes_to_cell, format_date};
-use crate::item::{Item, ItemData};
+use crate::item::{Item, ItemData, ItemId};
 use crate::plain::{ROW_END, json_string_len, push_json_string, push_quoted, quoted_len};
 use crate::rules::MAX_CUSTOM_FIELDS;
 use crate::search::cmp_title_asc;
 use crate::session::Session;
 use crate::store::VaultStore;
 use crate::text::Text;
+use crate::view::EntryView;
 
 /// Shown before every export, before the master password is asked for.
 pub const EXPORT_WARNING: &str = "This file will hold every password in this vault in plain text. Anyone who can read it can use them. Save it only on an encrypted disk, do not open it in a spreadsheet app, and delete it as soon as you are done.";
@@ -113,8 +114,11 @@ impl<S: VaultStore> Session<S> {
     /// or [`CoreError::Vault`].
     pub fn export_csv(&mut self, password: &MasterPassword) -> Result<SecretBuf, CoreError> {
         self.check_password(password)?;
-        let (items, categories) = listed(self)?;
-        Ok(write_csv(&items, categories))
+        let (ids, categories) = listed(self)?;
+        write_csv_with(ids.len(), categories, &mut |i, f| {
+            f(&self.open_item(ids[i])?);
+            Ok(())
+        })
     }
 
     /// Every item outside the Trash as one JSON array of flat string objects, after
@@ -129,70 +133,115 @@ impl<S: VaultStore> Session<S> {
     /// or [`CoreError::Vault`].
     pub fn export_json(&mut self, password: &MasterPassword) -> Result<SecretBuf, CoreError> {
         self.check_password(password)?;
-        let (items, categories) = listed(self)?;
-        Ok(write_json(&items, categories))
+        let (ids, categories) = listed(self)?;
+        write_json_with(ids.len(), categories, &mut |i, f| {
+            f(&self.open_item(ids[i])?);
+            Ok(())
+        })
     }
 }
 
-/// Items outside the Trash, in list order, and the category list they name.
-fn listed<S: VaultStore>(session: &Session<S>) -> Result<(Vec<&Item>, &[Category]), CoreError> {
-    let data = &session.unlocked()?.data;
-    let mut items: Vec<&Item> = data.items.iter().filter(|i| i.trashed.is_none()).collect();
-    items.sort_by(|a, b| cmp_title_asc(a, b));
-    Ok((items, &data.categories))
+/// Ids of the items outside the Trash, in list order, and the category list they name.
+/// Only public data is read here; no record is opened.
+fn listed<S: VaultStore>(session: &Session<S>) -> Result<(Vec<ItemId>, &[Category]), CoreError> {
+    let index = &session.unlocked()?.state.index;
+    let mut views: Vec<EntryView<'_>> = index
+        .entries
+        .iter()
+        .filter(|e| e.trashed.is_none())
+        .map(EntryView::new)
+        .collect();
+    views.sort_by(|a, b| cmp_title_asc(a, b));
+    Ok((views.iter().map(EntryView::id).collect(), &index.categories))
 }
 
-/// Writes the header and one row per item, in the order given.
-pub(crate) fn write_csv(items: &[&Item], categories: &[Category]) -> SecretBuf {
-    let mut text = build(items, categories);
+/// Hands item `i` to the callback it is given, or fails. The export opens one item at a
+/// time, so only one item's secrets are resident (apart from the output buffer) and each
+/// is wiped when the callback returns.
+type Source<'a> = dyn FnMut(usize, &mut dyn FnMut(&Item)) -> Result<(), CoreError> + 'a;
+
+/// Writes the header and one row per item, in the order given. Fails on the first item
+/// the source cannot produce; nothing is returned then.
+pub(crate) fn write_csv_with(
+    count: usize,
+    categories: &[Category],
+    source: &mut Source<'_>,
+) -> Result<SecretBuf, CoreError> {
+    let mut text = build(count, categories, source)?;
     // Moves the bytes out without a copy; the emptied `String` left behind owns nothing.
-    SecretBuf::from_vec(core::mem::take(&mut *text).into_bytes())
+    Ok(SecretBuf::from_vec(
+        core::mem::take(&mut *text).into_bytes(),
+    ))
 }
 
 /// Writes one JSON array of flat objects, in the order given.
-pub(crate) fn write_json(items: &[&Item], categories: &[Category]) -> SecretBuf {
-    let mut text = build_json(items, categories);
-    SecretBuf::from_vec(core::mem::take(&mut *text).into_bytes())
+pub(crate) fn write_json_with(
+    count: usize,
+    categories: &[Category],
+    source: &mut Source<'_>,
+) -> Result<SecretBuf, CoreError> {
+    let mut text = build_json(count, categories, source)?;
+    Ok(SecretBuf::from_vec(
+        core::mem::take(&mut *text).into_bytes(),
+    ))
 }
 
 /// The CSV text in a buffer allocated once at its final size.
-fn build(items: &[&Item], categories: &[Category]) -> Zeroizing<String> {
-    // Measure: every quoted cell, the commas between cells and the row ends.
+fn build(
+    count: usize,
+    categories: &[Category],
+    source: &mut Source<'_>,
+) -> Result<Zeroizing<String>, CoreError> {
+    // Measure: every quoted cell, the commas between cells and the row ends. Each item
+    // is opened, measured and dropped.
     let mut total = row_len(&EXPORT_COLUMNS);
-    for item in items {
-        total = total.saturating_add(with_cells(item, categories, row_len));
+    for i in 0..count {
+        source(i, &mut |item| {
+            total = total.saturating_add(with_cells(item, categories, row_len));
+        })?;
     }
 
-    // Fill: one allocation, never grown, so no unwiped copy is left behind.
+    // Fill: one allocation, never grown, so no unwiped copy is left behind. The items
+    // are opened a second time.
     let mut out = Zeroizing::new(String::with_capacity(total));
     push_row(&mut out, &EXPORT_COLUMNS);
-    for item in items {
-        with_cells(item, categories, |cells| push_row(&mut out, cells));
+    for i in 0..count {
+        source(i, &mut |item| {
+            with_cells(item, categories, |cells| push_row(&mut out, cells));
+        })?;
     }
     assert_eq!(out.len(), total, "export measure and fill disagree");
-    out
+    Ok(out)
 }
 
 /// The JSON text in a buffer allocated once at its final size.
-fn build_json(items: &[&Item], categories: &[Category]) -> Zeroizing<String> {
+fn build_json(
+    count: usize,
+    categories: &[Category],
+    source: &mut Source<'_>,
+) -> Result<Zeroizing<String>, CoreError> {
     let mut total: usize = 2;
-    for (i, item) in items.iter().enumerate() {
+    for i in 0..count {
         if i > 0 {
             total = total.saturating_add(1);
         }
-        total = total.saturating_add(with_cells(item, categories, json_row_len));
+        source(i, &mut |item| {
+            total = total.saturating_add(with_cells(item, categories, json_row_len));
+        })?;
     }
     let mut out = Zeroizing::new(String::with_capacity(total));
     push_fitting(&mut out, "[");
-    for (i, item) in items.iter().enumerate() {
+    for i in 0..count {
         if i > 0 {
             push_fitting(&mut out, ",");
         }
-        with_cells(item, categories, |cells| push_json_row(&mut out, cells));
+        source(i, &mut |item| {
+            with_cells(item, categories, |cells| push_json_row(&mut out, cells));
+        })?;
     }
     push_fitting(&mut out, "]");
     assert_eq!(out.len(), total, "export measure and fill disagree");
-    out
+    Ok(out)
 }
 
 /// The bytes [`push_row`] writes for `cells`.

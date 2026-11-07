@@ -351,44 +351,10 @@ impl CustomField {
         }
     }
 
-    /// A second, independent copy: every secret goes into a new wiping allocation.
-    /// For `open_item` only; no field rule runs, since the source was already valid.
-    pub(crate) fn duplicate(&self) -> CustomField {
-        let value = match &self.value {
-            FieldValue::Text(t) => FieldValue::Text(Text::new(t.as_str().to_owned())),
-            FieldValue::Date(d) => FieldValue::Date(*d),
-            FieldValue::Secret(s) => FieldValue::Secret(SecretText::new(s.expose().to_owned())),
-            FieldValue::MultilineSecret(s) => {
-                FieldValue::MultilineSecret(SecretText::new(s.expose().to_owned()))
-            }
-            FieldValue::RecoveryCodes(codes) => FieldValue::RecoveryCodes(
-                codes
-                    .iter()
-                    .map(|c| {
-                        RecoveryCode::new(SecretText::new(c.code().expose().to_owned()), c.used())
-                    })
-                    .collect(),
-            ),
-        };
-        CustomField {
-            label: Text::new(self.label.as_str().to_owned()),
-            value,
-            expiry: self.expiry,
-        }
-    }
-
     /// Takes the field apart, moving every value out.
     #[allow(dead_code)] // used by the record split in B9
     pub(crate) fn into_parts(self) -> (Text, FieldValue, Option<CalendarDate>) {
         (self.label, self.value, self.expiry)
-    }
-
-    /// The codes of a recovery codes field, to mark one used.
-    pub(crate) fn codes_mut(&mut self) -> Option<&mut Vec<RecoveryCode>> {
-        match &mut self.value {
-            FieldValue::RecoveryCodes(codes) => Some(codes),
-            _ => None,
-        }
     }
 
     /// The display label.

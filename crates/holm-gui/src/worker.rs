@@ -299,7 +299,7 @@ pub fn spawn(
                     // A wrong password counts toward the throttle inside the core.
                     let result = session
                         .reveal_phrase(id, &password)
-                        .map(|words| phrase = Some(SecretText::new(words.to_owned())));
+                        .map(|words| phrase = Some(words));
                     drop(password);
                     result
                 }
@@ -578,7 +578,7 @@ mod tests {
         assert_eq!(done.kind, JobKind::Update);
         assert_eq!(done.result, Ok(()));
         assert_eq!(done.added, None);
-        assert_eq!(done.session.item(id).unwrap().title(), "Renamed");
+        assert_eq!(done.session.open_item(id).unwrap().title(), "Renamed");
 
         let done = run(done.session, Job::Save);
         assert_eq!(done.kind, JobKind::Save);
@@ -617,7 +617,7 @@ mod tests {
         assert!(done.returned.is_none());
         assert!(!done.session.is_dirty(), "the fields are saved");
         {
-            let item = done.session.item(id).unwrap();
+            let item = done.session.open_item(id).unwrap();
             assert_eq!(item.fields().len(), 1);
             assert_eq!(item.fields()[0].label(), "PIN");
             assert!(matches!(
@@ -627,10 +627,8 @@ mod tests {
         }
 
         // An edit that sends the stored fields back keeps them.
-        let kept = done
-            .session
-            .item(id)
-            .unwrap()
+        let opened = done.session.open_item(id).unwrap();
+        let kept = opened
             .fields()
             .iter()
             .map(|f| copy_field(f).unwrap())
@@ -640,7 +638,7 @@ mod tests {
         let done = run(done.session, Job::Update(id, input));
         assert_eq!(done.result, Ok(()));
         assert!(!done.session.is_dirty());
-        let item = done.session.item(id).unwrap();
+        let item = done.session.open_item(id).unwrap();
         assert_eq!(item.title(), "Renamed");
         assert_eq!(item.fields().len(), 1, "an edit never drops a stored field");
         assert!(matches!(

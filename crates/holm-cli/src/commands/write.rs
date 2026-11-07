@@ -491,7 +491,12 @@ fn add_field(
     }
     let value = read_value(kind, field_value, term)?;
     let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
-    let mut fields = copy_fields(session.open_item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     let end = fields.len();
     insert_field(&mut fields, end, field).map_err(CliError::Field)?;
     Ok(fields)
@@ -525,7 +530,12 @@ fn set_field(
         ExpiryEdit::Set(date) => Some(date),
     };
     let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
-    let mut fields = copy_fields(session.open_item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     replace_at(&mut fields, index, field)?;
     Ok(fields)
 }
@@ -552,7 +562,12 @@ fn remove_at(
     if index >= field_len(session, id)? {
         return Err(CliError::Field(FieldError::NoSuchIndex));
     }
-    let mut fields = copy_fields(session.open_item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     remove_field(&mut fields, index).map_err(CliError::Field)?;
     Ok(fields)
 }
@@ -569,7 +584,12 @@ fn move_at(
     if from >= len || to >= len {
         return Err(CliError::Field(FieldError::NoSuchIndex));
     }
-    let mut fields = copy_fields(session.open_item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     move_field(&mut fields, from, to).map_err(CliError::Field)?;
     Ok(fields)
 }
