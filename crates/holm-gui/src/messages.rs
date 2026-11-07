@@ -97,8 +97,13 @@ pub const TOO_LARGE_TO_SAVE: &str =
 pub const ITEM_DAMAGED: &str =
     "This item is damaged and cannot be opened. The rest of the vault is fine.";
 /// Moving the vault to the current file format failed.
-pub const MIGRATION_FAILED: &str =
-    "Holm could not move this vault to the new file format. Nothing was changed.";
+pub const MIGRATION_FAILED: &str = "Holm could not move this vault to the new file format. Nothing was changed. If a leftover copy ending in .bak sits next to the vault, remove it, then try again.";
+/// An item was edited as many times as its record counter allows.
+pub const ITEM_EDIT_LIMIT: &str = "This item has been changed too many times to change again. Add a new item with the same details and delete this one.";
+/// Opening one item failed for a reason other than damage.
+pub const ITEM_OPEN_FAILED: &str = "Holm could not open this item. Lock the vault and try again.";
+/// Hint under the Text kind in the custom field editor.
+pub const TEXT_FIELD_HINT: &str = "Use a Secret field for sensitive values.";
 /// The change is in memory but not on disk.
 pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on disk yet.";
 /// The stored password is longer than the edit form can hold.
@@ -269,7 +274,7 @@ const LABELS: [&str; 8] = [
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 70] = [
+const ALL: [&str; 73] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -301,6 +306,9 @@ const ALL: [&str; 70] = [
     NOT_SAVED,
     ITEM_DAMAGED,
     MIGRATION_FAILED,
+    ITEM_EDIT_LIMIT,
+    ITEM_OPEN_FAILED,
+    TEXT_FIELD_HINT,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
     CLIPBOARD_CHANGED,
@@ -428,8 +436,21 @@ pub fn save_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
         CoreError::DamagedItem(_) => ITEM_DAMAGED,
+        CoreError::GenerationExhausted(_) => ITEM_EDIT_LIMIT,
         CoreError::MigrationFailed => MIGRATION_FAILED,
         _ => NOT_SAVED,
+    }
+}
+
+/// The line for a failed item open (edit, reveal, copy): damage and the edit limit get
+/// their own lines, so a damaged item is never shown as "select or add".
+#[must_use]
+pub fn item_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
+        CoreError::GenerationExhausted(_) => ITEM_EDIT_LIMIT,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
+        _ => ITEM_OPEN_FAILED,
     }
 }
 
@@ -452,6 +473,7 @@ pub fn import_parse_error(e: &ImportError) -> &'static str {
 #[must_use]
 pub fn import_apply_error(e: &CoreError, items_added: bool) -> &'static str {
     match e {
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
         CoreError::Vault(VaultError::TooLargeToSave) | CoreError::TooManyItems => IMPORT_NOT_ADDED,
         CoreError::Store(_) | CoreError::Vault(_) => IMPORT_UNSAVED,
         _ if items_added => IMPORT_UNSAVED,
@@ -465,6 +487,7 @@ pub fn export_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::WrongPassword => EXPORT_WRONG_PASSWORD,
         CoreError::Throttled { .. } => EXPORT_THROTTLED,
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
         _ => EXPORT_FAILED,
     }
 }

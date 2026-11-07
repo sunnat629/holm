@@ -350,19 +350,19 @@ impl VaultView {
                     (Some(input), id @ Some(_)) => DetailMode::Edit(Box::new(
                         LoginForm::from_input(id, input, messages::TOO_LARGE_TO_SAVE),
                     )),
-                    (None, Some(id)) => {
-                        match session
-                            .open_item(id)
-                            .ok()
-                            .and_then(|i| LoginForm::from_item(&i))
-                        {
+                    (None, Some(id)) => match session.open_item(id) {
+                        Ok(item) => match LoginForm::from_item(&item) {
                             Some(mut f) => {
                                 f.error = Some(messages::TOO_LARGE_TO_SAVE);
                                 DetailMode::Edit(Box::new(f))
                             }
                             None => DetailMode::View,
+                        },
+                        Err(e) => {
+                            self.status = Some(messages::item_error(&e));
+                            DetailMode::View
                         }
-                    }
+                    },
                     (_, None) => DetailMode::Empty,
                 };
             }
@@ -837,19 +837,33 @@ impl VaultView {
             return None;
         };
         let id = form.id;
-        let (notes, urls) = id
-            .and_then(|id| session.and_then(|s| s.open_item(id).ok()))
-            .and_then(|item| match item.data() {
-                ItemData::Login { urls, notes, .. } => Some((
-                    SecretText::new(notes.expose().to_owned()),
-                    urls.iter()
-                        .skip(1)
-                        .map(|u| Text::new(u.as_str().to_owned()))
-                        .collect::<Vec<_>>(),
-                )),
-                _ => None,
-            })
-            .unwrap_or_else(|| (SecretText::new(String::new()), Vec::new()));
+        let (notes, urls) = match id {
+            None => (SecretText::new(String::new()), Vec::new()),
+            Some(id) => match session.map(|s| s.open_item(id)) {
+                Some(Ok(item)) => match item.data() {
+                    ItemData::Login { urls, notes, .. } => (
+                        SecretText::new(notes.expose().to_owned()),
+                        urls.iter()
+                            .skip(1)
+                            .map(|u| Text::new(u.as_str().to_owned()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => (SecretText::new(String::new()), Vec::new()),
+                },
+                // The notes and extra addresses cannot be read, so saving would
+                // silently drop them. Keep the form and say why.
+                Some(Err(e)) => {
+                    form.error = Some(messages::item_error(&e));
+                    self.mode = DetailMode::Edit(form);
+                    return None;
+                }
+                None => {
+                    form.error = Some(messages::ITEM_OPEN_FAILED);
+                    self.mode = DetailMode::Edit(form);
+                    return None;
+                }
+            },
+        };
         let input = match form.take_input(notes, urls) {
             Ok(input) => input,
             Err(_) => {
@@ -892,24 +906,29 @@ impl VaultView {
         throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<Job> {
-        let item = self
-            .selected
-            .and_then(|id| session.and_then(|s| s.open_item(id).ok()));
-        let Some(item) = item else {
+        let (Some(id), Some(session)) = (self.selected, session) else {
             ui.label(messages::SELECT_OR_ADD);
             return None;
         };
-        match show_item(ui, &item, &mut self.item, now, throttle, io) {
+        let Ok(entry) = session.entry(id) else {
+            ui.label(messages::SELECT_OR_ADD);
+            return None;
+        };
+        match show_item(ui, entry, session, &mut self.item, now, throttle, io) {
             ItemAction::None => None,
             ItemAction::Job(job) => Some(job),
             ItemAction::Edit => {
                 self.item = ItemView::new();
-                match LoginForm::from_item(&item) {
-                    Some(form) => {
-                        self.status = None;
-                        self.mode = DetailMode::Edit(Box::new(form));
-                    }
-                    None => self.status = Some(messages::SECRET_TOO_LONG),
+                // The item opens once, for the form, and drops at the end of this arm.
+                match session.open_item(id) {
+                    Ok(item) => match LoginForm::from_item(&item) {
+                        Some(form) => {
+                            self.status = None;
+                            self.mode = DetailMode::Edit(Box::new(form));
+                        }
+                        None => self.status = Some(messages::SECRET_TOO_LONG),
+                    },
+                    Err(e) => self.status = Some(messages::item_error(&e)),
                 }
                 None
             }

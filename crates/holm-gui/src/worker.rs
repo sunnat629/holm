@@ -37,6 +37,18 @@ pub enum Job {
     /// Replace only this item's custom fields, and save. The fields move in and are
     /// wiped on the worker.
     SetFields(ItemId, Vec<CustomField>),
+    /// Mark one recovery code used or unused, and save. Only the index changes; no
+    /// secret is decrypted or copied.
+    SetCodeUsed {
+        /// The item.
+        id: ItemId,
+        /// The position of the recovery codes field.
+        position: u8,
+        /// The code's index in that field.
+        index: u8,
+        /// The new flag.
+        used: bool,
+    },
     /// Write the unsaved changes to disk.
     Save,
     /// Read and parse the import file at this path, and preview it. Nothing is added.
@@ -72,7 +84,7 @@ impl Job {
             Job::Create(..) => JobKind::Create,
             Job::Unlock(_) => JobKind::Unlock,
             Job::Add(_) => JobKind::Add,
-            Job::Update(..) | Job::SetFields(..) => JobKind::Update,
+            Job::Update(..) | Job::SetFields(..) | Job::SetCodeUsed { .. } => JobKind::Update,
             Job::Save => JobKind::Save,
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
@@ -91,6 +103,7 @@ impl fmt::Debug for Job {
             }
             Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
             Job::SetFields(..) => write!(f, "Job::SetFields(<item hidden>)"),
+            Job::SetCodeUsed { .. } => write!(f, "Job::SetCodeUsed(<item hidden>)"),
             Job::Save => write!(f, "Job::Save"),
             Job::PreviewImport(_) | Job::Import(_) => {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
@@ -266,6 +279,12 @@ pub fn spawn(
                         }
                     })
                 }
+                Job::SetCodeUsed {
+                    id,
+                    position,
+                    index,
+                    used,
+                } => session.set_code_used(id, position, index, used),
                 Job::Save => session.save(),
                 Job::PreviewImport(path) => {
                     transfer = Some(preview_file(&session, &path));
@@ -375,7 +394,7 @@ fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
 
 /// [`copy_field`], with the `used` flag of the recovery code at `flip` inverted. `None`,
 /// or a field that holds no such code, gives an exact copy.
-pub(crate) fn copy_field_flipping(
+fn copy_field_flipping(
     field: &CustomField,
     flip: Option<usize>,
 ) -> Result<CustomField, FieldError> {
@@ -481,6 +500,13 @@ mod tests {
         );
         // The thread is gone after the wake, so the channel disconnects.
         assert!(rx.recv().is_err());
+        // The wake runs just after the sender drops, so give the thread a moment.
+        for _ in 0..500 {
+            if wakes.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
     }
     fn login(title: &str) -> ItemInput {

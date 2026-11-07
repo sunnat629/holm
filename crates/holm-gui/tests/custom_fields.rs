@@ -332,6 +332,20 @@ fn reveal_hides_after_30s() {
 }
 
 #[test]
+fn text_field_shows_secret_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock, _fake, _id) = open(dir.path());
+    select(&mut harness, LOGIN);
+    click(&mut harness, "Edit");
+    click(&mut harness, messages::ADD_FIELD);
+    assert_eq!(
+        count(&harness, messages::TEXT_FIELD_HINT),
+        1,
+        "a new Text field says to use a Secret field for sensitive values"
+    );
+}
+
+#[test]
 fn label_suggestion_fills_and_free_text_stays() {
     let dir = tempfile::tempdir().unwrap();
     let (mut harness, _clock, _fake, _id) = open(dir.path());
