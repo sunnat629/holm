@@ -8,6 +8,7 @@ use holm_crypto::CryptoError;
 
 use crate::body::BodyError;
 use crate::envelope::VaultError;
+use crate::item::ItemId;
 use crate::rules::FieldError;
 use crate::settings::SettingsError;
 use crate::store::StoreError;
@@ -89,6 +90,22 @@ pub enum CoreError {
     /// The vault has the most items allowed.
     #[error("the vault has the most items allowed")]
     TooManyItems,
+    /// An item's sealed record failed to authenticate or decode. The vault header and
+    /// index are fine; only this one item is damaged (or the file was changed).
+    #[error("item {0} is damaged and cannot be opened")]
+    DamagedItem(ItemId),
+    /// An item's record was sealed the most times a counter can count. It is refused
+    /// before anything is sealed, and nothing changes.
+    #[error("item {0} cannot be changed again")]
+    GenerationExhausted(ItemId),
+    /// Moving a version 1 vault to the current format failed its self-check or its
+    /// backup step. Nothing was written.
+    #[error("the vault could not be moved to the new format; nothing was changed")]
+    MigrationFailed,
+    /// The item has no secret value in that slot, or the slot is the recovery phrase,
+    /// which only `reveal_phrase` returns.
+    #[error("the item has no such secret value")]
+    NoSuchSecret,
     /// A field breaks its rule.
     #[error("{0}")]
     Field(FieldError),

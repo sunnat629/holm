@@ -37,6 +37,20 @@ pub enum Job {
     /// Replace only this item's custom fields, and save. The fields move in and are
     /// wiped on the worker.
     SetFields(ItemId, Vec<CustomField>),
+    /// Mark one recovery code used or unused, and save. Only the index changes; no
+    /// secret is decrypted or copied.
+    SetCodeUsed {
+        /// The item.
+        id: ItemId,
+        /// The position of the recovery codes field.
+        position: u8,
+        /// The code's index in that field.
+        index: u8,
+        /// The new flag.
+        used: bool,
+    },
+    /// Delete the migration backup copy after the owner said yes, and save the note.
+    DeleteMigrationBackup,
     /// Write the unsaved changes to disk.
     Save,
     /// Read and parse the import file at this path, and preview it. Nothing is added.
@@ -72,8 +86,9 @@ impl Job {
             Job::Create(..) => JobKind::Create,
             Job::Unlock(_) => JobKind::Unlock,
             Job::Add(_) => JobKind::Add,
-            Job::Update(..) | Job::SetFields(..) => JobKind::Update,
+            Job::Update(..) | Job::SetFields(..) | Job::SetCodeUsed { .. } => JobKind::Update,
             Job::Save => JobKind::Save,
+            Job::DeleteMigrationBackup => JobKind::DeleteBackup,
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
             Job::Export { .. } => JobKind::Export,
@@ -91,7 +106,9 @@ impl fmt::Debug for Job {
             }
             Job::Add(_) | Job::Update(..) => write!(f, "Job::{:?}(<item hidden>)", self.kind()),
             Job::SetFields(..) => write!(f, "Job::SetFields(<item hidden>)"),
+            Job::SetCodeUsed { .. } => write!(f, "Job::SetCodeUsed(<item hidden>)"),
             Job::Save => write!(f, "Job::Save"),
+            Job::DeleteMigrationBackup => write!(f, "Job::DeleteMigrationBackup"),
             Job::PreviewImport(_) | Job::Import(_) => {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
             }
@@ -115,6 +132,8 @@ pub enum JobKind {
     Update,
     /// Saving unsaved changes.
     Save,
+    /// Deleting the migration backup copy.
+    DeleteBackup,
     /// Reading an import file.
     PreviewImport,
     /// Adding the rows of an import.
@@ -266,7 +285,14 @@ pub fn spawn(
                         }
                     })
                 }
+                Job::SetCodeUsed {
+                    id,
+                    position,
+                    index,
+                    used,
+                } => session.set_code_used(id, position, index, used),
                 Job::Save => session.save(),
+                Job::DeleteMigrationBackup => session.delete_migration_backup(),
                 Job::PreviewImport(path) => {
                     transfer = Some(preview_file(&session, &path));
                     Ok(())
@@ -299,7 +325,7 @@ pub fn spawn(
                     // A wrong password counts toward the throttle inside the core.
                     let result = session
                         .reveal_phrase(id, &password)
-                        .map(|words| phrase = Some(SecretText::new(words.to_owned())));
+                        .map(|words| phrase = Some(words));
                     drop(password);
                     result
                 }
@@ -375,7 +401,7 @@ fn copy_field(field: &CustomField) -> Result<CustomField, FieldError> {
 
 /// [`copy_field`], with the `used` flag of the recovery code at `flip` inverted. `None`,
 /// or a field that holds no such code, gives an exact copy.
-pub(crate) fn copy_field_flipping(
+fn copy_field_flipping(
     field: &CustomField,
     flip: Option<usize>,
 ) -> Result<CustomField, FieldError> {
@@ -481,6 +507,13 @@ mod tests {
         );
         // The thread is gone after the wake, so the channel disconnects.
         assert!(rx.recv().is_err());
+        // The wake runs just after the sender drops, so give the thread a moment.
+        for _ in 0..500 {
+            if wakes.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
     }
     fn login(title: &str) -> ItemInput {
@@ -578,7 +611,7 @@ mod tests {
         assert_eq!(done.kind, JobKind::Update);
         assert_eq!(done.result, Ok(()));
         assert_eq!(done.added, None);
-        assert_eq!(done.session.item(id).unwrap().title(), "Renamed");
+        assert_eq!(done.session.open_item(id).unwrap().title(), "Renamed");
 
         let done = run(done.session, Job::Save);
         assert_eq!(done.kind, JobKind::Save);
@@ -617,7 +650,7 @@ mod tests {
         assert!(done.returned.is_none());
         assert!(!done.session.is_dirty(), "the fields are saved");
         {
-            let item = done.session.item(id).unwrap();
+            let item = done.session.open_item(id).unwrap();
             assert_eq!(item.fields().len(), 1);
             assert_eq!(item.fields()[0].label(), "PIN");
             assert!(matches!(
@@ -627,10 +660,8 @@ mod tests {
         }
 
         // An edit that sends the stored fields back keeps them.
-        let kept = done
-            .session
-            .item(id)
-            .unwrap()
+        let opened = done.session.open_item(id).unwrap();
+        let kept = opened
             .fields()
             .iter()
             .map(|f| copy_field(f).unwrap())
@@ -640,7 +671,7 @@ mod tests {
         let done = run(done.session, Job::Update(id, input));
         assert_eq!(done.result, Ok(()));
         assert!(!done.session.is_dirty());
-        let item = done.session.item(id).unwrap();
+        let item = done.session.open_item(id).unwrap();
         assert_eq!(item.title(), "Renamed");
         assert_eq!(item.fields().len(), 1, "an edit never drops a stored field");
         assert!(matches!(

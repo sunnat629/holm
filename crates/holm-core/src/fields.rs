@@ -20,6 +20,7 @@ pub struct CalendarDate {
 }
 
 impl CalendarDate {
+    #[allow(dead_code)] // used by the record split in B9
     pub(crate) fn from_parts(year: u16, month: u8, day: u8) -> Result<Self, FieldError> {
         let leap =
             year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
@@ -170,6 +171,12 @@ impl RecoveryCode {
     /// Marks the code used or unused.
     pub fn set_used(&mut self, used: bool) {
         self.used = used;
+    }
+
+    /// Moves the code out, so a split item keeps one copy of it only.
+    #[allow(dead_code)] // used by the record split in B9
+    pub(crate) fn into_code(self) -> SecretText {
+        self.code
     }
 }
 
@@ -330,6 +337,26 @@ pub struct CustomField {
 }
 
 impl CustomField {
+    /// Builds a field without running the field rules. Only for joining an index entry
+    /// to its record, where the caller checks the whole item afterwards.
+    pub(crate) fn from_parts(
+        label: Text,
+        value: FieldValue,
+        expiry: Option<CalendarDate>,
+    ) -> CustomField {
+        CustomField {
+            label,
+            value,
+            expiry,
+        }
+    }
+
+    /// Takes the field apart, moving every value out.
+    #[allow(dead_code)] // used by the record split in B9
+    pub(crate) fn into_parts(self) -> (Text, FieldValue, Option<CalendarDate>) {
+        (self.label, self.value, self.expiry)
+    }
+
     /// The display label.
     #[must_use]
     pub fn label(&self) -> &str {

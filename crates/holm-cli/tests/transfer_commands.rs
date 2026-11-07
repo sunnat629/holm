@@ -48,7 +48,7 @@ fn fixture() -> PathBuf {
 }
 
 fn count(path: &Path) -> usize {
-    session(path).active_items().unwrap().count()
+    session(path).active_entries().unwrap().count()
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn export_backup_opens_with_same_password() {
     assert_eq!(term.kinds(), vec![Kind::Secret]);
     let mut s = Session::new(FsStore::new(&backup), Box::new(SystemClock::new()));
     s.unlock(&MasterPassword::new(PW.to_owned())).unwrap();
-    assert_eq!(s.active_items().unwrap().count(), 4);
+    assert_eq!(s.active_entries().unwrap().count(), 4);
 }
 
 #[test]

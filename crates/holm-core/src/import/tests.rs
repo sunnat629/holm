@@ -4,7 +4,6 @@ use crate::clock::FakeClock;
 use crate::envelope::VaultError;
 use crate::fields::{FieldKind, FieldValue, format_date};
 use crate::item::{Item, ItemData, ItemId};
-use crate::padding::MAX_BODY_LEN;
 use crate::rules::{Field, FieldError, MAX_ITEMS};
 use crate::store::MemStore;
 use crate::text::{SecretText, Text};
@@ -92,10 +91,12 @@ fn imported(src: &str) -> S {
     s
 }
 
-fn by_title<'a>(s: &'a S, title: &str) -> &'a Item {
+/// The item titled `title`. Leaked so tests can borrow it freely; test data only.
+fn by_title(s: &S, title: &str) -> &'static Item {
     s.active_items()
         .unwrap()
         .find(|i| i.title() == title)
+        .map(|item| &*Box::leak(Box::new(item)))
         .unwrap_or_else(|| panic!("no item titled {title}"))
 }
 
@@ -532,7 +533,7 @@ fn chrome_firefox_safari_detected() {
         )
     );
     for item in s.active_items().unwrap() {
-        let (u, p, urls, n) = login_of(item);
+        let (u, p, urls, n) = login_of(&item);
         for field in [item.title(), u, p, n].into_iter().chain(urls) {
             assert!(!field.contains("otpauth"));
             assert!(!field.contains("OTPSECRET"));
@@ -991,15 +992,11 @@ fn seed_note(title: &str) -> Item {
     }
 }
 
-fn data_mut(s: &mut S) -> &mut VaultData {
-    &mut s.unlocked_mut().unwrap().data
-}
-
 #[test]
 fn import_is_atomic_on_item_limit() {
     let mut s = fresh();
     for i in 0..MAX_ITEMS - 1 {
-        data_mut(&mut s).items.push(seed_note(&format!("n{i}")));
+        s.seed(seed_note(&format!("n{i}")));
     }
     let before = s.store().bytes.clone();
     // Two new rows do not fit.
@@ -1007,7 +1004,7 @@ fn import_is_atomic_on_item_limit() {
         s.import(csv("title,notes\nx,b\ny,b\n")),
         Err(CoreError::TooManyItems)
     );
-    assert_eq!(data_mut(&mut s).items.len(), MAX_ITEMS - 1);
+    assert_eq!(s.stored_count(), MAX_ITEMS - 1);
     assert!(!s.is_dirty());
     assert_eq!(s.store().bytes, before);
     // Duplicates are dropped first, so they never count against the limit.
@@ -1026,23 +1023,17 @@ fn import_rolls_back_when_too_large_to_save() {
         };
         item
     };
-    let base = data_mut(&mut s).encode().unwrap().expose().len();
-    data_mut(&mut s).items.push(big_note("probe"));
-    let size = data_mut(&mut s).encode().unwrap().expose().len() - base;
-    data_mut(&mut s).items.clear();
-    for i in 0..(MAX_BODY_LEN - base) / size {
-        data_mut(&mut s).items.push(big_note(&format!("big {i}")));
-    }
+    s.seed_to_the_brim(|i| big_note(&format!("big {i}")));
     // Saved once, so the file holds every seeded item.
     s.save().unwrap();
-    let count = data_mut(&mut s).items.len();
+    let count = s.stored_count();
     let before = s.store().bytes.clone();
     let rows = format!("title,notes\nnew one,{big}\nnew two,{big}\n");
     assert_eq!(
         s.import(csv(&rows)),
         Err(CoreError::Vault(VaultError::TooLargeToSave))
     );
-    assert_eq!(data_mut(&mut s).items.len(), count);
+    assert_eq!(s.stored_count(), count);
     assert!(!s.is_dirty());
     assert_eq!(s.store().bytes, before);
 }
@@ -1058,7 +1049,8 @@ fn import_then_reopen_persists() {
     let id = by_title(&s, "Example Recovery").id();
     assert_eq!(
         s.reveal_phrase(id, &MasterPassword::new(PW.to_owned()))
-            .unwrap(),
+            .unwrap()
+            .expose(),
         PHRASE
     );
 }

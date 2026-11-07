@@ -98,8 +98,8 @@ fn category(s: &S, name: &str) -> CategoryId {
 }
 
 fn set_times(s: &mut S, id: ItemId, created: i64, updated: i64) {
-    let data = &mut s.unlocked_mut().unwrap().data;
-    let item = data.items.iter_mut().find(|i| i.id == id).unwrap();
+    let index = &mut s.unlocked_mut().unwrap().state.index;
+    let item = index.entries.iter_mut().find(|i| i.id == id).unwrap();
     item.created = Timestamp(created);
     item.updated = Timestamp(updated);
 }
@@ -185,7 +185,7 @@ fn snaps(s: &mut S) -> Vec<Snap> {
         };
         if snap.kind == ItemType::RecoveryPhrase {
             snap.fields
-                .push(s.reveal_phrase(id, &pw(PW)).unwrap().to_owned());
+                .push(s.reveal_phrase(id, &pw(PW)).unwrap().expose().to_owned());
         }
         out.push(snap);
     }
@@ -431,17 +431,31 @@ fn export_buffer_allocated_once() {
     assert_eq!(buf.expose().len(), expected);
 
     // The buffer never grew: it is still at the capacity it was allocated with.
-    let data = &s.unlocked().unwrap().data;
-    let items: Vec<&Item> = data.items.iter().collect();
-    let out = build(&items, &data.categories);
+    let index = &s.unlocked().unwrap().state.index;
+    let ids: Vec<ItemId> = index.entries.iter().map(|e| e.id).collect();
+    let items: Vec<Item> = ids.iter().map(|id| s.open_item(*id).unwrap()).collect();
+    let mut source = |i: usize, f: &mut dyn FnMut(&Item)| {
+        f(&items[i]);
+        Ok(())
+    };
+    let out = build(items.len(), &index.categories, &mut source).unwrap();
     assert_eq!(out.len(), expected);
     assert_eq!(out.capacity(), out.len());
-    assert_eq!(write_csv(&items, &data.categories).expose(), out.as_bytes());
+    assert_eq!(
+        write_csv_with(items.len(), &index.categories, &mut source)
+            .unwrap()
+            .expose(),
+        out.as_bytes()
+    );
 }
 
 #[test]
 fn write_csv_with_no_items_is_the_header() {
-    assert_eq!(write_csv(&[], &[]).expose(), header().as_bytes());
+    let mut none = |_: usize, _: &mut dyn FnMut(&Item)| Ok(());
+    assert_eq!(
+        write_csv_with(0, &[], &mut none).unwrap().expose(),
+        header().as_bytes()
+    );
 }
 
 const FIRST_COLUMNS: [&str; 14] = [
@@ -482,10 +496,12 @@ fn sample_fields() -> Vec<crate::fields::CustomField> {
     ]
 }
 
-fn by_title<'a>(s: &'a S, title: &str) -> &'a Item {
+/// The item titled `title`. Leaked so tests can borrow it freely; test data only.
+fn by_title(s: &S, title: &str) -> &'static Item {
     s.active_items()
         .unwrap()
         .find(|item| item.title() == title)
+        .map(|item| &*Box::leak(Box::new(item)))
         .unwrap()
 }
 
@@ -562,7 +578,8 @@ fn export_import_roundtrip_custom_fields() {
 
 #[test]
 fn json_export_import_roundtrip() {
-    assert_eq!(write_json(&[], &[]).expose(), b"[]");
+    let mut none = |_: usize, _: &mut dyn FnMut(&Item)| Ok(());
+    assert_eq!(write_json_with(0, &[], &mut none).unwrap().expose(), b"[]");
     let mut s = vault_with_sample();
     let buf = s.export_json(&pw(PW)).unwrap();
     let text = core::str::from_utf8(buf.expose()).unwrap();

@@ -330,7 +330,10 @@ fn export_json_file(
 ) -> Result<usize, TransferError> {
     refuse_existing(dest)?;
     let json = session.export_json(password).map_err(TransferError::Core)?;
-    let count = session.active_items().map_err(TransferError::Core)?.count();
+    let count = session
+        .active_entries()
+        .map_err(TransferError::Core)?
+        .count();
     write_new_private_file(dest, json.expose()).map_err(|error| match error {
         StoreError::AlreadyExists => TransferError::Exists,
         _ => TransferError::WriteFailed,

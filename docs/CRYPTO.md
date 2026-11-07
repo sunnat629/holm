@@ -64,6 +64,89 @@ All integers are little-endian.
   parsed header.
 - There is no checksum. The AEAD tags are the only integrity check.
 
+## Format v2 (Phase B: decrypt on demand)
+
+Holm writes format 2. It reads format 1 (body schemas 1 to 3) and migrates it on the first
+save (see "Migration from format 1"). Spec: `docs/superpowers/specs/2026-11-07-phase-b-decrypt-on-demand-design.md`.
+
+### File layout (v2)
+
+Bytes 0 to 131 have the v1 layout and meaning, so the KDF, the salt and the DEK wrap do not
+change. The version at bytes 8..10 is 2. After byte 132:
+
+| Offset | Size | Field | Checked by |
+|---|---|---|---|
+| 132 | 24 | index nonce | index AEAD (nonce and AAD) |
+| 156 | 8 | index ciphertext length, tag included | parser framing, index AEAD |
+| 164 | 8 | records region length | parser framing, index AEAD |
+| 172 | n | index ciphertext, padded plaintext to 16 KiB | index AEAD |
+| 172 + n | m | records region | record AEADs, parser framing |
+
+- **Wrap AAD** is bytes `0..60`, as in v1. That span holds the version, so a v1 wrapped DEK
+  copied into a v2 header does not unwrap (test `migration_rewraps_under_v2_aad`).
+- **Index AAD** is bytes `0..172`, the whole header.
+- **Key block** is bytes `0..132`. It changes only on create, migration and password change.
+- **Framing** is checked before Argon2: `172 + index_len + records_len` must equal the file
+  length, `index_len` is a 16 KiB multiple plus the tag, `records_len` is a 16 KiB multiple
+  (`tamper_truncate_every_length`, `tamper_append_byte`, `tamper_records_len_not_canonical`).
+- The file is at most `MAX_FILE_LEN` (64 MiB). The write side refuses a file it would not read
+  (`TooLargeToSave`).
+
+### Index and records
+
+The index (body schema 4) is the old padded body without the secrets: settings, categories and
+one entry per item with its public fields (title, category, username, URLs, labels, custom
+Text and Date values, used flags, presence flags). Secrets (passwords, notes, addresses,
+phrases, note bodies, secret custom fields, the code strings) live only in per-item records,
+each sealed with XChaCha20-Poly1305 under the DEK with a fresh random 24-byte nonce.
+
+- **Record plaintext** (record schema 1): `u16` version, postcard of the type tag and sealed
+  values, canonical padding to a multiple of 256 bytes (`RECORD_PAD_BLOCK`). At most 256 KiB
+  (`MAX_RECORD_PADDED`); the worst record fits (test `maxed_record_fits_cap`).
+- **Record AAD** (164 bytes): `"HOLMREC\0"` (8), the key block (132), the item id (16), the
+  generation as `u64` LE (8). The domain tag and the length differ from the index AAD, so the
+  index cannot be opened as a record or the reverse (`tamper_v1_body_as_v2_index`).
+- **Index pins.** Each index entry holds the record's generation, nonce and ciphertext
+  length (`RecordRef`). Offsets are prefix sums in index order. The records region is the
+  records back to back, then zero filler up to a 16 KiB multiple; the filler must be exact and
+  all zero (`tamper_filler_nonzero`).
+- What the pins stop: swapping, deleting, inserting or reordering records, rolling one back to an
+  older version, and moving one in from another vault (`tamper_swap_records`,
+  `tamper_delete_record`, `tamper_insert_record`, `tamper_reorder_records`,
+  `tamper_rollback_one_record`, `tamper_old_index_new_records`, `tamper_record_from_other_vault`).
+- **Backup copies share the key block and the DEK.** A genuine record from a backup copy can
+  carry the same id and generation. Only the nonce pinned in the current index tells it
+  apart (`tamper_record_from_backup_copy`). After a password change the key block differs
+  (`tamper_record_after_password_change`).
+- **Records are authenticated lazily.** Unlock authenticates the header and index and checks
+  framing. A damaged record is found when opened and gives `DamagedItem`. A file replaced
+  whole by an older copy is not detected (no rollback protection, unchanged).
+- Golden vectors: `crates/holm-core/src/envelope_v2/golden.rs` pins one index entry and one
+  record as bytes, and `tests/vectors/golden-v2.vault` is a whole vault (`golden_v2_rebuilds`,
+  `golden_v2_opens`). `vault_v2_roundtrip_any` is the property test over generated vaults.
+
+### Migration from format 1
+
+On unlock of a v1 file Holm makes a new DEK, wraps it under the v2 AAD, self-checks the wrap,
+and seals each item as a record (each is opened again and compared). Nothing is written until
+the first save. That save builds and self-checks the v2 file, then writes the original v1 bytes
+to `<vault>.v1-<16 hex>.bak` (hex of the first 8 bytes of the v1 body nonce; exclusive
+create, mode 0600, synced), and only then replaces the vault. A crash leaves the v1 vault
+plus its backup, or v1 or v2, never a mix (`migration_backup_write_fails_vault_untouched`,
+`migration_replace_fails_then_retry`, `migration_lock_before_save_writes_nothing`).
+
+The backup is a byte-for-byte v1 vault that opens with the password it had. Holm never deletes
+it without the owner's yes: the index carries a note (`BackupNote`) and the GUI offers
+"Delete the old copy" after the next unlock and again, more strongly, after a password change
+(`backup_never_deleted_without_yes`). Deleting does not remove Time Machine copies, other
+snapshots or SSD remnants. If a save fails with a leftover `.bak` of another version, the
+message tells the user to remove the stale `.bak`.
+
+A Holm built before Phase B stops at the version field. The shipped CLI maps that to "This
+file isn't a Holm vault, or it is damaged." and leaves the file unchanged
+(`scripts/compat-old-binary.sh`, a local CI gate). This build says "a newer version of Holm may
+be needed" for a version above 2.
+
 ## Argon2id cost policy
 
 | Name in code | Memory (KiB) | Iterations | Parallelism |
@@ -258,8 +341,9 @@ run the decoder on hostile bytes with a 64 MiB per-allocation limit.
 ## The vault body (schema v3)
 
 Holm writes schema 3 and reads schemas 1, 2 and 3. The header, the envelope, the KDF and
-the padding do not change. `FORMAT_VERSION` stays 1 and the header stays 164 bytes.
-Only the bytes inside the padding change.
+the padding do not change. This is the body of format v1. Format v2 (`FORMAT_VERSION` 2, a 172-byte header) keeps the
+same schemas only to read and migrate a v1 vault; v2 itself stores an index (schema 4) and
+one sealed record per item. See "Format v2" in the Phase B design.
 
 - The first two bytes are the body version, a `u16` little-endian. `BODY_SCHEMA_VERSION`
   is 3, `BODY_SCHEMA_V2` is 2 and `BODY_SCHEMA_V1` is 1. The `postcard` encoding follows.
@@ -498,8 +582,10 @@ Known gaps:
   one has focus), but are not wiped if they reach egui elsewhere. Phase 5.
 - A vault folder that already exists and that others can read (0755) is accepted and
   never tightened. The files inside stay 0600. Phase 5.
-- On FAT and exFAT, where hard links fail, `create_new` falls back to an exclusive
-  create that is not crash-atomic (see `FsStore::create_new`). Phase 5.
+- On FAT and exFAT, where hard links fail, `create_new` and `keep_backup_copy` fall back
+  to an exclusive create that is not crash-atomic (see `FsStore::create_new`). A crash
+  there can leave a short file; for `keep_backup_copy` that is a short `.bak`, which the
+  next migration attempt refuses (same name, other bytes) until the user removes it. Phase 5.
 - The Linux and Windows builds are not compiled: local CI runs on macOS and GitHub
   Actions is off. Phase 5.
 - `PasswordChangeUncertain` has no GUI: there is no change-password screen yet, and the

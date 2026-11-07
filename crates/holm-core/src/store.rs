@@ -78,6 +78,75 @@ pub trait VaultStore {
     /// # Errors
     /// [`StoreError::Io`] if a temp file could not be listed or removed.
     fn remove_stale_temps(&mut self) -> Result<usize, StoreError>;
+
+    /// Keeps a byte-for-byte copy of a vault file beside the vault, named
+    /// `<vault file name>.<tag>.bak`, for the migration backup (Phase B). The copy is
+    /// created exclusively (never overwrites), owner-only where the system has modes,
+    /// synced, and the directory synced. It is crash-atomic: afterwards there is no
+    /// copy or the whole copy.
+    ///
+    /// If a copy with this tag already exists with the same bytes, this is `Ok`
+    /// (a retry after a crash). If it holds other bytes, nothing is changed and the
+    /// result is [`StoreError::AlreadyExists`]. A symlink or folder at the copy's
+    /// path is [`StoreError::NotARegularFile`] and is never followed. `tag` must
+    /// match `[a-z0-9-]{1,32}` ([`check_backup_tag`]) so it cannot form a path;
+    /// anything else is `Io(InvalidInput)`.
+    ///
+    /// The default refuses with `Io(Unsupported)`: a store that cannot keep a copy
+    /// must not let a migration start.
+    ///
+    /// # Errors
+    /// [`StoreError::AlreadyExists`], [`StoreError::TooLarge`],
+    /// [`StoreError::NotARegularFile`], or [`StoreError::Io`].
+    fn keep_backup_copy(&mut self, tag: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        let _ = (tag, bytes);
+        Err(StoreError::Io(std::io::ErrorKind::Unsupported))
+    }
+
+    /// Removes the copy `<vault file name>.<tag>.bak` and syncs the directory. Only
+    /// that one file, never following a symlink. A missing copy is
+    /// [`StoreError::NotFound`]. The tag is checked as in
+    /// [`VaultStore::keep_backup_copy`].
+    ///
+    /// # Errors
+    /// [`StoreError::NotFound`], [`StoreError::NotARegularFile`], or
+    /// [`StoreError::Io`].
+    fn remove_backup_copy(&mut self, tag: &str) -> Result<(), StoreError> {
+        let _ = tag;
+        Err(StoreError::Io(std::io::ErrorKind::Unsupported))
+    }
+
+    /// False only if nothing is at `<vault file name>.<tag>.bak` (a real not-found).
+    /// Anything else there, even a symlink or a folder, counts as present, so the
+    /// session keeps its note; [`VaultStore::remove_backup_copy`] still refuses it.
+    ///
+    /// # Errors
+    /// [`StoreError::Io`], including `InvalidInput` for a bad tag.
+    fn backup_copy_exists(&self, tag: &str) -> Result<bool, StoreError> {
+        let _ = tag;
+        Err(StoreError::Io(std::io::ErrorKind::Unsupported))
+    }
+}
+
+/// Longest backup tag.
+pub const MAX_BACKUP_TAG_LEN: usize = 32;
+
+/// Checks a backup tag: 1 to 32 characters from `a-z`, `0-9` and `-`, so it can
+/// never hold a path separator or a dot.
+///
+/// # Errors
+/// `Io(InvalidInput)` for any other tag.
+pub fn check_backup_tag(tag: &str) -> Result<(), StoreError> {
+    let ok = !tag.is_empty()
+        && tag.len() <= MAX_BACKUP_TAG_LEN
+        && tag
+            .bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(StoreError::Io(std::io::ErrorKind::InvalidInput))
+    }
 }
 
 /// An in-memory store for tests. Writes are all-or-nothing by construction.
@@ -100,6 +169,14 @@ pub(crate) struct MemStore {
     pub(crate) fail_temp_cleanup: bool,
     /// How many times `remove_stale_temps` was called.
     pub(crate) temp_cleanups: usize,
+    /// Backup copies by tag.
+    pub(crate) backups: std::collections::BTreeMap<String, Vec<u8>>,
+    /// The next `keep_backup_copy` fails with this error and changes nothing.
+    pub(crate) fail_backup_copy: Option<StoreError>,
+    /// Makes `backup_copy_exists` fail with this error (it cannot tell).
+    pub(crate) fail_backup_exists: Option<StoreError>,
+    /// How many times `keep_backup_copy` was called.
+    pub(crate) backup_calls: usize,
 }
 
 #[cfg(test)]
@@ -158,6 +235,41 @@ impl VaultStore for MemStore {
             return Err(StoreError::Io(std::io::ErrorKind::PermissionDenied));
         }
         Ok(0)
+    }
+
+    fn keep_backup_copy(&mut self, tag: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        check_backup_tag(tag)?;
+        self.backup_calls = self.backup_calls.saturating_add(1);
+        if let Some(e) = self.fail_backup_copy.take() {
+            return Err(e);
+        }
+        if bytes.len() > MAX_FILE_LEN {
+            return Err(StoreError::TooLarge);
+        }
+        match self.backups.get(tag) {
+            Some(old) if old.as_slice() == bytes => Ok(()),
+            Some(_) => Err(StoreError::AlreadyExists),
+            None => {
+                self.backups.insert(tag.to_owned(), bytes.to_vec());
+                Ok(())
+            }
+        }
+    }
+
+    fn remove_backup_copy(&mut self, tag: &str) -> Result<(), StoreError> {
+        check_backup_tag(tag)?;
+        self.backups
+            .remove(tag)
+            .map(|_| ())
+            .ok_or(StoreError::NotFound)
+    }
+
+    fn backup_copy_exists(&self, tag: &str) -> Result<bool, StoreError> {
+        check_backup_tag(tag)?;
+        if let Some(e) = &self.fail_backup_exists {
+            return Err(*e);
+        }
+        Ok(self.backups.contains_key(tag))
     }
 }
 
@@ -227,5 +339,56 @@ mod tests {
         for e in all {
             assert!(!e.to_string().to_lowercase().contains("password"), "{e}");
         }
+    }
+
+    #[test]
+    fn backup_tags_are_checked() {
+        for ok in ["a", "v1-2026", "0", &"a".repeat(32)] {
+            assert_eq!(check_backup_tag(ok), Ok(()), "{ok}");
+        }
+        for bad in [
+            "",
+            "A",
+            "a.b",
+            "a/b",
+            "..",
+            "a b",
+            "a\\b",
+            "é",
+            &"a".repeat(33),
+        ] {
+            assert_eq!(
+                check_backup_tag(bad),
+                Err(StoreError::Io(std::io::ErrorKind::InvalidInput)),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn mem_store_backup_copies() {
+        let mut s = MemStore::default();
+        assert_eq!(s.backup_copy_exists("t"), Ok(false));
+        assert_eq!(s.remove_backup_copy("t"), Err(StoreError::NotFound));
+        s.keep_backup_copy("t", b"one").unwrap();
+        assert_eq!(s.keep_backup_copy("t", b"one"), Ok(()));
+        assert_eq!(
+            s.keep_backup_copy("t", b"two"),
+            Err(StoreError::AlreadyExists)
+        );
+        assert_eq!(s.backups["t"], b"one");
+        assert_eq!(s.backup_copy_exists("t"), Ok(true));
+        s.fail_backup_copy = Some(StoreError::Io(std::io::ErrorKind::StorageFull));
+        assert_eq!(
+            s.keep_backup_copy("u", b"x"),
+            Err(StoreError::Io(std::io::ErrorKind::StorageFull))
+        );
+        assert!(!s.backups.contains_key("u"));
+        assert_eq!(
+            s.keep_backup_copy("T", b"x").err(),
+            Some(StoreError::Io(std::io::ErrorKind::InvalidInput))
+        );
+        s.remove_backup_copy("t").unwrap();
+        assert_eq!(s.backup_copy_exists("t"), Ok(false));
     }
 }

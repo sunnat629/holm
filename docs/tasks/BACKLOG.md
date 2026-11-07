@@ -81,7 +81,7 @@ Phase 5 (platform hardening and GUI polish)
 - Existing vault folder that others can read (for example mode 0755) is accepted and never tightened: warn or tighten.
 - After a minimise lock the last vault frame stays painted and in the Dock thumbnail: paint a locked frame before the window hides (Task 6 M3).
 - Clipboard clear on lock and the Universal Clipboard / Handoff exposure check (see first item).
-- Crash-atomic `create_new` on FAT and exFAT (today an exclusive-create fallback).
+- Crash-atomic `create_new` and `keep_backup_copy` on FAT and exFAT (today an exclusive-create fallback; a crash can leave a short file or a short migration `.bak`).
 - Keychain and Touch ID option.
 - Memory locking (`mlock`).
 - Password Show or reveal toggle in the CLI or the GUI: open owner decision.

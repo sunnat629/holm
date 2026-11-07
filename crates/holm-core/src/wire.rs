@@ -12,12 +12,17 @@
 //! ([`BoundedVec`]). A crafted length prefix is refused before anything is allocated for
 //! it.
 
+use crate::body::BodyError;
 use crate::category::{Category, CategoryId, MAX_CATEGORIES, validate_category_name};
 use crate::fields::{
     CalendarDate, CustomField, FieldValue, RecoveryCode, try_field, validate_fields,
 };
 use crate::generator::{PassphraseSpec, PasswordSpec, UsernameSpec};
+use crate::index::{
+    BackupNote, BackupPrompt, EntryPublic, FieldEntry, FieldEntryKind, Index, ItemEntry, RecordRef,
+};
 use crate::item::{Item, ItemData, ItemId, PhraseRule, Timestamp, validate_item};
+use crate::record::{RecordSecrets, SealedData, SealedField, SealedValue};
 use crate::rules::{
     FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_NOTE_BYTES, MAX_RECOVERY_CODES, MAX_URLS,
 };
@@ -25,6 +30,7 @@ use crate::settings::Settings;
 use crate::text::{GatedSecret, SecretText, Text};
 use core::fmt;
 use core::marker::PhantomData;
+use holm_crypto::aead::NONCE_LEN;
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use zeroize::Zeroizing;
@@ -853,6 +859,580 @@ pub(crate) struct BodyIn {
     pub(crate) categories: BoundedVec<CategoryIn, MAX_CATEGORIES>,
     pub(crate) items: BoundedVec<ItemIn, MAX_ITEMS>,
     pub(crate) next_category_id: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Format v2: the index and the records.
+// ---------------------------------------------------------------------------
+
+/// The record table entry as written and read: plain numbers and bytes. The range
+/// rules (generation, ciphertext length) are checked by [`crate::index`].
+#[derive(Clone, Copy, Serialize, Deserialize)]
+struct RecordRefWire {
+    generation: u64,
+    nonce: [u8; NONCE_LEN],
+    ct_len: u32,
+}
+
+impl RecordRefWire {
+    fn new(r: &RecordRef) -> Self {
+        Self {
+            generation: r.generation,
+            nonce: r.nonce,
+            ct_len: r.ct_len,
+        }
+    }
+
+    fn into_ref(self) -> RecordRef {
+        RecordRef {
+            generation: self.generation,
+            nonce: self.nonce,
+            ct_len: self.ct_len,
+        }
+    }
+}
+
+/// Variant order is the postcard index and the item type tag.
+#[derive(Serialize)]
+enum PublicOut<'a> {
+    Login {
+        username: &'a str,
+        urls: Vec<&'a str>,
+        has_password: bool,
+        has_notes: bool,
+    },
+    CryptoAddress {
+        chain: &'a str,
+        has_address: bool,
+        has_memo: bool,
+        has_notes: bool,
+    },
+    RecoveryPhrase {
+        has_notes: bool,
+    },
+    SecureNote {
+        has_body: bool,
+    },
+}
+
+impl<'a> PublicOut<'a> {
+    fn new(p: &'a EntryPublic) -> Self {
+        match p {
+            EntryPublic::Login {
+                username,
+                urls,
+                has_password,
+                has_notes,
+            } => PublicOut::Login {
+                username: username.as_str(),
+                urls: urls.iter().map(Text::as_str).collect(),
+                has_password: *has_password,
+                has_notes: *has_notes,
+            },
+            EntryPublic::CryptoAddress {
+                chain,
+                has_address,
+                has_memo,
+                has_notes,
+            } => PublicOut::CryptoAddress {
+                chain: chain.as_str(),
+                has_address: *has_address,
+                has_memo: *has_memo,
+                has_notes: *has_notes,
+            },
+            EntryPublic::RecoveryPhrase { has_notes } => PublicOut::RecoveryPhrase {
+                has_notes: *has_notes,
+            },
+            EntryPublic::SecureNote { has_body } => PublicOut::SecureNote {
+                has_body: *has_body,
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum PublicIn {
+    Login {
+        username: WireStr,
+        urls: BoundedVec<WireStr, MAX_URLS>,
+        has_password: bool,
+        has_notes: bool,
+    },
+    CryptoAddress {
+        chain: WireStr,
+        has_address: bool,
+        has_memo: bool,
+        has_notes: bool,
+    },
+    RecoveryPhrase {
+        has_notes: bool,
+    },
+    SecureNote {
+        has_body: bool,
+    },
+}
+
+impl PublicIn {
+    fn into_public(self) -> EntryPublic {
+        match self {
+            PublicIn::Login {
+                username,
+                urls,
+                has_password,
+                has_notes,
+            } => EntryPublic::Login {
+                username: username.text(),
+                urls: urls.into_inner().into_iter().map(WireStr::text).collect(),
+                has_password,
+                has_notes,
+            },
+            PublicIn::CryptoAddress {
+                chain,
+                has_address,
+                has_memo,
+                has_notes,
+            } => EntryPublic::CryptoAddress {
+                chain: chain.text(),
+                has_address,
+                has_memo,
+                has_notes,
+            },
+            PublicIn::RecoveryPhrase { has_notes } => EntryPublic::RecoveryPhrase { has_notes },
+            PublicIn::SecureNote { has_body } => EntryPublic::SecureNote { has_body },
+        }
+    }
+}
+
+/// Variant order matches [`CustomValueOut`] for the kinds they share.
+#[derive(Serialize)]
+enum FieldKindOut<'a> {
+    Text(&'a str),
+    Secret,
+    MultilineSecret,
+    Date(DateWire),
+    RecoveryCodes(&'a [bool]),
+}
+
+#[derive(Serialize)]
+struct FieldEntryOut<'a> {
+    position: u8,
+    label: &'a str,
+    kind: FieldKindOut<'a>,
+    expiry: Option<DateWire>,
+}
+
+impl<'a> FieldEntryOut<'a> {
+    fn new(f: &'a FieldEntry) -> Self {
+        let kind = match &f.kind {
+            FieldEntryKind::Text(t) => FieldKindOut::Text(t.as_str()),
+            FieldEntryKind::Secret => FieldKindOut::Secret,
+            FieldEntryKind::MultilineSecret => FieldKindOut::MultilineSecret,
+            FieldEntryKind::Date(d) => FieldKindOut::Date(DateWire::new(*d)),
+            FieldEntryKind::RecoveryCodes { used } => FieldKindOut::RecoveryCodes(used),
+        };
+        Self {
+            position: f.position,
+            label: f.label.as_str(),
+            kind,
+            expiry: f.expiry.map(DateWire::new),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+enum FieldKindIn {
+    Text(WireStr),
+    Secret,
+    MultilineSecret,
+    Date(DateWire),
+    RecoveryCodes(BoundedVec<bool, MAX_RECOVERY_CODES>),
+}
+
+#[derive(Deserialize)]
+struct FieldEntryIn {
+    position: u8,
+    label: WireStr,
+    kind: FieldKindIn,
+    expiry: Option<DateWire>,
+}
+
+impl FieldEntryIn {
+    fn into_entry(self) -> Result<FieldEntry, FieldError> {
+        let kind = match self.kind {
+            FieldKindIn::Text(t) => FieldEntryKind::Text(t.text()),
+            FieldKindIn::Secret => FieldEntryKind::Secret,
+            FieldKindIn::MultilineSecret => FieldEntryKind::MultilineSecret,
+            FieldKindIn::Date(d) => FieldEntryKind::Date(d.into_date()?),
+            FieldKindIn::RecoveryCodes(used) => FieldEntryKind::RecoveryCodes {
+                used: used.into_inner(),
+            },
+        };
+        Ok(FieldEntry {
+            position: self.position,
+            label: self.label.text(),
+            kind,
+            expiry: self.expiry.map(DateWire::into_date).transpose()?,
+        })
+    }
+}
+
+/// One index entry as written. Field order is the format (spec 2.6).
+#[derive(Serialize)]
+struct EntryOut<'a> {
+    id: ItemId,
+    public: PublicOut<'a>,
+    title: &'a str,
+    category: Option<CategoryId>,
+    favourite: bool,
+    created: Timestamp,
+    updated: Timestamp,
+    trashed: Option<Timestamp>,
+    fields: Vec<FieldEntryOut<'a>>,
+    record: RecordRefWire,
+}
+
+impl<'a> EntryOut<'a> {
+    fn new(e: &'a ItemEntry) -> Self {
+        Self {
+            id: e.id,
+            public: PublicOut::new(&e.public),
+            title: e.title.as_str(),
+            category: e.category,
+            favourite: e.favourite,
+            created: e.created,
+            updated: e.updated,
+            trashed: e.trashed,
+            fields: e.fields.iter().map(FieldEntryOut::new).collect(),
+            record: RecordRefWire::new(&e.record),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct EntryIn {
+    id: ItemId,
+    public: PublicIn,
+    title: WireStr,
+    category: Option<CategoryId>,
+    favourite: bool,
+    created: Timestamp,
+    updated: Timestamp,
+    trashed: Option<Timestamp>,
+    fields: BoundedVec<FieldEntryIn, MAX_CUSTOM_FIELDS>,
+    record: RecordRefWire,
+}
+
+impl EntryIn {
+    fn into_entry(self) -> Result<ItemEntry, FieldError> {
+        let fields = self.fields.into_inner();
+        let mut out = Vec::with_capacity(fields.len());
+        for f in fields {
+            out.push(f.into_entry()?);
+        }
+        Ok(ItemEntry {
+            id: self.id,
+            title: self.title.text(),
+            category: self.category,
+            favourite: self.favourite,
+            created: self.created,
+            updated: self.updated,
+            trashed: self.trashed,
+            public: self.public.into_public(),
+            fields: out,
+            record: self.record.into_ref(),
+        })
+    }
+}
+
+/// Variant order is the postcard index.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+enum BackupPromptWire {
+    AfterUnlock,
+    AfterPasswordChange,
+    Done,
+}
+
+impl BackupPromptWire {
+    fn new(p: BackupPrompt) -> Self {
+        match p {
+            BackupPrompt::AfterUnlock => Self::AfterUnlock,
+            BackupPrompt::AfterPasswordChange => Self::AfterPasswordChange,
+            BackupPrompt::Done => Self::Done,
+        }
+    }
+
+    fn into_prompt(self) -> BackupPrompt {
+        match self {
+            Self::AfterUnlock => BackupPrompt::AfterUnlock,
+            Self::AfterPasswordChange => BackupPrompt::AfterPasswordChange,
+            Self::Done => BackupPrompt::Done,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct BackupNoteOut<'a> {
+    tag: &'a str,
+    prompt: BackupPromptWire,
+}
+
+#[derive(Deserialize)]
+struct BackupNoteIn {
+    tag: WireStr,
+    prompt: BackupPromptWire,
+}
+
+/// The index as written, after the 2-byte schema version. The field order is the
+/// format: [`IndexIn`] must list the same fields in the same order.
+#[derive(Serialize)]
+pub(crate) struct IndexOut<'a> {
+    settings: SettingsWire,
+    categories: Vec<CategoryOut<'a>>,
+    entries: Vec<EntryOut<'a>>,
+    next_category_id: u32,
+    migration_backup: Option<BackupNoteOut<'a>>,
+}
+
+impl<'a> IndexOut<'a> {
+    /// Borrows `index` for writing.
+    pub(crate) fn new(index: &'a Index) -> Self {
+        Self {
+            settings: SettingsWire::new(&index.settings),
+            categories: index.categories.iter().map(CategoryOut::new).collect(),
+            entries: index.entries.iter().map(EntryOut::new).collect(),
+            next_category_id: index.next_category_id,
+            migration_backup: index.migration_backup.as_ref().map(|n| BackupNoteOut {
+                tag: n.tag.as_str(),
+                prompt: BackupPromptWire::new(n.prompt),
+            }),
+        }
+    }
+}
+
+/// The index as read. Nothing here is trusted until [`IndexIn::into_index`] and
+/// [`Index::decode`] have checked it.
+#[derive(Deserialize)]
+pub(crate) struct IndexIn {
+    settings: SettingsWire,
+    categories: BoundedVec<CategoryIn, MAX_CATEGORIES>,
+    entries: BoundedVec<EntryIn, MAX_ITEMS>,
+    next_category_id: u32,
+    migration_backup: Option<BackupNoteIn>,
+}
+
+impl IndexIn {
+    /// Builds the domain values. A date that is not a real day, a category name that
+    /// breaks its rule or a bad backup tag is refused here.
+    ///
+    /// # Errors
+    /// [`BodyError::Invalid`] for a broken field rule, [`BodyError::Malformed`] for a
+    /// bad backup tag.
+    pub(crate) fn into_index(self) -> Result<Index, BodyError> {
+        let wire_categories = self.categories.into_inner();
+        let mut categories = Vec::with_capacity(wire_categories.len());
+        for c in wire_categories {
+            categories.push(c.into_category().map_err(|_| BodyError::Invalid)?);
+        }
+        let wire_entries = self.entries.into_inner();
+        let mut entries = Vec::with_capacity(wire_entries.len());
+        for e in wire_entries {
+            entries.push(e.into_entry().map_err(|_| BodyError::Invalid)?);
+        }
+        let migration_backup = match self.migration_backup {
+            None => None,
+            Some(n) => {
+                let tag = n.tag.0.to_string();
+                if !BackupNote::tag_is_valid(&tag) {
+                    return Err(BodyError::Malformed);
+                }
+                Some(BackupNote {
+                    tag,
+                    prompt: n.prompt.into_prompt(),
+                })
+            }
+        };
+        Ok(Index {
+            settings: self.settings.into_settings(),
+            categories,
+            entries,
+            next_category_id: self.next_category_id,
+            migration_backup,
+        })
+    }
+}
+
+/// The sealed values of a record, by kind. The variant order is the item type tag and
+/// matches [`PublicOut`].
+#[derive(Serialize)]
+enum SealedDataOut<'a> {
+    Login {
+        password: &'a str,
+        notes: &'a str,
+    },
+    CryptoAddress {
+        address: &'a str,
+        memo: &'a str,
+        notes: &'a str,
+    },
+    RecoveryPhrase {
+        phrase: &'a str,
+        notes: &'a str,
+    },
+    SecureNote {
+        body: &'a str,
+    },
+}
+
+#[derive(Serialize)]
+enum SealedValueOut<'a> {
+    Secret(&'a str),
+    MultilineSecret(&'a str),
+    RecoveryCodes(Vec<&'a str>),
+}
+
+#[derive(Serialize)]
+struct SealedFieldOut<'a> {
+    position: u8,
+    value: SealedValueOut<'a>,
+}
+
+/// A record as written, after the 2-byte schema version.
+#[derive(Serialize)]
+pub(crate) struct RecordOut<'a> {
+    data: SealedDataOut<'a>,
+    custom: Vec<SealedFieldOut<'a>>,
+}
+
+impl<'a> RecordOut<'a> {
+    /// Borrows `r` for writing.
+    pub(crate) fn new(r: &'a RecordSecrets) -> Self {
+        let data = match &r.data {
+            SealedData::Login { password, notes } => SealedDataOut::Login {
+                password: password.expose(),
+                notes: notes.expose(),
+            },
+            SealedData::CryptoAddress {
+                address,
+                memo,
+                notes,
+            } => SealedDataOut::CryptoAddress {
+                address: address.expose(),
+                memo: memo.expose(),
+                notes: notes.expose(),
+            },
+            SealedData::RecoveryPhrase { phrase, notes } => SealedDataOut::RecoveryPhrase {
+                phrase: phrase.expose(),
+                notes: notes.expose(),
+            },
+            SealedData::SecureNote { body } => SealedDataOut::SecureNote {
+                body: body.expose(),
+            },
+        };
+        let custom = r
+            .custom
+            .iter()
+            .map(|f| SealedFieldOut {
+                position: f.position,
+                value: match &f.value {
+                    SealedValue::Secret(s) => SealedValueOut::Secret(s.expose()),
+                    SealedValue::MultilineSecret(s) => SealedValueOut::MultilineSecret(s.expose()),
+                    SealedValue::RecoveryCodes(codes) => SealedValueOut::RecoveryCodes(
+                        codes.iter().map(SecretText::expose).collect(),
+                    ),
+                },
+            })
+            .collect();
+        Self { data, custom }
+    }
+}
+
+#[derive(Deserialize)]
+enum SealedDataIn {
+    Login {
+        password: WireStr,
+        notes: WireStr,
+    },
+    CryptoAddress {
+        address: WireStr,
+        memo: WireStr,
+        notes: WireStr,
+    },
+    RecoveryPhrase {
+        phrase: WireStr,
+        notes: WireStr,
+    },
+    SecureNote {
+        body: WireStr,
+    },
+}
+
+#[derive(Deserialize)]
+enum SealedValueIn {
+    Secret(WireStr),
+    MultilineSecret(WireStr),
+    RecoveryCodes(BoundedVec<WireStr, MAX_RECOVERY_CODES>),
+}
+
+#[derive(Deserialize)]
+struct SealedFieldIn {
+    position: u8,
+    value: SealedValueIn,
+}
+
+/// A record as read. Nothing here is trusted until [`RecordSecrets::decode`] has
+/// checked it against its index entry.
+#[derive(Deserialize)]
+pub(crate) struct RecordIn {
+    data: SealedDataIn,
+    custom: BoundedVec<SealedFieldIn, MAX_CUSTOM_FIELDS>,
+}
+
+impl RecordIn {
+    /// Moves the strings into their wiping types.
+    pub(crate) fn into_secrets(self) -> RecordSecrets {
+        let data = match self.data {
+            SealedDataIn::Login { password, notes } => SealedData::Login {
+                password: password.secret(),
+                notes: notes.secret(),
+            },
+            SealedDataIn::CryptoAddress {
+                address,
+                memo,
+                notes,
+            } => SealedData::CryptoAddress {
+                address: address.secret(),
+                memo: memo.secret(),
+                notes: notes.secret(),
+            },
+            SealedDataIn::RecoveryPhrase { phrase, notes } => SealedData::RecoveryPhrase {
+                phrase: GatedSecret::new(phrase.secret()),
+                notes: notes.secret(),
+            },
+            SealedDataIn::SecureNote { body } => SealedData::SecureNote {
+                body: body.secret(),
+            },
+        };
+        let custom = self
+            .custom
+            .into_inner()
+            .into_iter()
+            .map(|f| SealedField {
+                position: f.position,
+                value: match f.value {
+                    SealedValueIn::Secret(s) => SealedValue::Secret(s.secret()),
+                    SealedValueIn::MultilineSecret(s) => SealedValue::MultilineSecret(s.secret()),
+                    SealedValueIn::RecoveryCodes(codes) => SealedValue::RecoveryCodes(
+                        codes
+                            .into_inner()
+                            .into_iter()
+                            .map(WireStr::secret)
+                            .collect(),
+                    ),
+                },
+            })
+            .collect();
+        RecordSecrets { data, custom }
+    }
 }
 
 #[cfg(test)]

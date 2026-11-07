@@ -221,6 +221,8 @@ no_network_gate() {
   fi
 }
 gate no-network no_network_gate
+# Phase B: an old CLI (newest v0.1.* tag, else origin/main) must refuse a v2 vault and leave it unchanged.
+gate compat-old-binary bash scripts/compat-old-binary.sh
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable
@@ -255,7 +257,7 @@ fuzz_gate() {
   cargo fmt --manifest-path fuzz/Cargo.toml --check || return 1
   cargo audit --file fuzz/Cargo.lock || return 1
   local t seeds
-  for t in parse_header parse_header_structured unpad open_fixed_key decode_body decode_body_v1 import_csv import_json; do
+  for t in parse_header parse_header_v2 parse_header_structured unpad open_fixed_key open_v2_fixed_key decode_body decode_index decode_record decode_body_v1 import_csv import_json; do
     mkdir -p "fuzz/corpus/$t"
     seeds=""
     if [ -d "fuzz/seeds/$t" ]; then seeds="fuzz/seeds/$t"; fi

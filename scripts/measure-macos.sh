@@ -219,7 +219,7 @@ def fixtures():
         if len(re.findall(rb'(?:^|[\r\n])[0-9a-f]{8}\tlogin\tMeasure [0-9]{4}\t', listing)) != count:
             raise RuntimeError('CLI list did not verify the fixture count')
         source.unlink()
-    notes.append('Release CLI imports and a fresh CLI list verified 5 and 1,000 items. Default Argon2id: 256 MiB, 3 passes, 1 lane.')
+    notes.append('Release CLI imports and a fresh CLI list verified 5 and 1,000 items. Vaults are format v2 (header, index and per-item records), so the unlock, memory and list rows measure the v2 read path. Default Argon2id: 256 MiB, 3 passes, 1 lane.')
 
 
 class NativeUI:

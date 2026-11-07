@@ -332,6 +332,20 @@ fn reveal_hides_after_30s() {
 }
 
 #[test]
+fn text_field_shows_secret_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _clock, _fake, _id) = open(dir.path());
+    select(&mut harness, LOGIN);
+    click(&mut harness, "Edit");
+    click(&mut harness, messages::ADD_FIELD);
+    assert_eq!(
+        count(&harness, messages::TEXT_FIELD_HINT),
+        1,
+        "a new Text field says to use a Secret field for sensitive values"
+    );
+}
+
+#[test]
 fn label_suggestion_fills_and_free_text_stays() {
     let dir = tempfile::tempdir().unwrap();
     let (mut harness, _clock, _fake, _id) = open(dir.path());
@@ -396,7 +410,7 @@ fn login_edit_keeps_custom_fields() {
     session
         .unlock(&MasterPassword::new(PASSWORD.to_owned()))
         .unwrap();
-    let item = session.item(id).unwrap();
+    let item = session.open_item(id).unwrap();
     assert_eq!(item.title(), RENAMED);
     assert_eq!(item.fields().len(), 1);
     assert_eq!(item.fields()[0].label(), "PIN");
@@ -444,11 +458,13 @@ fn edit_fields_on_a_note_saves_to_disk() {
     session
         .unlock(&MasterPassword::new(PASSWORD.to_owned()))
         .unwrap();
-    let note = session
-        .active_items()
+    let note_id = session
+        .active_entries()
         .unwrap()
-        .find(|item| item.title() == NOTE)
-        .expect("the note");
+        .find(|e| e.title() == NOTE)
+        .expect("the note")
+        .id();
+    let note = session.open_item(note_id).unwrap();
     let labels: Vec<&str> = note.fields().iter().map(CustomField::label).collect();
     assert_eq!(
         labels,

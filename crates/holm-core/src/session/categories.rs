@@ -13,7 +13,7 @@ impl<S: VaultStore> Session<S> {
     /// # Errors
     /// [`CoreError::Locked`].
     pub fn categories(&self) -> Result<&[Category], CoreError> {
-        Ok(&self.unlocked()?.data.categories)
+        Ok(&self.unlocked()?.state.index.categories)
     }
 
     /// Adds a category and saves.
@@ -24,7 +24,7 @@ impl<S: VaultStore> Session<S> {
     pub fn add_category(&mut self, name: &str) -> Result<CategoryId, CoreError> {
         self.unlocked()?;
         validate_category_name(name)?;
-        let data = &mut self.unlocked_mut()?.data;
+        let data = &mut self.unlocked_mut()?.state.index;
         if data.categories.len() >= MAX_CATEGORIES {
             return Err(CoreError::TooManyCategories);
         }
@@ -42,7 +42,8 @@ impl<S: VaultStore> Session<S> {
             name: Text::new(name.trim().to_owned()),
         });
         data.next_category_id = next;
-        self.commit_or_undo(move |d| {
+        self.commit_or_undo(move |st| {
+            let d = &mut st.index;
             d.categories.pop();
             d.next_category_id = old_next;
         })?;
@@ -57,7 +58,7 @@ impl<S: VaultStore> Session<S> {
     pub fn rename_category(&mut self, id: CategoryId, name: &str) -> Result<(), CoreError> {
         self.unlocked()?;
         validate_category_name(name)?;
-        let data = &mut self.unlocked_mut()?.data;
+        let data = &mut self.unlocked_mut()?.state.index;
         let pos = data
             .categories
             .iter()
@@ -75,7 +76,7 @@ impl<S: VaultStore> Session<S> {
             &mut data.categories[pos].name,
             Text::new(name.trim().to_owned()),
         );
-        self.commit_or_undo(move |d| d.categories[pos].name = old)
+        self.commit_or_undo(move |st| st.index.categories[pos].name = old)
     }
 
     /// Deletes a category and saves. Its items (trashed ones too) become
@@ -84,7 +85,7 @@ impl<S: VaultStore> Session<S> {
     /// # Errors
     /// [`CoreError::Locked`], [`CoreError::UnknownCategory`], or the errors of a save.
     pub fn delete_category(&mut self, id: CategoryId) -> Result<usize, CoreError> {
-        let data = &mut self.unlocked_mut()?.data;
+        let data = &mut self.unlocked_mut()?.state.index;
         let pos = data
             .categories
             .iter()
@@ -92,17 +93,18 @@ impl<S: VaultStore> Session<S> {
             .ok_or(CoreError::UnknownCategory)?;
         let cat = data.categories.remove(pos);
         let mut moved: Vec<usize> = Vec::new();
-        for (i, item) in data.items.iter_mut().enumerate() {
-            if item.category == Some(id) {
-                item.category = None;
+        for (i, entry) in data.entries.iter_mut().enumerate() {
+            if entry.category == Some(id) {
+                entry.category = None;
                 moved.push(i);
             }
         }
         let n = moved.len();
-        self.commit_or_undo(move |d| {
+        self.commit_or_undo(move |st| {
+            let d = &mut st.index;
             d.categories.insert(pos, cat);
             for i in moved {
-                d.items[i].category = Some(id);
+                d.entries[i].category = Some(id);
             }
         })?;
         Ok(n)
@@ -236,7 +238,7 @@ mod tests {
     #[test]
     fn category_id_overflow_is_too_many() {
         let (mut s, _) = created();
-        s.unlocked_mut().unwrap().data.next_category_id = u32::MAX;
+        s.unlocked_mut().unwrap().state.index.next_category_id = u32::MAX;
         assert_eq!(s.add_category("late"), Err(CoreError::TooManyCategories));
         assert_eq!(s.categories().unwrap().len(), 3);
     }

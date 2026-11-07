@@ -836,7 +836,7 @@ mod tests {
         let id = session.add_item(input).unwrap();
         session.set_favourite(id, true).unwrap();
 
-        let mut form = LoginForm::from_item(session.item(id).unwrap()).unwrap();
+        let mut form = LoginForm::from_item(&session.open_item(id).unwrap()).unwrap();
         let input = form
             .take_input(SecretText::new(String::new()), Vec::new())
             .expect("no custom fields");
@@ -884,7 +884,7 @@ mod tests {
         .unwrap();
         session.set_custom_fields(id, vec![field]).unwrap();
 
-        let mut form = LoginForm::from_item(session.item(id).unwrap()).expect("fits");
+        let mut form = LoginForm::from_item(&session.open_item(id).unwrap()).expect("fits");
         assert!(!form.buffers_empty());
         assert_eq!(form.secret_char_count(), {
             "EXAMPLE-zq9-pass".chars().count() + secret.chars().count()

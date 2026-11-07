@@ -132,7 +132,11 @@ mod macos {
         session.add_item(login("on exFAT")).unwrap();
         session.lock();
         session.unlock(&pw).unwrap();
-        let titles: Vec<&str> = session.active_items().unwrap().map(|i| i.title()).collect();
+        let titles: Vec<&str> = session
+            .active_entries()
+            .unwrap()
+            .map(|i| i.title())
+            .collect();
         assert_eq!(titles, ["on exFAT"]);
         assert!(temps(&mnt).is_empty(), "{:?}", temps(&mnt));
     }

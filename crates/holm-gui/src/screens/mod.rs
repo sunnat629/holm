@@ -3,6 +3,7 @@
 //! and a form's [`SecretInput`](crate::secret_input::SecretInput) buffers wipe
 //! themselves on drop.
 
+pub(crate) mod backup_prompt;
 pub(crate) mod create;
 #[allow(
     dead_code,
