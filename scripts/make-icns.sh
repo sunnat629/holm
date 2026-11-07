@@ -9,8 +9,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-src="packaging/macos/holm-icon-1024.png"
+# Usage: make-icns.sh [out.icns [source-1024.png]]. The source defaults to the committed icon,
+# so a candidate logo can be tried without replacing it.
 out="${1:-target/bundle/Holm.icns}"
+src="${2:-packaging/macos/holm-icon-1024.png}"
+[ -f "$src" ] || { echo "make-icns.sh: no such source PNG: $src" >&2; exit 1; }
 work="$(mktemp -d)"
 set_dir="$work/Holm.iconset"
 mkdir -p "$set_dir" "$(dirname "$out")"
