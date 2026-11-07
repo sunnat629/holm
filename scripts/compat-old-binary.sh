@@ -5,14 +5,16 @@
 # (the CLI reads the password only from /dev/tty). Expected: non-zero exit, the old
 # "isn't a Holm vault" message (old binaries do not know format version 2, so they cannot
 # say "newer version"), and an unchanged file.
-# Usage: scripts/compat-old-binary.sh [REF]   REF defaults to the newest v0.1.* tag, else origin/main.
+# Usage: scripts/compat-old-binary.sh [REF]   REF defaults to the newest v0.1.* tag, else the pinned
+# commit OLD_MAIN_FALLBACK (the last main before Phase B, which cannot read v2). origin/main is
+# no longer old: it contains Phase B.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$(pwd -P)"
 ref="${1:-}"
 if [ -z "$ref" ]; then
   ref="$(git tag --list 'v0.1.*' --sort=-v:refname | head -n 1)"
-  [ -n "$ref" ] || ref="origin/main"
+  [ -n "$ref" ] || ref="7f751d8" # OLD_MAIN_FALLBACK: merge of perf/phase-a, no format v2
 fi
 git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || { echo "FAIL  compat: unknown ref $ref"; exit 1; }
 
