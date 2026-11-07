@@ -221,6 +221,9 @@ no_network_gate() {
   fi
 }
 gate no-network no_network_gate
+# Timing budgets (unlock KDF within 25% of the recorded baseline, search over 10,000 items,
+# `holm --version` startup). Budgets live in scripts/bench-budgets.env. Release build.
+gate bench bash scripts/bench-gates.sh
 
 # The oracle is its own workspace (oracle/Cargo.toml), so the root gates above do not
 # cover it. The root cargo-deny ban list does not apply there either: libsodium-sys-stable

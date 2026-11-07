@@ -77,3 +77,9 @@ A crash writes its input to `fuzz/artifacts/<target>/crash-<hash>`.
 ## Deferred
 
 - The `cargo-cyclonedx` SBOM moves to Phase 6.
+
+## Long runs
+
+`bash scripts/fuzz-long.sh [minutes-per-target]` (default 1440) runs every target under
+`nice -n 19`, keeps the corpora in `fuzz/corpus/` and writes logs and any crash input under
+`fuzz/artifacts/` (git-ignored). It exits 1 if a target crashed. It is not part of `ci-local.sh`.

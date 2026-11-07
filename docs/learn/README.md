@@ -72,6 +72,7 @@ security, three exercises, and what to read next in
 | 64 | [Signing, notarising and the hardened runtime](64-signing-and-notarising.md): ad-hoc against Developer ID, why only the Account Holder can make the certificate, a script that fails closed, `--options runtime` with no entitlements, the secure timestamp, `notarytool` with a keychain profile, stapling for offline Macs, and `spctl` checks. Kotlin: Compose Desktop `notarizeDmg` and the JIT entitlements a JVM needs. |
 | 65 | [Safe wrappers around AppKit](65-safe-wrappers-around-appkit.md): `objc2` calls that are safe once you hold a `MainThreadMarker`, why the best `unsafe` is none, a `// SAFETY:` comment when it is needed, `forbid(unsafe_code)` on the new module, a trait so the GUI tests use a fake, and a `Result` that says `Unsupported` off the Mac. Kotlin: JNA or JNI to reach native calls, with no marker type for the thread. |
 | 66 | [Memory hygiene and release profiles](66-memory-hygiene-and-release-profiles.md): `RLIMIT_CORE`, a zero-on-free global allocator, volatile writes, why we skipped `mlock`, fat LTO and strip, with a before and after table. |
+| 67 | [Proving it ourselves](67-reproducible-builds-sbom-fuzzing-mutation-testing.md): reproducible builds, SBOMs, long fuzz runs, mutation testing and timing gates. |
 
 ## Side tracks
 

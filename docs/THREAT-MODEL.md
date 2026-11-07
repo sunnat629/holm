@@ -4,8 +4,9 @@ Holm is a local-only, offline password and secrets vault: one encrypted file, no
 no cloud, no network. This page says who we defend against, who we do not, and which
 claims we refuse to make.
 
-**Status:** this page describes the v1 design. Defences listed below are planned, not
-shipped, until v1 is released. Each one will be backed by a test, or marked as a limit.
+**Status:** this page describes the v1 design. Memory hygiene (Phase A) and the trust tooling
+(Phase C) are in the repository; the signed release and the independent audit are not done yet.
+Each defence is backed by a test, or marked as a limit.
 
 ## What we protect
 
@@ -21,7 +22,8 @@ Item contents are encrypted. The header is not secret, but every header field is
 | Person at an unlocked, unattended computer | Partly | Auto-lock, lock on minimise, lock on sleep, screen lock and logout (the GUI listens for all four; `holm shell` locks on sleep and on a fast user switch or the login window, seen as a new `/dev/console` owner, but not on a screen lock (Ctrl-Cmd-Q) with neither, where it relies on auto-lock), password re-entry for recovery phrases and settings changes. |
 | Clipboard snooping and clipboard history | Partly | Auto-clear in the CLI, the shell and the GUI, plus OS hints that ask clipboard managers not to record. |
 | Screen recording or screenshots | Partly, best effort | Exclude the window from capture where the OS allows it (Windows yes, macOS partly, Linux no). |
-| Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Planned: signed releases, reproducible builds, SBOM. |
+| Malicious or fake Holm build, poisoned dependency | Yes, via process | Dependency gates (cargo-deny, cargo-audit, cargo-vet) run locally before every merge. Phase C adds: a reproducible-build check (`scripts/repro-check.sh`), a CycloneDX SBOM per binary (`scripts/sbom.sh`, also written next to the DMG), long fuzz runs (`scripts/fuzz-long.sh`), mutation testing (cargo-mutants on `holm-crypto` and `holm-core`, report in `docs/security/`) and timing gates (`scripts/bench-gates.sh`). Signed releases are a Phase 6 step. These let a reviewer rebuild and compare; they do not prove the source is free of bugs. |
+| Crash dump or freed memory read later (same machine) | Partly | Core dumps are off from the first line of `holm-gui` and `holm` (`RLIMIT_CORE` 0). A global allocator zeroes every block before it is freed, and a lock wipes the window state. Stack copies, AppKit and GPU driver memory and the OS swap are not covered. No `mlock` (see DECISIONS). |
 | Malware running as the same user while unlocked | No | Cannot be defended against. Documented plainly. |
 | Rollback (swapping in an older copy of the file) | No | Documented. Needs outside state Holm does not have. |
 
