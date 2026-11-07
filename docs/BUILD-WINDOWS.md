@@ -2,6 +2,8 @@
 
 ## Status: read this first
 
+The `windows` branch is where the Windows port is happening. Until this note changes, the app still prints the macOS-only message on Windows.
+
 Windows is untested and not supported for real secrets. Use a throwaway test vault only.
 
 - **The window does not open on Windows yet.** Every GUI module is built for macOS only
@@ -25,18 +27,14 @@ plain-Rust tests pass there. That is still useful, and it is what the steps belo
    workload. `libsodium-sys-stable` needs the MSVC compiler and linker.
 2. **rustup** from <https://rustup.rs>. The repo's `rust-toolchain.toml` pins Rust
    1.99.1 with rustfmt and clippy, and rustup installs it on the first `cargo` command.
-3. **Git**, and **GitHub CLI** (`gh`). The repo is private, so sign in first:
-
-```powershell
-gh auth login
-```
+3. **Git** (the repo is public, no sign-in needed).
 
 ## Clone and build
 
 ```powershell
-gh repo clone sunnat629/holm
+git clone https://github.com/sunnat629/holm
 cd holm
-git checkout phase-5
+git checkout windows
 cargo build --release -p holm-gui
 cargo test --workspace
 ```
