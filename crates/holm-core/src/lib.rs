@@ -77,6 +77,9 @@ pub mod body;
 pub mod category;
 pub mod clock;
 pub mod envelope;
+// Until the session reads and writes format v2 (task B9), nothing outside tests calls these.
+#[allow(dead_code)]
+pub(crate) mod envelope_v2;
 // The `fuzzing` feature seals and opens vaults with a raw KEK and no Argon2. It builds
 // only under cargo-fuzz, which sets `--cfg fuzzing`, so no normal or `--all-features`
 // build can ship it. scripts/ci-local.sh (fuzzing-guard) proves this still fails.
@@ -93,10 +96,16 @@ pub mod format;
 pub mod fuzzing;
 pub mod generator;
 pub mod import;
+// Until the session reads and writes format v2 (task B9), nothing outside tests calls these.
+#[allow(dead_code)]
+pub mod index;
 pub mod item;
 pub mod padding;
 // Own CSV and JSON code for import and export.
 pub(crate) mod plain;
+// Until the session reads and writes format v2 (task B9), nothing outside tests calls these.
+#[allow(dead_code)]
+pub(crate) mod record;
 pub mod rules;
 pub mod search;
 pub mod session;
@@ -105,4 +114,6 @@ pub mod store;
 pub mod strength;
 pub mod text;
 pub mod throttle;
+// Until the session reads and writes format v2 (task B9), nothing outside tests calls these.
+#[allow(dead_code)]
 pub(crate) mod wire;

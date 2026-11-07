@@ -294,7 +294,7 @@ pub(crate) fn verify_password(
 /// Moves an unwrapped DEK into a key. A length error is unreachable (the
 /// wrapped DEK is 48 bytes, so a successful unwrap gives exactly 32), but if
 /// it ever happened it would come out as the one opaque error.
-fn dek_from_unwrapped(raw: &SecretBuf) -> Result<SecretKey, VaultError> {
+pub(crate) fn dek_from_unwrapped(raw: &SecretBuf) -> Result<SecretKey, VaultError> {
     SecretKey::from_slice(raw.expose()).map_err(|_| VaultError::WrongPasswordOrCorrupt)
 }
 
