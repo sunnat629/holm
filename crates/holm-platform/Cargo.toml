@@ -30,7 +30,9 @@ gui-window = [
 ]
 # The no-echo terminal prompt for holm-cli (Unix only; elsewhere `tty` reports
 # `Unsupported`). Uses rustix's safe termios API, so the crate stays free of `unsafe`.
-tty = ["dep:rustix"]
+# rustix is a non-optional Unix dep (core-dump disable uses it too); this feature
+# only gates the tty module.
+tty = []
 # The concealed clipboard for holm-cli's `--copy` (macOS only; the dep is target-gated,
 # so elsewhere `clipboard::ConcealedClipboard::open` reports `Unavailable`). arboard's
 # safe API marks each copy `org.nspasteboard.ConcealedType`.
@@ -50,7 +52,7 @@ block2 = { workspace = true, optional = true }
 arboard = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, optional = true }
+rustix = { workspace = true }
 
 [dev-dependencies]
 tempfile.workspace = true

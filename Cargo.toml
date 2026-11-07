@@ -45,10 +45,10 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = "2"
 subtle = "2.6"
 zxcvbn = { version = "3", default-features = false }
-# holm-platform's `tty` feature (holm-cli only): the no-echo password prompt. Terminal
-# modes only, through rustix's safe API. Pinned to the version the GUI graph already
-# locks, so the feature adds no crate to Cargo.lock.
-rustix = { version = "=1.1.5", default-features = false, features = ["std", "termios"] }
+# holm-platform on Unix: the no-echo password prompt (`tty` feature, termios) and
+# disabling core dumps (`process`). Pinned to the version the GUI graph already
+# locks, so neither use adds a crate to Cargo.lock.
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "termios", "process"] }
 
 # GUI (holm-gui, macOS target only). Exact pins: a GUI bump is a reviewed change.
 # eframe: `glow` renderer and `accesskit` (spec §10 screen readers) only. Off on purpose:
@@ -87,3 +87,12 @@ egui_kittest = { version = "=0.37.0", default-features = false }
 # so tests that derive keys stay fast. Our own code stays easy to debug.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Fat LTO and one codegen unit let the compiler see the whole program and
+# shrink the release binary. Symbols and debug info are stripped, so a shipped
+# build does not carry source paths. Panic stays on unwind: the GUI worker
+# wakes the UI when its thread unwinds. Setting panic to abort would skip that.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

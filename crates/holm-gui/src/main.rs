@@ -6,6 +6,12 @@
 
 use std::process::ExitCode;
 
+/// Every freed block is zeroed before it goes back to the system, so a secret that was
+/// once in the heap does not linger in freed pages.
+#[global_allocator]
+static ALLOC: holm_platform::zeroing_alloc::ZeroingAlloc =
+    holm_platform::zeroing_alloc::ZeroingAlloc::new();
+
 #[cfg(not(target_os = "macos"))]
 fn main() -> ExitCode {
     eprintln!("Holm's window runs on macOS only for now.");
@@ -14,6 +20,9 @@ fn main() -> ExitCode {
 
 #[cfg(target_os = "macos")]
 fn main() -> ExitCode {
+    if holm_platform::hardening::disable_core_dumps().is_err() {
+        eprintln!("Holm could not disable core dumps.");
+    }
     macos::run()
 }
 
@@ -58,6 +67,12 @@ mod macos {
                 .with_inner_size([900.0, 600.0]),
             renderer: eframe::Renderer::Glow,
             clipboard_shortcuts: false,
+            // A flat 2D UI needs none of these. They are the eframe defaults, spelled out
+            // so a dependency bump cannot quietly add a depth, stencil or MSAA buffer
+            // (each one grows the window's GPU memory).
+            depth_buffer: 0,
+            stencil_buffer: 0,
+            multisampling: 0,
             ..Default::default()
         }
     }
