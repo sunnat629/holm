@@ -168,3 +168,61 @@ fn write_golden_vault() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN_PATH);
     std::fs::write(path, build_golden()).unwrap();
 }
+
+/// A store that keeps what it is given, including one backup copy.
+struct KeepingStore {
+    file: Vec<u8>,
+    backup: Option<(String, Vec<u8>)>,
+}
+
+impl VaultStore for KeepingStore {
+    fn read(&mut self) -> Result<Vec<u8>, StoreError> {
+        Ok(self.file.clone())
+    }
+    fn replace(&mut self, bytes: &[u8]) -> Result<(), StoreError> {
+        self.file = bytes.to_vec();
+        Ok(())
+    }
+    fn create_new(&mut self, _: &[u8]) -> Result<(), StoreError> {
+        Err(StoreError::Io(std::io::ErrorKind::PermissionDenied))
+    }
+    fn remove_stale_temps(&mut self) -> Result<usize, StoreError> {
+        Ok(0)
+    }
+    fn keep_backup_copy(&mut self, tag: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        self.backup = Some((tag.to_owned(), bytes.to_vec()));
+        Ok(())
+    }
+}
+
+/// The committed v1 file migrates to v2 on the first save, keeps the v1 bytes as a
+/// backup, and the saved v2 file opens with the same password and no migration.
+#[test]
+fn golden_v1_migrates() {
+    let store = KeepingStore {
+        file: GOLDEN.to_vec(),
+        backup: None,
+    };
+    let mut s = Session::new(store, Box::new(SystemClock::new()));
+    s.unlock(&pw(PASSWORD)).unwrap();
+    assert!(s.migration_pending());
+    s.save().unwrap();
+    assert!(!s.migration_pending());
+    let saved = s.store().file.clone();
+    let (tag, kept) = s.store().backup.clone().unwrap();
+    assert!(tag.starts_with("v1-"));
+    assert_eq!(kept, GOLDEN, "the backup is the v1 file, byte for byte");
+    assert_eq!(&saved[8..10], &2u16.to_le_bytes(), "now format v2");
+    assert_ne!(saved, GOLDEN);
+
+    let mut again = Session::new(
+        KeepingStore {
+            file: saved,
+            backup: None,
+        },
+        Box::new(SystemClock::new()),
+    );
+    again.unlock(&pw(PASSWORD)).unwrap();
+    assert!(!again.migration_pending());
+    assert_eq!(again.active_entries().map(Iterator::count), Ok(0));
+}

@@ -25,6 +25,7 @@ use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use super::FieldIo;
+use super::backup_prompt::{BackupChoice, show_backup_prompt};
 use super::item_view::{ItemAction, ItemView, show_item};
 use super::login_form::{FormAction, LineBuf, LoginForm, NewKind, line_field};
 use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
@@ -76,6 +77,8 @@ pub(crate) enum VaultAction {
     SaveAndLock,
     /// The lock dialog's "Lock anyway": lock and discard unsaved changes.
     LockAnyway,
+    /// The backup prompt's "Ask me later": hide it until the next unlock.
+    DismissBackupPrompt,
     /// Open the native file dialog now: the placeholder frame has been painted.
     ChooseFile(DialogKind),
 }
@@ -112,6 +115,8 @@ pub(crate) struct VaultView {
     /// The fixed line for that failed write. Kept apart from `status` so navigation and
     /// other messages never hide it while the session is dirty.
     save_error: Option<&'static str>,
+    /// The fixed line for a failed delete of the migration backup copy.
+    backup_error: Option<&'static str>,
     /// Whether the unsaved-changes dialog of a manual lock is open.
     lock_dialog: bool,
     /// The search box. Wiped when the view drops on lock.
@@ -147,6 +152,16 @@ pub(crate) struct VaultView {
 
 /// Whether a failed import left nothing added: the vault was too big to save, or the
 /// batch had too many items.
+/// After a failed "delete the old copy" job: true when the copy was removed and only
+/// the save after it failed. The session then holds the note as done (no prompt) and is
+/// dirty. If the copy could not be removed, the prompt is still up.
+fn delete_failure_was_the_save(
+    prompt: Option<holm_core::index::BackupPrompt>,
+    dirty: bool,
+) -> bool {
+    prompt.is_none() && dirty
+}
+
 fn import_rolled_back(e: &CoreError) -> bool {
     matches!(
         e,
@@ -176,6 +191,7 @@ impl VaultView {
             status: None,
             save_failed: false,
             save_error: None,
+            backup_error: None,
             lock_dialog: false,
             search: LineBuf::new(),
             searched: Zeroizing::new(String::new()),
@@ -315,6 +331,21 @@ impl VaultView {
         if kind == JobKind::RevealPhrase {
             return;
         }
+        if kind == JobKind::DeleteBackup {
+            // Only the prompt changes: a form or reveal in the detail pane stays.
+            self.backup_error = None;
+            if let Err(e) = result {
+                if delete_failure_was_the_save(session.backup_prompt(), session.is_dirty()) {
+                    // The copy is gone; only the save after it failed. Say so, and let
+                    // the save banner retry. "It is still there" would be untrue.
+                    self.save_error = Some(messages::save_error(e));
+                    self.save_failed = true;
+                } else {
+                    self.backup_error = Some(messages::BACKUP_DELETE_FAILED);
+                }
+            }
+            return;
+        }
         self.rows_stale = true;
         self.item = ItemView::new();
         self.status = None;
@@ -350,15 +381,19 @@ impl VaultView {
                     (Some(input), id @ Some(_)) => DetailMode::Edit(Box::new(
                         LoginForm::from_input(id, input, messages::TOO_LARGE_TO_SAVE),
                     )),
-                    (None, Some(id)) => {
-                        match session.item(id).ok().and_then(LoginForm::from_item) {
+                    (None, Some(id)) => match session.open_item(id) {
+                        Ok(item) => match LoginForm::from_item(&item) {
                             Some(mut f) => {
                                 f.error = Some(messages::TOO_LARGE_TO_SAVE);
                                 DetailMode::Edit(Box::new(f))
                             }
                             None => DetailMode::View,
+                        },
+                        Err(e) => {
+                            self.status = Some(messages::item_error(&e));
+                            DetailMode::View
                         }
-                    }
+                    },
                     (_, None) => DetailMode::Empty,
                 };
             }
@@ -379,6 +414,7 @@ impl VaultView {
                 | JobKind::Import
                 | JobKind::Export
                 | JobKind::Backup
+                | JobKind::DeleteBackup
                 | JobKind::RevealPhrase,
                 _,
             ) => {}
@@ -502,6 +538,21 @@ impl VaultView {
                 ui.add_space(8.0);
             });
         });
+        let mut prompt_job = None;
+        if let Some(prompt) = session.and_then(Session::backup_prompt) {
+            egui::Panel::top("backup-prompt").show(ui, |ui| {
+                match show_backup_prompt(ui, prompt, self.backup_error) {
+                    Some(BackupChoice::Delete) => {
+                        prompt_job = Some(VaultAction::Job(Job::DeleteMigrationBackup));
+                    }
+                    Some(BackupChoice::Later) => {
+                        self.backup_error = None;
+                        prompt_job = Some(VaultAction::DismissBackupPrompt);
+                    }
+                    None => {}
+                }
+            });
+        }
         if let Some(left) = idle_left {
             egui::Panel::bottom("vault-status").show(ui, |ui| {
                 let amber = ui.visuals().warn_fg_color;
@@ -551,7 +602,10 @@ impl VaultView {
             .as_ref()
             .and_then(|t| t.dialog_due(ui.ctx().cumulative_frame_nr()))
             .map(VaultAction::ChooseFile);
-        action.or(dialog).or(job.map(VaultAction::Job))
+        action
+            .or(prompt_job)
+            .or(dialog)
+            .or(job.map(VaultAction::Job))
     }
 
     /// Takes the file dialog's answer (`None` when cancelled).
@@ -833,19 +887,33 @@ impl VaultView {
             return None;
         };
         let id = form.id;
-        let (notes, urls) = id
-            .and_then(|id| session.and_then(|s| s.item(id).ok()))
-            .and_then(|item| match item.data() {
-                ItemData::Login { urls, notes, .. } => Some((
-                    SecretText::new(notes.expose().to_owned()),
-                    urls.iter()
-                        .skip(1)
-                        .map(|u| Text::new(u.as_str().to_owned()))
-                        .collect::<Vec<_>>(),
-                )),
-                _ => None,
-            })
-            .unwrap_or_else(|| (SecretText::new(String::new()), Vec::new()));
+        let (notes, urls) = match id {
+            None => (SecretText::new(String::new()), Vec::new()),
+            Some(id) => match session.map(|s| s.open_item(id)) {
+                Some(Ok(item)) => match item.data() {
+                    ItemData::Login { urls, notes, .. } => (
+                        SecretText::new(notes.expose().to_owned()),
+                        urls.iter()
+                            .skip(1)
+                            .map(|u| Text::new(u.as_str().to_owned()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => (SecretText::new(String::new()), Vec::new()),
+                },
+                // The notes and extra addresses cannot be read, so saving would
+                // silently drop them. Keep the form and say why.
+                Some(Err(e)) => {
+                    form.error = Some(messages::item_error(&e));
+                    self.mode = DetailMode::Edit(form);
+                    return None;
+                }
+                None => {
+                    form.error = Some(messages::ITEM_OPEN_FAILED);
+                    self.mode = DetailMode::Edit(form);
+                    return None;
+                }
+            },
+        };
         let input = match form.take_input(notes, urls) {
             Ok(input) => input,
             Err(_) => {
@@ -888,24 +956,29 @@ impl VaultView {
         throttle: &ThrottleStatus,
         io: &mut FieldIo<'_>,
     ) -> Option<Job> {
-        let item = self
-            .selected
-            .and_then(|id| session.and_then(|s| s.item(id).ok()));
-        let Some(item) = item else {
+        let (Some(id), Some(session)) = (self.selected, session) else {
             ui.label(messages::SELECT_OR_ADD);
             return None;
         };
-        match show_item(ui, item, &mut self.item, now, throttle, io) {
+        let Ok(entry) = session.entry(id) else {
+            ui.label(messages::SELECT_OR_ADD);
+            return None;
+        };
+        match show_item(ui, entry, session, &mut self.item, now, throttle, io) {
             ItemAction::None => None,
             ItemAction::Job(job) => Some(job),
             ItemAction::Edit => {
                 self.item = ItemView::new();
-                match LoginForm::from_item(item) {
-                    Some(form) => {
-                        self.status = None;
-                        self.mode = DetailMode::Edit(Box::new(form));
-                    }
-                    None => self.status = Some(messages::SECRET_TOO_LONG),
+                // The item opens once, for the form, and drops at the end of this arm.
+                match session.open_item(id) {
+                    Ok(item) => match LoginForm::from_item(&item) {
+                        Some(form) => {
+                            self.status = None;
+                            self.mode = DetailMode::Edit(Box::new(form));
+                        }
+                        None => self.status = Some(messages::SECRET_TOO_LONG),
+                    },
+                    Err(e) => self.status = Some(messages::item_error(&e)),
                 }
                 None
             }
@@ -973,6 +1046,32 @@ mod tests {
             count_line(2, 2, Some(4)),
             "2 logins, 2 other items, 4 shown"
         );
+    }
+
+    #[test]
+    fn delete_failure_is_the_save_only_when_the_prompt_is_gone_and_dirty() {
+        use holm_core::index::BackupPrompt::{AfterPasswordChange, AfterUnlock};
+        // Copy removed (note is Done in memory), save failed: dirty.
+        assert!(delete_failure_was_the_save(None, true));
+        // The copy could not be removed: the prompt is still up.
+        assert!(!delete_failure_was_the_save(Some(AfterUnlock), true));
+        assert!(!delete_failure_was_the_save(
+            Some(AfterPasswordChange),
+            false
+        ));
+        assert!(!delete_failure_was_the_save(None, false));
+    }
+
+    #[test]
+    fn failed_delete_with_the_copy_still_there_shows_the_backup_error() {
+        let session = locked_session();
+        let mut view = VaultView::new();
+        let err = Err(CoreError::Store(
+            holm_core::store::StoreError::NotARegularFile,
+        ));
+        view.on_done(JobKind::DeleteBackup, &err, None, None, &session);
+        assert_eq!(view.backup_error, Some(messages::BACKUP_DELETE_FAILED));
+        assert!(!view.save_failed);
     }
 
     fn locked_session() -> Session<FsStore> {

@@ -14,7 +14,7 @@ use holm_core::category::{BUILT_IN_CATEGORIES, CategoryId};
 use holm_core::clock::SystemClock;
 use holm_core::envelope::VaultError;
 use holm_core::error::CoreError;
-use holm_core::format::Header;
+use holm_core::format::{ParsedHeader, parse_any};
 use holm_core::generator::{PasswordSpec, generate_password};
 use holm_core::import::{ImportFormat, MAX_IMPORT_BYTES, parse};
 use holm_core::item::{ItemData, ItemId, ItemInput, Timestamp};
@@ -59,6 +59,14 @@ struct Snap {
     fields: Vec<String>,
 }
 
+/// The password-hashing costs a saved file carries (the vault is format v2).
+fn kdf_of(file: &[u8]) -> KdfParams {
+    match parse_any(file).unwrap() {
+        ParsedHeader::V2(h, _, _) => h.kdf,
+        ParsedHeader::V1(..) => panic!("expected format v2"),
+    }
+}
+
 /// Everything the session shows: items (all active), categories and settings.
 #[derive(Debug, PartialEq)]
 struct View {
@@ -68,10 +76,10 @@ struct View {
 }
 
 fn view<S: VaultStore>(s: &mut Session<S>, password: &MasterPassword) -> View {
-    let ids: Vec<ItemId> = s.active_items().unwrap().map(|i| i.id()).collect();
+    let ids: Vec<ItemId> = s.active_entries().unwrap().map(|i| i.id()).collect();
     let mut items = BTreeMap::new();
     for id in ids {
-        let item = s.item(id).unwrap();
+        let item = s.open_item(id).unwrap();
         let (kind, fields): (&'static str, Vec<String>) = match item.data() {
             ItemData::Login {
                 username,
@@ -117,7 +125,7 @@ fn view<S: VaultStore>(s: &mut Session<S>, password: &MasterPassword) -> View {
         };
         if kind == "phrase" {
             snap.fields
-                .push(s.reveal_phrase(id, password).unwrap().to_owned());
+                .push(s.reveal_phrase(id, password).unwrap().expose().to_owned());
         }
         items.insert(id, snap);
     }
@@ -236,7 +244,7 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
     )
     .unwrap();
     s.trash(login).unwrap();
-    assert!(s.active_items().unwrap().all(|i| i.id() != login));
+    assert!(s.active_entries().unwrap().all(|i| i.id() != login));
     s.restore(login).unwrap();
     let mut weaker = s.settings().unwrap().clone();
     weaker.auto_lock_secs += 600;
@@ -246,7 +254,7 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
         Err(CoreError::PasswordRequired)
     ));
     s.update_settings(weaker.clone(), Some(&pw(PW))).unwrap();
-    assert_eq!(s.item(note).unwrap().title(), "Nötë, edited");
+    assert_eq!(s.open_item(note).unwrap().title(), "Nötë, edited");
     // Left in the trash across the password change and the backup.
     s.trash(note).unwrap();
     let edited = view(&mut s, &pw(PW));
@@ -263,14 +271,14 @@ fn round_trip<S: VaultStore, B: VaultStore>(store: S, mut backup: B) -> (Session
     ));
     s.unlock(&pw(NEW_PW)).unwrap();
     assert_eq!(view(&mut s, &pw(NEW_PW)), edited);
-    assert!(s.item(note).unwrap().trashed().is_some());
+    assert!(s.open_item(note).unwrap().trashed().is_some());
 
     // A backup opens in a new session with the same items.
     s.save_backup(&mut backup).unwrap();
     let mut b = Session::new(backup, Box::new(SystemClock::new()));
     b.unlock(&pw(NEW_PW)).unwrap();
     assert_eq!(view(&mut b, &pw(NEW_PW)), edited);
-    assert!(b.item(note).unwrap().trashed().is_some());
+    assert!(b.open_item(note).unwrap().trashed().is_some());
     (s, b)
 }
 
@@ -353,8 +361,7 @@ fn full_round_trip_on_disk() {
     drop((s, b));
     for path in [&vault, &backup] {
         let bytes = fs::read(path).unwrap();
-        let (header, _) = Header::parse(&bytes).unwrap();
-        assert_eq!(header.kdf, RAISED);
+        assert_eq!(kdf_of(&bytes), RAISED);
     }
     assert!(
         temps(dir.path()).is_empty(),
@@ -395,6 +402,6 @@ fn full_round_trip_in_memory() {
     let (s, b) = round_trip(MemStore::default(), MemStore::default());
     let main = s.store().file.as_deref().unwrap();
     let copy = b.store().file.as_deref().unwrap();
-    assert_eq!(Header::parse(main).unwrap().0.kdf, RAISED);
-    assert_eq!(Header::parse(copy).unwrap().0.kdf, RAISED);
+    assert_eq!(kdf_of(main), RAISED);
+    assert_eq!(kdf_of(copy), RAISED);
 }

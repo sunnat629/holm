@@ -28,6 +28,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "parse_header_v2"
+path = "fuzz_targets/parse_header_v2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "parse_header_structured"
 path = "fuzz_targets/parse_header_structured.rs"
 test = false
@@ -49,8 +56,29 @@ doc = false
 bench = false
 
 [[bin]]
+name = "open_v2_fixed_key"
+path = "fuzz_targets/open_v2_fixed_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "decode_body"
 path = "fuzz_targets/decode_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_index"
+path = "fuzz_targets/decode_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_record"
+path = "fuzz_targets/decode_record.rs"
 test = false
 doc = false
 bench = false

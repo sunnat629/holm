@@ -5,15 +5,16 @@ use std::io::Write;
 use std::path::Path;
 
 use holm_core::category::name_key;
-use holm_core::fields::{FieldKind, FieldValue, codes_left};
+use holm_core::fields::FieldKind;
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
 };
-use holm_core::item::{ItemData, ItemType};
+use holm_core::item::ItemType;
 use holm_core::search::{CategoryFilter, Query, View};
 use holm_core::session::Session;
 use holm_core::strength;
+use holm_core::view::{FieldDetail, FieldView, PublicView};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
@@ -151,7 +152,7 @@ pub fn get(
     out: &mut dyn Write,
 ) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
-    let item = session.item(id).map_err(|_| CliError::NotFound)?;
+    let item = session.entry(id).map_err(|_| CliError::NotFound)?;
     let category = match item.category() {
         None => None,
         Some(c) => session
@@ -166,33 +167,33 @@ pub fn get(
     writeln!(out, "id: {}", id.to_hex())?;
     writeln!(out, "title: {}", clean(item.title()))?;
     writeln!(out, "type: {}", type_name(item.item_type()))?;
-    match item.data() {
-        ItemData::Login { username, urls, .. } => {
-            writeln!(out, "username: {}", clean(username.as_str()))?;
+    match item.public() {
+        PublicView::Login { username, urls, .. } => {
+            writeln!(out, "username: {}", clean(username))?;
             for url in urls {
-                writeln!(out, "url: {}", clean(url.as_str()))?;
+                writeln!(out, "url: {}", clean(url))?;
             }
             writeln!(out, "password: {HIDDEN}")?;
             writeln!(out, "notes: {HIDDEN}")?;
         }
-        ItemData::CryptoAddress { chain, .. } => {
-            writeln!(out, "chain: {}", clean(chain.as_str()))?;
+        PublicView::CryptoAddress { chain, .. } => {
+            writeln!(out, "chain: {}", clean(chain))?;
             writeln!(out, "address: {HIDDEN}")?;
             writeln!(out, "memo: {HIDDEN}")?;
             writeln!(out, "notes: {HIDDEN}")?;
         }
-        ItemData::RecoveryPhrase { .. } => {
+        PublicView::RecoveryPhrase { .. } => {
             writeln!(out, "phrase: {HIDDEN}")?;
             writeln!(out, "notes: {HIDDEN}")?;
         }
-        ItemData::SecureNote { .. } => {
+        PublicView::SecureNote { .. } => {
             writeln!(out, "body: {HIDDEN}")?;
         }
     }
     for (index, field) in item.fields().iter().enumerate() {
         let n = index + 1;
         let kind = kind_name(field.kind());
-        let shown = shown_field(field.value());
+        let shown = shown_field(field);
         writeln!(
             out,
             "field {n}: {} ({kind}) = {shown}",
@@ -228,15 +229,15 @@ fn kind_name(kind: FieldKind) -> &'static str {
 }
 
 /// Text and dates are shown. A secret or multiline value stays [`HIDDEN`].
-fn shown_field(value: &FieldValue) -> Cow<'_, str> {
-    match value {
-        FieldValue::Text(text) => clean(text.as_str()),
-        FieldValue::Date(date) => Cow::Owned(date_text(*date)),
-        FieldValue::RecoveryCodes(codes) => {
-            let (left, total) = codes_left(codes);
+fn shown_field<'a>(field: &'a FieldView<'_>) -> Cow<'a, str> {
+    match field.detail() {
+        FieldDetail::Text(text) => clean(text),
+        FieldDetail::Date(date) => Cow::Owned(date_text(*date)),
+        FieldDetail::RecoveryCodes { .. } => {
+            let (left, total) = field.codes_left().unwrap_or((0, 0));
             Cow::Owned(format!("{HIDDEN} ({left} of {total} left)"))
         }
-        FieldValue::Secret(_) | FieldValue::MultilineSecret(_) => Cow::Borrowed(HIDDEN),
+        FieldDetail::Secret | FieldDetail::MultilineSecret => Cow::Borrowed(HIDDEN),
     }
 }
 

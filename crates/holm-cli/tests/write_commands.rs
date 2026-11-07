@@ -67,11 +67,7 @@ fn added(ran: &Ran) -> String {
 
 /// The full id of the one item whose id starts with `prefix`.
 fn id_of(s: &Session<FsStore>, prefix: &str) -> ItemId {
-    let mut ids: Vec<ItemId> = s
-        .active_items()
-        .unwrap()
-        .map(holm_core::item::Item::id)
-        .collect();
+    let mut ids: Vec<ItemId> = s.active_entries().unwrap().map(|e| e.id()).collect();
     ids.extend(
         s.search(&holm_core::search::Query {
             view: holm_core::search::View::Trash,
@@ -90,7 +86,7 @@ fn id_of(s: &Session<FsStore>, prefix: &str) -> ItemId {
 }
 
 fn count(path: &Path) -> usize {
-    session(path).active_items().unwrap().count()
+    session(path).active_entries().unwrap().count()
 }
 
 fn export(path: &Path) -> String {
@@ -181,7 +177,7 @@ fn add_each_type_then_get() {
     }
 
     let s = session(&path);
-    let item = s.item(id_of(&s, &login)).unwrap();
+    let item = s.open_item(id_of(&s, &login)).unwrap();
     assert!(item.favourite());
     let ItemData::Login {
         username,
@@ -196,12 +192,13 @@ fn add_each_type_then_get() {
     assert_eq!(password.expose(), "EXAMPLE-pw-1");
     assert_eq!(urls.len(), 2);
     assert_eq!(notes.expose(), "EXAMPLE notes");
+    let opened = s.open_item(id_of(&s, &crypto)).unwrap();
     let ItemData::CryptoAddress {
         chain,
         address,
         memo,
         ..
-    } = s.item(id_of(&s, &crypto)).unwrap().data()
+    } = opened.data()
     else {
         panic!("not crypto");
     };
@@ -209,7 +206,8 @@ fn add_each_type_then_get() {
         (chain.as_str(), address.expose(), memo.expose()),
         ("Bitcoin", "EXAMPLE-0xaddr", "EXAMPLE-memo")
     );
-    let ItemData::SecureNote { body } = s.item(id_of(&s, &note)).unwrap().data() else {
+    let opened = s.open_item(id_of(&s, &note)).unwrap();
+    let ItemData::SecureNote { body } = opened.data() else {
         panic!("not a note");
     };
     assert_eq!(body.expose(), "EXAMPLE secret note");
@@ -271,7 +269,8 @@ fn add_login_generate_uses_vault_spec() {
     let prefix = added(&ran);
     assert_eq!(term.kinds(), vec![Kind::Secret]);
     let s = session(&path);
-    let ItemData::Login { password, .. } = s.item(id_of(&s, &prefix)).unwrap().data() else {
+    let opened = s.open_item(id_of(&s, &prefix)).unwrap();
+    let ItemData::Login { password, .. } = opened.data() else {
         panic!("not a login");
     };
     assert_eq!(password.len(), 64);
@@ -359,12 +358,13 @@ fn edit_keeps_unchanged_secrets() {
         &mut term,
     ));
     let s = session(&path);
+    let opened = s.open_item(id_of(&s, &login)).unwrap();
     let ItemData::Login {
         username,
         password,
         urls,
         ..
-    } = s.item(id_of(&s, &login)).unwrap().data()
+    } = opened.data()
     else {
         panic!("not a login");
     };
@@ -404,7 +404,7 @@ fn edit_type_change_impossible() {
         assert_eq!(term.kinds(), vec![Kind::Secret]);
     }
     let s = session(&path);
-    let item = s.item(id_of(&s, &note)).unwrap();
+    let item = s.open_item(id_of(&s, &note)).unwrap();
     assert_eq!(item.title(), "Note");
 
     // The core refuses a type change, and the CLI maps it to the same message.
@@ -444,7 +444,7 @@ fn rm_trashes_and_forever_needs_typed_confirm() {
     ok(&run(&path, &["rm", &login], &mut term));
     assert_eq!(count(&path), 0);
     let s = session(&path);
-    assert!(s.item(id_of(&s, &login)).unwrap().trashed().is_some());
+    assert!(s.open_item(id_of(&s, &login)).unwrap().trashed().is_some());
 
     // Anything but "delete" keeps it.
     let mut term = FakeTerminal::new(&[PW, "yes"]);
@@ -458,7 +458,7 @@ fn rm_trashes_and_forever_needs_typed_confirm() {
         )
     );
     let s = session(&path);
-    assert!(s.item(id_of(&s, &login)).is_ok());
+    assert!(s.open_item(id_of(&s, &login)).is_ok());
 
     let mut term = FakeTerminal::new(&[PW, "delete"]);
     ok(&run(&path, &["rm", "--forever", &login], &mut term));
@@ -495,7 +495,7 @@ fn passwd_changes_and_old_fails() {
         Box::new(holm_core::clock::SystemClock::new()),
     );
     new.unlock(&MasterPassword::new(NEW_PW.to_owned())).unwrap();
-    assert_eq!(new.active_items().unwrap().count(), 1);
+    assert_eq!(new.active_entries().unwrap().count(), 1);
 
     // A wrong current password changes nothing and stops before the new prompt.
     let mut term = FakeTerminal::new(&[NEW_PW, "wrong-EXAMPLE", PW, PW]);
@@ -1023,7 +1023,8 @@ fn add_preset_empty_values() {
     );
     assert_eq!(term.kinds(), vec![Kind::Secret, Kind::Secret, Kind::Secret]);
     let s = session(&path);
-    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    let opened = s.open_item(id_of(&s, &id)).unwrap();
+    let fields = opened.fields();
     assert_eq!(fields.len(), preset_fields(FieldPreset::Server).len());
     for (field, row) in fields.iter().zip(preset_fields(FieldPreset::Server)) {
         assert_eq!(field.label(), row.label);
@@ -1042,7 +1043,8 @@ fn add_preset_empty_values() {
     let id = added(&ran);
     assert!(ran.out.contains("Added 3 custom fields with empty values."));
     let s = session(&path);
-    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    let opened = s.open_item(id_of(&s, &id)).unwrap();
+    let fields = opened.fields();
     let rows: Vec<_> = preset_fields(FieldPreset::BankCard)
         .iter()
         .filter(|row| row.kind != FieldKind::Date)
@@ -1080,7 +1082,8 @@ fn add_preset_recovery_codes_prompts_hidden() {
     assert!(!ran.out.contains("EXAMPLE-code") && !ran.err.contains("EXAMPLE-code"));
     assert!(!ran.out.contains("empty values"), "{}", ran.out);
     let s = session(&path);
-    let fields = s.item(id_of(&s, &id)).unwrap().fields();
+    let opened = s.open_item(id_of(&s, &id)).unwrap();
+    let fields = opened.fields();
     assert_eq!(fields.len(), 1);
     assert_eq!(fields[0].label(), "Recovery codes");
     let FieldValue::RecoveryCodes(codes) = fields[0].value() else {
@@ -1108,7 +1111,7 @@ fn add_preset_recovery_codes_prompts_hidden() {
     let id = added(&ran);
     assert!(!ran.out.contains("custom fields"), "{}", ran.out);
     let s = session(&path);
-    assert!(s.item(id_of(&s, &id)).unwrap().fields().is_empty());
+    assert!(s.open_item(id_of(&s, &id)).unwrap().fields().is_empty());
 }
 
 #[test]
@@ -1137,7 +1140,8 @@ fn edit_field_add_prompts_for_secret() {
     assert!(!ran.out.contains(SECRET));
     assert!(!ran.err.contains(SECRET));
     let s = session(&path);
-    let field = &s.item(id_of(&s, &id)).unwrap().fields()[0];
+    let opened = s.open_item(id_of(&s, &id)).unwrap();
+    let field = &opened.fields()[0];
     assert_eq!(field.label(), "API token");
     let FieldValue::Secret(value) = field.value() else {
         panic!("not a secret");
@@ -1227,7 +1231,7 @@ fn edit_field_remove_and_move() {
     ));
     let s = session(&path);
     assert_eq!(
-        kinds_of(s.item(id_of(&s, &id)).unwrap().fields()),
+        kinds_of(s.open_item(id_of(&s, &id)).unwrap().fields()),
         kinds_of(&parallel)
     );
     drop(s);
@@ -1241,7 +1245,7 @@ fn edit_field_remove_and_move() {
     ));
     let s = session(&path);
     assert_eq!(
-        kinds_of(s.item(id_of(&s, &id)).unwrap().fields()),
+        kinds_of(s.open_item(id_of(&s, &id)).unwrap().fields()),
         kinds_of(&parallel)
     );
 }

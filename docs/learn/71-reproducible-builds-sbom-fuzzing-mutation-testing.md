@@ -1,4 +1,4 @@
-# Lesson 67: Proving it ourselves
+# Lesson 71: Proving it ourselves
 
 ## Why this matters
 

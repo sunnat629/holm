@@ -15,10 +15,15 @@ cargo install --locked cargo-fuzz --version 0.13.2
 | Target | Input | Checks |
 |---|---|---|
 | `parse_header` | raw bytes (seeded from `fuzz/seeds/parse_header/`) | `Header::parse` never panics; on `Ok` the header re-encodes to the first 164 input bytes |
+| `parse_header_v2` | raw bytes (seeded from `fuzz/seeds/parse_header_v2/`: v1 and v2 files) | `parse_any` never panics; on `Ok` the header re-encodes to the leading 164 (v1) or 172 (v2) input bytes, and header, index and records add up to the file |
 | `parse_header_structured` | arbitrary header fields, 16 to 64 body bytes, up to 4 edits | same checks, but the input starts valid so it reaches the checks behind the magic |
 | `unpad` | raw bytes, or `pad(plaintext)` output with up to 4 edits | `unpad` never panics; an accepted buffer is the canonical padding of what it returns |
 | `open_fixed_key` | a raw file, or a body sealed with `seal_with_kek` under the fixed KEK `[7; 32]` with up to 4 `(offset, xor)` edits (seeded) | the full open (envelope, padding, body decode) never panics; a changed file never opens; an unchanged one is never refused by the envelope, and a body it decodes re-encodes with the same item count |
+| `open_v2_fixed_key` | a mode byte, then a raw v2 file (mode 0), or a count of fixed items and up to 4 `(offset, xor)` edits (seeded from `fuzz/seeds/open_v2_fixed_key/`), under the fixed KEK `[7; 32]` | the v2 open (header, unwrap, index, framing, then every record) never panics or allocates over 64 MiB; a changed file never opens; an unchanged one opens every record |
+| `decode_index` | raw bytes (seeded from `fuzz/seeds/decode_index/`) | `Index::decode` (schema 4) never panics and never makes one allocation over 64 MiB (`-malloc_limit_mb=64`); an accepted index re-encodes, and that encoding is stable |
+| `decode_record` | one byte picking a fixed index entry, then record plaintext (seeded from `fuzz/seeds/decode_record/`) | `RecordSecrets::decode` never panics or allocates over 64 MiB; an accepted record re-encodes, and that encoding is stable |
 | `decode_body` | raw bytes (seeded from `fuzz/seeds/decode_body/`) | `VaultData::decode` never panics and never makes one allocation over 64 MiB (`-malloc_limit_mb=64`); an accepted body re-encodes, and that encoding is stable |
+| `decode_body_v1` | raw bytes behind a schema 1 version prefix (seeded from `fuzz/seeds/decode_body_v1/`) | the same checks as `decode_body`, and a v1 body always re-encodes as the current schema |
 | `import_csv` | raw bytes as a CSV import file (seeded from the import fixtures) | `import::parse` never panics or allocates over 64 MiB; an accepted file never yields more than `MAX_IMPORT_ROWS` rows |
 | `import_json` | raw bytes as a JSON import file (seeded from the import fixtures) | the same checks for the JSON importer |
 
@@ -46,18 +51,23 @@ hand, from the repo root:
 
 ```sh
 cargo +nightly-2026-10-12 fuzz run parse_header fuzz/corpus/parse_header fuzz/seeds/parse_header -- -max_total_time=30
+cargo +nightly-2026-10-12 fuzz run parse_header_v2 fuzz/corpus/parse_header_v2 fuzz/seeds/parse_header_v2 -- -max_total_time=30
 cargo +nightly-2026-10-12 fuzz run parse_header_structured fuzz/corpus/parse_header_structured -- -max_total_time=30
 cargo +nightly-2026-10-12 fuzz run unpad fuzz/corpus/unpad -- -max_total_time=30
 cargo +nightly-2026-10-12 fuzz run open_fixed_key fuzz/corpus/open_fixed_key fuzz/seeds/open_fixed_key -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run open_v2_fixed_key fuzz/corpus/open_v2_fixed_key fuzz/seeds/open_v2_fixed_key -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run decode_index fuzz/corpus/decode_index fuzz/seeds/decode_index -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run decode_record fuzz/corpus/decode_record fuzz/seeds/decode_record -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run decode_body fuzz/corpus/decode_body fuzz/seeds/decode_body -- -max_total_time=30 -malloc_limit_mb=64
+cargo +nightly-2026-10-12 fuzz run decode_body_v1 fuzz/corpus/decode_body_v1 fuzz/seeds/decode_body_v1 -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run import_csv fuzz/corpus/import_csv fuzz/seeds/import_csv -- -max_total_time=30 -malloc_limit_mb=64
 cargo +nightly-2026-10-12 fuzz run import_json fuzz/corpus/import_json fuzz/seeds/import_json -- -max_total_time=30 -malloc_limit_mb=64
 ```
 
 ## Long run
 
-All seven targets for 600 s each, weekly, before the Phase 2a security review and before the Phase 4 security review
-(all seven targets, including `import_csv` and `import_json`).
+All twelve targets for 600 s each, weekly, before the Phase 2a security review and before the Phase 4 security review
+(all twelve targets, including `import_csv` and `import_json`).
 Same commands with `-max_total_time=600`. The manual workflow
 `.github/workflows/fuzz.yml` does the same on GitHub. Fuzzing finds bugs; a clean
 run does not prove there are none.

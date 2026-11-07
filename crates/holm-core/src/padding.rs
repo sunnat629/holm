@@ -24,6 +24,12 @@ pub const MAX_PADDED_LEN: usize = 67_092_480;
 /// 4-byte length prefix).
 pub const MAX_BODY_LEN: usize = MAX_PADDED_LEN - LEN_PREFIX;
 
+/// Record padding block size in bytes. Each sealed record plaintext is padded to
+/// a multiple of this, so a typical login is one block whatever its password length.
+pub const RECORD_PAD_BLOCK: usize = 256;
+/// Largest padded record plaintext (256 KiB). A multiple of [`RECORD_PAD_BLOCK`].
+pub const MAX_RECORD_PADDED: usize = 262_144;
+
 /// Size of the little-endian `u32` length prefix.
 const LEN_PREFIX: usize = 4;
 
@@ -35,6 +41,12 @@ const _: () = {
     assert!(HEADER_LEN + MAX_PADDED_LEN + PAD_BLOCK + TAG_LEN > MAX_FILE_LEN);
     // The length prefix is a u32, so every accepted length must fit in one.
     assert!(MAX_BODY_LEN <= u32::MAX as usize);
+    // Records: block-aligned cap that also fits the u32 prefix.
+    assert!(MAX_RECORD_PADDED.is_multiple_of(RECORD_PAD_BLOCK));
+    assert!(MAX_RECORD_PADDED <= u32::MAX as usize);
+    // The worst record (spec 2.8): a 4096-byte password, 65 536-byte notes and ten
+    // 16 384-byte multiline secrets, plus 1 KiB of framing, plus the prefix.
+    assert!(4096 + 65_536 + 10 * 16_384 + 1024 + LEN_PREFIX <= MAX_RECORD_PADDED);
 };
 
 /// Pads `plaintext` to a multiple of [`PAD_BLOCK`].
@@ -48,16 +60,36 @@ const _: () = {
 /// Returns [`VaultError::TooLargeToSave`] if `plaintext` is longer than
 /// [`MAX_BODY_LEN`].
 pub fn pad(plaintext: &[u8]) -> Result<SecretBuf, VaultError> {
-    if plaintext.len() > MAX_BODY_LEN {
+    pad_to(plaintext, PAD_BLOCK, MAX_PADDED_LEN)
+}
+
+/// [`pad`] with a chosen block size and cap.
+///
+/// `max_padded` must be a multiple of `block` and at least `block`; the plaintext
+/// is refused when its padded form would exceed it. One allocation of the final
+/// size, so no unwiped copy is left behind by a reallocation.
+///
+/// # Errors
+/// Returns [`VaultError::TooLargeToSave`] if the padded form would be larger than
+/// `max_padded`, or if `block` is zero.
+pub(crate) fn pad_to(
+    plaintext: &[u8],
+    block: usize,
+    max_padded: usize,
+) -> Result<SecretBuf, VaultError> {
+    if block == 0 || plaintext.len() > max_padded.saturating_sub(LEN_PREFIX) {
         return Err(VaultError::TooLargeToSave);
     }
-    // Unreachable errors: the cap above keeps both the u32 and the sum in range.
+    // Unreachable errors for the built-in caps; a caller with a bigger cap gets a clean error.
     let len = u32::try_from(plaintext.len()).map_err(|_| VaultError::TooLargeToSave)?;
     let padded_len = plaintext
         .len()
         .checked_add(LEN_PREFIX)
-        .and_then(|n| n.checked_next_multiple_of(PAD_BLOCK))
+        .and_then(|n| n.checked_next_multiple_of(block))
         .ok_or(VaultError::TooLargeToSave)?;
+    if padded_len > max_padded {
+        return Err(VaultError::TooLargeToSave);
+    }
 
     // Wiped on drop if anything below fails; moved out (not copied) on success.
     let mut out = Zeroizing::new(Vec::with_capacity(padded_len));
@@ -80,7 +112,16 @@ pub fn pad(plaintext: &[u8]) -> Result<SecretBuf, VaultError> {
 /// if the buffer has more blocks than the body needs, or if any padding byte
 /// is not zero.
 pub fn unpad(padded: &[u8]) -> Result<SecretBuf, VaultError> {
-    if padded.is_empty() || !padded.len().is_multiple_of(PAD_BLOCK) {
+    unpad_from(padded, PAD_BLOCK)
+}
+
+/// [`unpad`] with a chosen block size.
+///
+/// # Errors
+/// Returns [`VaultError::BadPadding`] under the same rules as [`unpad`], with
+/// `block` in place of [`PAD_BLOCK`] (and for a zero `block`).
+pub(crate) fn unpad_from(padded: &[u8], block: usize) -> Result<SecretBuf, VaultError> {
+    if block == 0 || padded.is_empty() || !padded.len().is_multiple_of(block) {
         return Err(VaultError::BadPadding);
     }
     let (prefix, rest) = padded
@@ -89,7 +130,7 @@ pub fn unpad(padded: &[u8]) -> Result<SecretBuf, VaultError> {
     let len = usize::try_from(u32::from_le_bytes(*prefix)).map_err(|_| VaultError::BadPadding)?;
     let minimal = len
         .checked_add(LEN_PREFIX)
-        .and_then(|n| n.checked_next_multiple_of(PAD_BLOCK))
+        .and_then(|n| n.checked_next_multiple_of(block))
         .ok_or(VaultError::BadPadding)?;
     if minimal != padded.len() {
         return Err(VaultError::BadPadding);
@@ -194,6 +235,87 @@ mod tests {
             let mut v = p.expose().to_vec();
             v[i] = 1;
             assert_eq!(unpad(&v).unwrap_err(), VaultError::BadPadding, "byte {i}");
+        }
+    }
+
+    fn rec_len(n: usize) -> usize {
+        pad_to(&vec![0xCD; n], RECORD_PAD_BLOCK, MAX_RECORD_PADDED)
+            .unwrap()
+            .len()
+    }
+
+    #[test]
+    fn record_pad_boundaries() {
+        assert_eq!(rec_len(0), 256);
+        assert_eq!(rec_len(252), 256);
+        assert_eq!(rec_len(253), 512);
+    }
+
+    #[test]
+    fn record_pad_canonical() {
+        let p = pad_to(b"abc", RECORD_PAD_BLOCK, MAX_RECORD_PADDED).unwrap();
+        assert_eq!(p.len(), 256);
+        assert_eq!(
+            unpad_from(p.expose(), RECORD_PAD_BLOCK).unwrap().expose(),
+            b"abc"
+        );
+        // Longer, shorter, mis-aligned and nonzero-fill forms are all refused.
+        let mut longer = p.expose().to_vec();
+        longer.resize(512, 0);
+        let mut shorter = p.expose().to_vec();
+        shorter.truncate(255);
+        let mut dirty = p.expose().to_vec();
+        dirty[255] = 1;
+        for bad in [longer, shorter, dirty] {
+            assert_eq!(
+                unpad_from(&bad, RECORD_PAD_BLOCK).unwrap_err(),
+                VaultError::BadPadding
+            );
+        }
+    }
+
+    #[test]
+    fn record_pad_cap() {
+        let max_body = MAX_RECORD_PADDED - 4;
+        let ok = pad_to(&vec![1u8; max_body], RECORD_PAD_BLOCK, MAX_RECORD_PADDED).unwrap();
+        assert_eq!(ok.len(), MAX_RECORD_PADDED);
+        assert_eq!(
+            pad_to(
+                &vec![1u8; max_body + 1],
+                RECORD_PAD_BLOCK,
+                MAX_RECORD_PADDED
+            )
+            .unwrap_err(),
+            VaultError::TooLargeToSave
+        );
+        assert_eq!(
+            pad_to(b"x", 0, 256).unwrap_err(),
+            VaultError::TooLargeToSave
+        );
+    }
+
+    #[test]
+    fn unpad_from_rejects_extra_block() {
+        for block in [RECORD_PAD_BLOCK, PAD_BLOCK] {
+            let mut v = pad_to(b"abc", block, 4 * block).unwrap().expose().to_vec();
+            v.resize(v.len() + block, 0);
+            assert_eq!(unpad_from(&v, block).unwrap_err(), VaultError::BadPadding);
+        }
+        assert_eq!(unpad_from(&[0; 8], 0).unwrap_err(), VaultError::BadPadding);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn pad_to_roundtrip_any_block(
+            body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..2000),
+            block in 8usize..600,
+        ) {
+            let max = 4096 * block;
+            let p = pad_to(&body, block, max).unwrap();
+            proptest::prop_assert_eq!(p.len() % block, 0);
+            proptest::prop_assert!(p.len() >= body.len() + 4 && p.len() < body.len() + 4 + block);
+            let back = unpad_from(p.expose(), block).unwrap();
+            proptest::prop_assert_eq!(back.expose(), body.as_slice());
         }
     }
 }

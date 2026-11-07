@@ -12,15 +12,14 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use holm_core::clock::Clock;
-use holm_core::fields::FieldValue;
 use holm_core::generator::{
     PassphraseSpec, PasswordSpec, UsernameSpec, generate_passphrase, generate_password,
     generate_username,
 };
-use holm_core::item::{ItemData, ItemId};
+use holm_core::item::{ItemId, SecretSlot};
 use holm_core::session::Session;
 use holm_core::settings::CLIPBOARD_DEFAULT_SECS;
-use holm_core::text::Text;
+use holm_core::view::{FieldDetail, PublicView};
 use holm_platform::clip_clear::{self, ClearOutcome, PendingClear};
 use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
@@ -92,40 +91,36 @@ pub fn value_of(
     if let CopyField::Custom(index) = field {
         return custom_value(session, id, index);
     }
-    let item = session.item(id).map_err(|_| CliError::NotFound)?;
-    let value = match (field, item.data()) {
-        (CopyField::Phrase, ItemData::RecoveryPhrase { .. }) => {
+    let public = session.entry(id).map_err(|_| CliError::NotFound)?.public();
+    let secret = |slot| -> Result<Zeroizing<String>, CliError> {
+        let text = session.reveal(id, slot).map_err(|e| read_error(&e))?;
+        Ok(Zeroizing::new(text.expose().to_owned()))
+    };
+    let value = match (field, public) {
+        (CopyField::Phrase, PublicView::RecoveryPhrase { .. }) => {
             let password = vault::master(term.secret(AGAIN_PROMPT, MAX_PASSWORD_BYTES)?);
             let phrase = session
                 .reveal_phrase(id, &password)
                 .map_err(|e| read_error(&e))?;
             // Straight from the vault's buffer into a wiping one.
-            Zeroizing::new(phrase.to_owned())
+            Zeroizing::new(phrase.expose().to_owned())
         }
-        (CopyField::Password, ItemData::Login { password, .. }) => {
-            Zeroizing::new(password.expose().to_owned())
+        (CopyField::Password, PublicView::Login { .. }) => secret(SecretSlot::Password)?,
+        (CopyField::Username, PublicView::Login { username, .. }) => {
+            Zeroizing::new(username.to_owned())
         }
-        (CopyField::Username, ItemData::Login { username, .. }) => {
-            Zeroizing::new(username.as_str().to_owned())
+        (CopyField::Url, PublicView::Login { urls, .. }) => {
+            Zeroizing::new(urls.first().copied().unwrap_or("").to_owned())
         }
-        (CopyField::Url, ItemData::Login { urls, .. }) => {
-            Zeroizing::new(urls.first().map_or("", Text::as_str).to_owned())
-        }
-        (CopyField::Address, ItemData::CryptoAddress { address, .. }) => {
-            Zeroizing::new(address.expose().to_owned())
-        }
-        (CopyField::Memo, ItemData::CryptoAddress { memo, .. }) => {
-            Zeroizing::new(memo.expose().to_owned())
-        }
+        (CopyField::Address, PublicView::CryptoAddress { .. }) => secret(SecretSlot::Address)?,
+        (CopyField::Memo, PublicView::CryptoAddress { .. }) => secret(SecretSlot::Memo)?,
         (
             CopyField::Notes,
-            ItemData::Login { notes, .. }
-            | ItemData::CryptoAddress { notes, .. }
-            | ItemData::RecoveryPhrase { notes, .. },
-        ) => Zeroizing::new(notes.expose().to_owned()),
-        (CopyField::Body, ItemData::SecureNote { body }) => {
-            Zeroizing::new(body.expose().to_owned())
-        }
+            PublicView::Login { .. }
+            | PublicView::CryptoAddress { .. }
+            | PublicView::RecoveryPhrase { .. },
+        ) => secret(SecretSlot::Notes)?,
+        (CopyField::Body, PublicView::SecureNote { .. }) => secret(SecretSlot::Body)?,
         _ => return Err(CliError::NoSuchField),
     };
     if value.is_empty() {
@@ -140,17 +135,22 @@ fn custom_value(
     id: ItemId,
     index: u8,
 ) -> Result<Zeroizing<String>, CliError> {
-    let item = session.item(id).map_err(|_| CliError::NotFound)?;
-    let Some(field) = item.fields().get(usize::from(index)) else {
+    let entry = session.entry(id).map_err(|_| CliError::NotFound)?;
+    let fields = entry.fields();
+    let Some(field) = fields.get(usize::from(index)) else {
         return Err(CliError::NoSuchField);
     };
-    let value = match field.value() {
-        FieldValue::Text(text) => Zeroizing::new(text.as_str().to_owned()),
-        FieldValue::Secret(text) | FieldValue::MultilineSecret(text) => {
+    let value = match field.detail() {
+        FieldDetail::Text(text) => Zeroizing::new((*text).to_owned()),
+        FieldDetail::Date(date) => Zeroizing::new(date_text(*date)),
+        FieldDetail::Secret | FieldDetail::MultilineSecret => {
+            let position = field.position();
+            let text = session
+                .reveal(id, SecretSlot::Field { position })
+                .map_err(|e| read_error(&e))?;
             Zeroizing::new(text.expose().to_owned())
         }
-        FieldValue::Date(date) => Zeroizing::new(date_text(*date)),
-        FieldValue::RecoveryCodes(_) => return Err(CliError::Usage(COPY_ONE_CODE)),
+        FieldDetail::RecoveryCodes { .. } => return Err(CliError::Usage(COPY_ONE_CODE)),
     };
     if value.is_empty() {
         return Err(CliError::EmptyField);

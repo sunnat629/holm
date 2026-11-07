@@ -4,7 +4,7 @@
 //! first check and test nothing else. These tests build a valid file first and
 //! then damage it, which reaches every later check.
 
-use holm_core::format::{HEADER_LEN, Header};
+use holm_core::format::{HEADER_LEN, HEADER_LEN_V2, Header, HeaderV2, ParsedHeader, parse_any};
 use holm_core::padding::{PAD_BLOCK, pad, unpad};
 use holm_crypto::kdf::{KdfParams, MAX_M_KIB, MAX_WORK};
 use proptest::prelude::*;
@@ -152,6 +152,106 @@ proptest! {
     #[test]
     fn parse_never_panics_on_random(bytes in prop::collection::vec(any::<u8>(), 0..400)) {
         check_parse(&bytes)?;
+    }
+}
+
+/// A valid v2 file: random key block fields, an index of 1..=2 blocks and a records
+/// region of 0..=2 blocks, all with the exact framing the parser demands.
+fn valid_v2_file() -> impl Strategy<Value = (HeaderV2, Vec<u8>)> {
+    (
+        (3u32..=16).prop_flat_map(|iterations| {
+            let max_m = u64::from(MAX_M_KIB).min(MAX_WORK / u64::from(iterations));
+            let max_m = u32::try_from(max_m).expect("capped by MAX_M_KIB");
+            (Just(iterations), 65_536u32..=max_m)
+        }),
+        any::<[u8; 32]>(),
+        any::<[u8; 24]>(),
+        any::<[u8; 48]>(),
+        any::<[u8; 24]>(),
+        1usize..=2,
+        0usize..=2,
+        any::<u8>(),
+    )
+        .prop_map(
+            |(
+                (iterations, memory_kib),
+                salt,
+                wrap_nonce,
+                wrapped_dek,
+                index_nonce,
+                ib,
+                rb,
+                fill,
+            )| {
+                let index_len = ib * PAD_BLOCK + 16;
+                let records_len = rb * PAD_BLOCK;
+                let header = HeaderV2 {
+                    kdf: KdfParams {
+                        memory_kib,
+                        iterations,
+                        parallelism: 1,
+                    },
+                    salt,
+                    wrap_nonce,
+                    wrapped_dek,
+                    index_nonce,
+                    index_len: index_len as u64,
+                    records_len: records_len as u64,
+                };
+                let mut bytes = header.encode().to_vec();
+                bytes.extend(std::iter::repeat_n(fill, index_len + records_len));
+                (header, bytes)
+            },
+        )
+}
+
+/// `parse_any` must not panic. If it accepts, the header must re-encode to the input
+/// and the slices must add up to the file.
+fn check_parse_any(bytes: &[u8]) -> Result<(), TestCaseError> {
+    match parse_any(bytes) {
+        Ok(ParsedHeader::V1(header, body)) => {
+            prop_assert_eq!(&header.encode()[..], &bytes[..HEADER_LEN]);
+            prop_assert_eq!(body, &bytes[HEADER_LEN..]);
+        }
+        Ok(ParsedHeader::V2(header, index, records)) => {
+            prop_assert_eq!(&header.encode()[..], &bytes[..HEADER_LEN_V2]);
+            prop_assert_eq!(HEADER_LEN_V2 + index.len() + records.len(), bytes.len());
+            prop_assert_eq!(index.len() as u64, header.index_len);
+            prop_assert_eq!(records.len() as u64, header.records_len);
+        }
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    #[test]
+    fn parse_any_never_panics(
+        (_, v2) in valid_v2_file(),
+        v1 in valid_file(),
+        edits in prop::collection::vec(edit(), 0..=4),
+        pick_v1 in any::<bool>(),
+        random in prop::collection::vec(any::<u8>(), 0..400),
+    ) {
+        let mut bytes = if pick_v1 { v1.bytes } else { v2 };
+        apply(&mut bytes, &edits);
+        check_parse_any(&bytes)?;
+        check_parse_any(&random)?;
+    }
+
+    #[test]
+    fn v2_accepted_reencodes_identical((header, bytes) in valid_v2_file()) {
+        match parse_any(&bytes) {
+            Ok(ParsedHeader::V2(parsed, index, records)) => {
+                prop_assert_eq!(&parsed, &header);
+                prop_assert_eq!(&parsed.encode()[..], &bytes[..HEADER_LEN_V2]);
+                prop_assert_eq!(index.len() as u64, header.index_len);
+                prop_assert_eq!(records.len() as u64, header.records_len);
+            }
+            other => prop_assert!(false, "valid v2 file refused: {other:?}"),
+        }
     }
 }
 

@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [decode_body, import_csv, import_json, open_fixed_key, parse_header, parse_header_structured, unpad]
+        target: [decode_body, decode_body_v1, decode_index, decode_record, import_csv, import_json, open_fixed_key, open_v2_fixed_key, parse_header, parse_header_v2, parse_header_structured, unpad]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

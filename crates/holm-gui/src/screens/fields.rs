@@ -342,7 +342,10 @@ impl DraftRow {
         }
 
         touched |= match self.kind {
-            Kind::Text => line_field(ui, io, TEXT_VALUE_LABEL, &mut self.text),
+            Kind::Text => {
+                ui.label(messages::TEXT_FIELD_HINT);
+                line_field(ui, io, TEXT_VALUE_LABEL, &mut self.text)
+            }
             Kind::Date => line_field_hint(ui, io, DATE_VALUE_LABEL, DATE_HINT, &mut self.date),
             Kind::Secret => {
                 io.secret_field(

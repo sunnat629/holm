@@ -984,7 +984,7 @@ fn lock_with_an_unsaved_change_asks_first() {
     );
     // The change never reached the file.
     let s = session(&path);
-    assert_eq!(s.active_items().unwrap().count(), 0);
+    assert_eq!(s.active_entries().unwrap().count(), 0);
 }
 
 #[test]
@@ -1094,7 +1094,7 @@ fn idle_at_a_hidden_prompt_locks() {
     let state = clip.borrow();
     assert_eq!(state.clears, 1);
     assert_eq!(state.contents, None);
-    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+    assert_eq!(session(&path).active_entries().unwrap().count(), 1);
 }
 
 /// The idle time passes at a visible confirm prompt inside a command.
@@ -1186,7 +1186,7 @@ fn ctrl_c_at_the_discard_prompt_keeps_the_change() {
         ]
     );
     // `exit` saved the change once the folder was writable again.
-    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+    assert_eq!(session(&path).active_entries().unwrap().count(), 1);
 }
 
 /// The input ends (Ctrl-D, or the terminal closes) at the shell prompt and again at
@@ -1229,7 +1229,7 @@ fn end_of_input_at_the_discard_prompt_discards() {
         term.texts(Kind::Line),
         [PROMPT, PROMPT, "Type discard to lock without saving: "]
     );
-    assert_eq!(session(&path).active_items().unwrap().count(), 0);
+    assert_eq!(session(&path).active_entries().unwrap().count(), 0);
 }
 
 /// The idle time passes at the discard prompt of `lock`: the idle lock discards, as
@@ -1288,7 +1288,7 @@ fn idle_at_the_discard_prompt_locks() {
         ]
     );
     assert_eq!(ran.err.matches(LOCKED).count(), 1, "{}", ran.err);
-    assert_eq!(session(&path).active_items().unwrap().count(), 0);
+    assert_eq!(session(&path).active_entries().unwrap().count(), 0);
 }
 
 /// `lock` while already locked still clears a value `gen --copy` put on the
@@ -1400,7 +1400,7 @@ fn shell_locks_on_sleep_inside_inner_prompt() {
     let state = clip.borrow();
     assert_eq!(state.clears, 1);
     assert_eq!(state.contents, None);
-    assert_eq!(session(&path).active_items().unwrap().count(), 1);
+    assert_eq!(session(&path).active_entries().unwrap().count(), 1);
 }
 
 /// A line typed before the sleep, with no Enter yet, is held only until the lock:

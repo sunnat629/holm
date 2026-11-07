@@ -25,15 +25,15 @@ use std::hash::{Hash, Hasher};
 
 use zeroize::Zeroizing;
 
-use crate::body::VaultData;
 use crate::category::{CategoryId, name_key};
 use crate::error::CoreError;
 use crate::fields::{CustomField, FieldValue, format_date};
+use crate::index::{EntryPublic, Index, ItemEntry};
 use crate::item::{ItemData, ItemInput, ItemType, Timestamp};
 use crate::plain::PlainError;
 use crate::rules::{FieldError, MAX_ITEMS};
-use crate::session::Session;
-use crate::session::items::insert_new;
+use crate::session::items::{insert_new, open_at};
+use crate::session::{Session, VaultState};
 use crate::store::VaultStore;
 use crate::text::{Text, fold};
 
@@ -467,42 +467,101 @@ fn same_value(a: &FieldValue, b: &FieldValue) -> bool {
     }
 }
 
+/// The dedup key of an index entry. It is built from public data only, so it equals
+/// [`key_of`] for the opened item.
+fn entry_key(entry: &ItemEntry) -> Zeroizing<String> {
+    match &entry.public {
+        EntryPublic::Login { username, urls, .. } => {
+            let urls: Vec<&str> = urls.iter().map(Text::as_str).collect();
+            dedup_key(
+                ItemType::Login,
+                entry.title.as_str(),
+                username.as_str(),
+                &urls,
+                "",
+            )
+        }
+        EntryPublic::CryptoAddress { chain, .. } => dedup_key(
+            ItemType::CryptoAddress,
+            entry.title.as_str(),
+            "",
+            &[],
+            chain.as_str(),
+        ),
+        other => dedup_key(other.item_type(), entry.title.as_str(), "", &[], ""),
+    }
+}
+
 /// For each row, `true` if it would be added: it is not the same item (in every user
 /// field) as any item in the vault, active or in the trash, or any earlier row.
 ///
-/// Items are grouped by the hash of their display fields, and only items in one group
-/// are compared, so secrets are compared in place and never hashed or copied.
-fn keep_mask(data: &VaultData, rows: &[ImportRow]) -> Vec<bool> {
-    type Group<'a> = Vec<(Option<CategoryId>, &'a ItemData, &'a [CustomField])>;
-    let mut seen: HashMap<Key, Group<'_>> = HashMap::with_capacity(data.items.len());
-    for item in &data.items {
-        seen.entry(Key(key_of(&item.title, &item.data)))
-            .or_default()
-            .push((item.category, &item.data, item.fields()));
+/// Items are grouped by the hash of their display fields, taken from the index, so no
+/// record is opened for an item whose key matches no row. Only an item whose key equals
+/// a row's is opened (one at a time, wiped when compared), and its secrets are compared
+/// in place and never hashed or copied.
+///
+/// # Errors
+/// [`CoreError::DamagedItem`] if a record that must be compared cannot be opened.
+fn keep_mask(state: &VaultState, rows: &[ImportRow]) -> Result<Vec<bool>, CoreError> {
+    /// Who is in a dedup group: a stored item (by position) or an earlier kept row.
+    #[derive(Clone, Copy)]
+    enum Member {
+        Stored(usize),
+        Row(usize),
     }
-    rows.iter()
-        .map(|r| {
-            let this = (
-                find_category(data, r.category_name.as_ref()),
-                &r.input.data,
-                r.input.fields.as_slice(),
-            );
-            let group = seen
-                .entry(Key(key_of(&r.input.title, &r.input.data)))
-                .or_default();
-            let new = !group.iter().any(|other| same_item(*other, this));
-            if new {
-                group.push(this);
+    let index = &state.index;
+    let mut seen: HashMap<Key, Vec<Member>> = HashMap::with_capacity(index.entries.len());
+    for (pos, entry) in index.entries.iter().enumerate() {
+        seen.entry(Key(entry_key(entry)))
+            .or_default()
+            .push(Member::Stored(pos));
+    }
+    let mut keep = Vec::with_capacity(rows.len());
+    for (n, r) in rows.iter().enumerate() {
+        let this = (
+            find_category(index, r.category_name.as_ref()),
+            &r.input.data,
+            r.input.fields.as_slice(),
+        );
+        let group = seen
+            .entry(Key(key_of(&r.input.title, &r.input.data)))
+            .or_default();
+        let mut dup = false;
+        for member in group.iter() {
+            dup = match *member {
+                Member::Stored(pos) => {
+                    let item = open_at(state, pos)?;
+                    same_item((item.category, &item.data, item.fields()), this)
+                }
+                Member::Row(k) => {
+                    let o = &rows[k];
+                    same_item(
+                        (
+                            find_category(index, o.category_name.as_ref()),
+                            &o.input.data,
+                            o.input.fields.as_slice(),
+                        ),
+                        this,
+                    )
+                }
+            };
+            if dup {
+                break;
             }
-            new
-        })
-        .collect()
+        }
+        if !dup {
+            group.push(Member::Row(n));
+        }
+        keep.push(!dup);
+    }
+    Ok(keep)
 }
 
 /// The category whose name matches `name` (trimmed, NFC, case-insensitive).
-fn find_category(data: &VaultData, name: Option<&Text>) -> Option<CategoryId> {
+fn find_category(index: &Index, name: Option<&Text>) -> Option<CategoryId> {
     let key = name_key(name?.as_str());
-    data.categories
+    index
+        .categories
         .iter()
         .find(|c| *name_key(c.name.as_str()) == *key)
         .map(|c| c.id)
@@ -533,8 +592,8 @@ impl<S: VaultStore> Session<S> {
     /// # Errors
     /// [`CoreError::Locked`].
     pub fn preview_import(&self, batch: &ImportBatch) -> Result<ImportPreview, CoreError> {
-        let data = &self.unlocked()?.data;
-        let keep = keep_mask(data, &batch.rows);
+        let state = &self.unlocked()?.state;
+        let keep = keep_mask(state, &batch.rows)?;
         let mut p = ImportPreview {
             dialect: batch.dialect,
             ready: batch.rows.len(),
@@ -559,7 +618,7 @@ impl<S: VaultStore> Session<S> {
                 ItemType::SecureNote => p.notes += 1,
             }
             if row.category_name.is_some()
-                && find_category(data, row.category_name.as_ref()).is_none()
+                && find_category(&state.index, row.category_name.as_ref()).is_none()
             {
                 p.unmatched_category_rows += 1;
             }
@@ -584,14 +643,14 @@ impl<S: VaultStore> Session<S> {
         self.unlocked()?;
         let now = self.now_unix();
         let ImportBatch { rows, issues, .. } = batch;
-        let data = &mut self.unlocked_mut()?.data;
-        let keep = keep_mask(data, &rows);
+        let keep = keep_mask(&self.unlocked()?.state, &rows)?;
+        let state = &mut self.unlocked_mut()?.state;
         let remaining = keep.iter().filter(|k| **k).count();
         let duplicates = rows.len() - remaining;
-        if data.items.len() + remaining > MAX_ITEMS {
+        if state.index.entries.len() + remaining > MAX_ITEMS {
             return Err(CoreError::TooManyItems);
         }
-        let start = data.items.len();
+        let start = state.index.entries.len();
         let mut uncategorised = 0;
         // A dropped duplicate row wipes its fields as it goes out of scope.
         for (row, _) in rows.into_iter().zip(keep).filter(|(_, k)| *k) {
@@ -601,21 +660,25 @@ impl<S: VaultStore> Session<S> {
                 created,
                 updated,
             } = row;
-            input.category = find_category(data, category_name.as_ref());
+            input.category = find_category(&state.index, category_name.as_ref());
             if input.category.is_none() {
                 uncategorised += 1;
             }
-            if let Err(e) = insert_new(data, input, now) {
-                data.items.truncate(start);
+            if let Err(e) = insert_new(state, input, now) {
+                state.index.entries.truncate(start);
+                state.records.truncate(start);
                 return Err(e);
             }
             let (c, u) = times(now, created, updated);
-            if let Some(item) = data.items.last_mut() {
-                item.created = c;
-                item.updated = u;
+            if let Some(entry) = state.index.entries.last_mut() {
+                entry.created = c;
+                entry.updated = u;
             }
         }
-        self.commit_or_undo(move |d| d.items.truncate(start))?;
+        self.commit_or_undo(move |st| {
+            st.index.entries.truncate(start);
+            st.records.truncate(start);
+        })?;
         Ok(ImportReport {
             imported: remaining,
             uncategorised,

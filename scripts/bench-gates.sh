@@ -50,10 +50,10 @@ fi
 [ "$KDF_BASELINE_MS" -gt 0 ] || { echo "FAIL  KDF_BASELINE_MS is not recorded (run --record)" >&2; exit 1; }
 
 check() { # returns 0 when every budget holds; prints one line per budget
-  local res kdf search start ok=0
+  local res kdf search sempty start ok=0
   res="$(measure)" || return 1
-  kdf="$(get "$res" kdf_default_ms)"; search="$(get "$res" search_10k_ms)"; start="$(get "$res" startup_ms)"
-  for v in "$kdf" "$search" "$start"; do [ -n "$v" ] || { echo "missing measurement" >&2; return 1; }; done
+  kdf="$(get "$res" kdf_default_ms)"; search="$(get "$res" search_10k_ms)"; sempty="$(get "$res" search_10k_empty_ms)"; start="$(get "$res" startup_ms)"
+  for v in "$kdf" "$search" "$sempty" "$start"; do [ -n "$v" ] || { echo "missing measurement" >&2; return 1; }; done
   within() { awk -v v="$1" -v lo="$2" -v hi="$3" 'BEGIN { exit !(v >= lo && v <= hi) }'; }
   lo=$(awk -v b="$KDF_BASELINE_MS" -v p="$KDF_TOLERANCE_PCT" 'BEGIN { print b * (100 - p) / 100 }')
   hi=$(awk -v b="$KDF_BASELINE_MS" -v p="$KDF_TOLERANCE_PCT" 'BEGIN { print b * (100 + p) / 100 }')
@@ -61,6 +61,8 @@ check() { # returns 0 when every budget holds; prints one line per budget
   else echo "FAIL  kdf_default   ${kdf} ms (allowed ${lo} to ${hi})" >&2; ok=1; fi
   if within "$search" 0 "$SEARCH_10K_MAX_MS"; then echo "ok    search_10k    ${search} ms (max ${SEARCH_10K_MAX_MS})"
   else echo "FAIL  search_10k    ${search} ms (max ${SEARCH_10K_MAX_MS})" >&2; ok=1; fi
+  if within "$sempty" 0 "$SEARCH_10K_EMPTY_MAX_MS"; then echo "ok    search_empty  ${sempty} ms (max ${SEARCH_10K_EMPTY_MAX_MS})"
+  else echo "FAIL  search_empty  ${sempty} ms (max ${SEARCH_10K_EMPTY_MAX_MS})" >&2; ok=1; fi
   if within "$start" 0 "$STARTUP_MAX_MS"; then echo "ok    startup       ${start} ms (max ${STARTUP_MAX_MS})"
   else echo "FAIL  startup       ${start} ms (max ${STARTUP_MAX_MS})" >&2; ok=1; fi
   return "$ok"

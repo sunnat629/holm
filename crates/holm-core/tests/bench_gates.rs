@@ -93,13 +93,14 @@ fn bench_search_10k() {
         .unwrap();
     let report = session.import(batch).unwrap();
     assert_eq!(
-        session.active_items().unwrap().count(),
+        session.active_entries().unwrap().count(),
         ITEMS,
         "{}",
         report.imported
     );
 
     let mut worst = Duration::ZERO;
+    let mut empty = Duration::ZERO;
     for needle in ["zzz no such text", "number 7777", ""] {
         let query = Query {
             text: needle.to_owned().into(),
@@ -114,7 +115,12 @@ fn bench_search_10k() {
             best = best.min(took);
         }
         println!("BENCH_DETAIL search {needle:?} {:.3} ms", ms(best));
-        worst = worst.max(best);
+        if needle.is_empty() {
+            empty = best;
+        } else {
+            worst = worst.max(best);
+        }
     }
     println!("BENCH search_10k_ms={:.3}", ms(worst));
+    println!("BENCH search_10k_empty_ms={:.3}", ms(empty));
 }

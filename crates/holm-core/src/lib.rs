@@ -77,6 +77,7 @@ pub mod body;
 pub mod category;
 pub mod clock;
 pub mod envelope;
+pub(crate) mod envelope_v2;
 // The `fuzzing` feature seals and opens vaults with a raw KEK and no Argon2. It builds
 // only under cargo-fuzz, which sets `--cfg fuzzing`, so no normal or `--all-features`
 // build can ship it. scripts/ci-local.sh (fuzzing-guard) proves this still fails.
@@ -93,10 +94,13 @@ pub mod format;
 pub mod fuzzing;
 pub mod generator;
 pub mod import;
+pub mod index;
 pub mod item;
+pub(crate) mod migrate;
 pub mod padding;
 // Own CSV and JSON code for import and export.
 pub(crate) mod plain;
+pub(crate) mod record;
 pub mod rules;
 pub mod search;
 pub mod session;
@@ -105,4 +109,5 @@ pub mod store;
 pub mod strength;
 pub mod text;
 pub mod throttle;
+pub mod view;
 pub(crate) mod wire;

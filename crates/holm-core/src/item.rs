@@ -32,6 +32,11 @@ impl ItemId {
         Ok(ItemId(b))
     }
 
+    /// The 16 id bytes, for a record's associated data.
+    pub(crate) fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+
     /// The id as 32 lowercase hex characters.
     #[must_use]
     pub fn to_hex(&self) -> String {
@@ -95,6 +100,34 @@ pub enum ItemType {
     RecoveryPhrase,
     /// Free text.
     SecureNote,
+}
+
+/// One secret value of an item, named so that `reveal` can open it without opening the
+/// whole item. The recovery phrase is not a slot: it has its own gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecretSlot {
+    /// A login password.
+    Password,
+    /// Notes (login, crypto address or recovery phrase).
+    Notes,
+    /// A crypto address.
+    Address,
+    /// A crypto address memo.
+    Memo,
+    /// The body of a secure note.
+    Body,
+    /// A custom `Secret` or `MultilineSecret` field, by position.
+    Field {
+        /// Position in the item's field list.
+        position: u8,
+    },
+    /// One recovery code of a custom field, by field position and code index.
+    Code {
+        /// Position of the recovery-codes field.
+        position: u8,
+        /// Index of the code inside that field.
+        index: u8,
+    },
 }
 
 /// The kind-specific content of an item. No `Clone`; `Debug` prints the variant only.

@@ -133,6 +133,11 @@ impl GatedSecret {
     pub(crate) fn expose(&self) -> &str {
         self.0.expose()
     }
+
+    /// Moves the secret out, for the password-gated reveal inside this crate only.
+    pub(crate) fn into_secret(self) -> SecretText {
+        self.0
+    }
 }
 
 impl fmt::Debug for GatedSecret {

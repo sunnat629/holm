@@ -250,14 +250,14 @@ pub(crate) fn edit_in(
 ) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
     let (item_type, kept_category) = {
-        let item = session.item(id).map_err(|_| CliError::NotFound)?;
+        let item = session.open_item(id).map_err(|_| CliError::NotFound)?;
         if item.trashed().is_some() {
             return Err(CliError::InTrash);
         }
         if !edit_fits(&args, item.item_type()) {
             return Err(CliError::TypeChange);
         }
-        reject_command_line_secret(&args, item)?;
+        reject_command_line_secret(&args, &item)?;
         (item.item_type(), item.category())
     };
     let category = match &args.category {
@@ -269,8 +269,8 @@ pub(crate) fn edit_in(
     let fields = prepare_fields(session, id, &mut args, term)?;
     if item_changes(&args) {
         let input = {
-            let item = session.item(id).map_err(|_| CliError::NotFound)?;
-            updated_input(item, &mut args, category, new_password, new_notes)
+            let item = session.open_item(id).map_err(|_| CliError::NotFound)?;
+            updated_input(&item, &mut args, category, new_password, new_notes)
         };
         session
             .update_item(id, input)
@@ -482,7 +482,7 @@ fn add_field(
     term: &mut dyn Terminal,
 ) -> Result<Vec<CustomField>, CliError> {
     let len = session
-        .item(id)
+        .entry(id)
         .map_err(|_| CliError::NotFound)?
         .fields()
         .len();
@@ -491,7 +491,12 @@ fn add_field(
     }
     let value = read_value(kind, field_value, term)?;
     let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
-    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     let end = fields.len();
     insert_field(&mut fields, end, field).map_err(CliError::Field)?;
     Ok(fields)
@@ -507,9 +512,9 @@ fn set_field(
 ) -> Result<Vec<CustomField>, CliError> {
     let index = position_index(position)?;
     let (label, kind, old_expiry) = {
-        let item = session.item(id).map_err(|_| CliError::NotFound)?;
-        let field = item
-            .fields()
+        let entry = session.entry(id).map_err(|_| CliError::NotFound)?;
+        let fields = entry.fields();
+        let field = fields
             .get(index)
             .ok_or(CliError::Field(FieldError::NoSuchIndex))?;
         (field.label().to_owned(), field.kind(), field.expiry())
@@ -525,7 +530,12 @@ fn set_field(
         ExpiryEdit::Set(date) => Some(date),
     };
     let field = try_field(Text::new(label), value, expiry).map_err(CliError::Field)?;
-    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     replace_at(&mut fields, index, field)?;
     Ok(fields)
 }
@@ -552,7 +562,12 @@ fn remove_at(
     if index >= field_len(session, id)? {
         return Err(CliError::Field(FieldError::NoSuchIndex));
     }
-    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     remove_field(&mut fields, index).map_err(CliError::Field)?;
     Ok(fields)
 }
@@ -569,14 +584,19 @@ fn move_at(
     if from >= len || to >= len {
         return Err(CliError::Field(FieldError::NoSuchIndex));
     }
-    let mut fields = copy_fields(session.item(id).map_err(|_| CliError::NotFound)?.fields())?;
+    let mut fields = copy_fields(
+        session
+            .open_item(id)
+            .map_err(|_| CliError::NotFound)?
+            .fields(),
+    )?;
     move_field(&mut fields, from, to).map_err(CliError::Field)?;
     Ok(fields)
 }
 
 fn field_len(session: &Session<FsStore>, id: ItemId) -> Result<usize, CliError> {
     Ok(session
-        .item(id)
+        .entry(id)
         .map_err(|_| CliError::NotFound)?
         .fields()
         .len())
@@ -746,7 +766,7 @@ pub(crate) fn rm_in(
 ) -> Result<(), CliError> {
     let id = vault::resolve_any(session, &args.reference)?;
     let trashed = session
-        .item(id)
+        .entry(id)
         .map_err(|_| CliError::NotFound)?
         .trashed()
         .is_some();

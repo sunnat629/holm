@@ -93,6 +93,29 @@ pub const FIELD_RESERVED: &str = "That name is reserved. Choose another.";
 /// The vault would grow past its size limit.
 pub const TOO_LARGE_TO_SAVE: &str =
     "The vault is too large to save this change. Nothing was changed.";
+/// One item's sealed record failed to open.
+pub const ITEM_DAMAGED: &str =
+    "This item is damaged and cannot be opened. The rest of the vault is fine.";
+/// Moving the vault to the current file format failed.
+pub const MIGRATION_FAILED: &str = "Holm could not move this vault to the new file format. Nothing was changed. If a leftover copy ending in .bak sits next to the vault, remove it, then try again.";
+/// An item was edited as many times as its record counter allows.
+pub const ITEM_EDIT_LIMIT: &str = "This item has been changed too many times to change again. Add a new item with the same details and delete this one.";
+/// Opening one item failed for a reason other than damage.
+pub const ITEM_OPEN_FAILED: &str = "Holm could not open this item. Lock the vault and try again.";
+/// Backup prompt right after the move to the new file format.
+pub const BACKUP_PROMPT_UNLOCK: &str = "Holm moved this vault to a new file format and kept a copy of the old file next to it. The old copy still opens with your master password. You can delete it now.";
+/// Backup prompt after the master password changed.
+pub const BACKUP_PROMPT_PASSWORD: &str = "You changed your master password, but the old copy of this vault still opens with the old password. You can delete it now.";
+/// What deleting the old copy does not do.
+pub const BACKUP_PROMPT_LIMIT: &str = "Deleting does not remove copies in Time Machine or other snapshots, and an SSD can keep traces of a deleted file.";
+/// The delete button of the backup prompt.
+pub const BACKUP_DELETE_LABEL: &str = "Delete the old copy";
+/// The postpone button of the backup prompt.
+pub const BACKUP_LATER_LABEL: &str = "Ask me later";
+/// Deleting the old copy failed.
+pub const BACKUP_DELETE_FAILED: &str = "Holm could not delete the old copy. It is still there. Try again, or remove the file ending in .bak yourself.";
+/// Hint under the Text kind in the custom field editor.
+pub const TEXT_FIELD_HINT: &str = "Use a Secret field for sensitive values.";
 /// The change is in memory but not on disk.
 pub const NOT_SAVED: &str = "Not saved. The change is open in Holm but is not on disk yet.";
 /// The stored password is longer than the edit form can hold.
@@ -250,7 +273,7 @@ pub const EDIT_FIELDS: &str = "Edit fields";
 /// The labels in `ALL`: plain text, but names rather than sentences, so they have no
 /// closing period.
 #[cfg(test)]
-const LABELS: [&str; 8] = [
+const LABELS: [&str; 10] = [
     CHIP_EXPIRING,
     ADD_FIELD,
     REMOVE_FIELD,
@@ -259,11 +282,13 @@ const LABELS: [&str; 8] = [
     PRESET_LABEL,
     REMIND_ON,
     EDIT_FIELDS,
+    BACKUP_DELETE_LABEL,
+    BACKUP_LATER_LABEL,
 ];
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 68] = [
+const ALL: [&str; 79] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -293,6 +318,17 @@ const ALL: [&str; 68] = [
     FIELD_RESERVED,
     TOO_LARGE_TO_SAVE,
     NOT_SAVED,
+    ITEM_DAMAGED,
+    MIGRATION_FAILED,
+    ITEM_EDIT_LIMIT,
+    ITEM_OPEN_FAILED,
+    TEXT_FIELD_HINT,
+    BACKUP_PROMPT_UNLOCK,
+    BACKUP_PROMPT_PASSWORD,
+    BACKUP_PROMPT_LIMIT,
+    BACKUP_DELETE_LABEL,
+    BACKUP_LATER_LABEL,
+    BACKUP_DELETE_FAILED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
     CLIPBOARD_CHANGED,
@@ -372,6 +408,7 @@ pub fn unlock_error(e: &CoreError) -> &'static str {
         CoreError::NoVault => NO_VAULT,
         CoreError::Store(_) => READ_FAILED,
         CoreError::Throttled { .. } => TOO_MANY_TRIES,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
         _ => UNLOCK_FAILED,
     }
 }
@@ -418,7 +455,22 @@ pub fn field_error(e: &FieldError) -> &'static str {
 pub fn save_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::Store(StoreError::Io(ErrorKind::PermissionDenied)) => DIR_PERMISSIONS,
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
+        CoreError::GenerationExhausted(_) => ITEM_EDIT_LIMIT,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
         _ => NOT_SAVED,
+    }
+}
+
+/// The line for a failed item open (edit, reveal, copy): damage and the edit limit get
+/// their own lines, so a damaged item is never shown as "select or add".
+#[must_use]
+pub fn item_error(e: &CoreError) -> &'static str {
+    match e {
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
+        CoreError::GenerationExhausted(_) => ITEM_EDIT_LIMIT,
+        CoreError::MigrationFailed => MIGRATION_FAILED,
+        _ => ITEM_OPEN_FAILED,
     }
 }
 
@@ -441,6 +493,7 @@ pub fn import_parse_error(e: &ImportError) -> &'static str {
 #[must_use]
 pub fn import_apply_error(e: &CoreError, items_added: bool) -> &'static str {
     match e {
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
         CoreError::Vault(VaultError::TooLargeToSave) | CoreError::TooManyItems => IMPORT_NOT_ADDED,
         CoreError::Store(_) | CoreError::Vault(_) => IMPORT_UNSAVED,
         _ if items_added => IMPORT_UNSAVED,
@@ -454,6 +507,7 @@ pub fn export_error(e: &CoreError) -> &'static str {
     match e {
         CoreError::WrongPassword => EXPORT_WRONG_PASSWORD,
         CoreError::Throttled { .. } => EXPORT_THROTTLED,
+        CoreError::DamagedItem(_) => ITEM_DAMAGED,
         _ => EXPORT_FAILED,
     }
 }

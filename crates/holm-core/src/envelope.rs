@@ -19,6 +19,7 @@ use holm_crypto::kdf::{KdfParams, derive_kek};
 use holm_crypto::{
     CryptoError, KdfParamsError, MasterPassword, SecretBuf, SecretKey, random_array,
 };
+#[cfg(test)]
 use subtle::ConstantTimeEq;
 
 use crate::format::{FormatError, HEADER_LEN, Header, WRAP_AAD_LEN};
@@ -181,6 +182,7 @@ pub(crate) fn create_with_kek(
 /// password or any change to the file; [`VaultError::BadPadding`] for an
 /// authenticated body with malformed padding; [`VaultError::Crypto`] if key
 /// derivation fails.
+#[cfg(test)]
 pub(crate) fn open(
     file: &[u8],
     password: &MasterPassword,
@@ -265,6 +267,7 @@ pub fn rekey(
 /// # Errors
 /// [`VaultError::WrongPasswordOrCorrupt`] if the password is wrong;
 /// [`VaultError::Crypto`] if key derivation fails.
+#[cfg(test)]
 pub(crate) fn verify_password(
     keys: &VaultKeys,
     password: &MasterPassword,
@@ -294,7 +297,7 @@ pub(crate) fn verify_password(
 /// Moves an unwrapped DEK into a key. A length error is unreachable (the
 /// wrapped DEK is 48 bytes, so a successful unwrap gives exactly 32), but if
 /// it ever happened it would come out as the one opaque error.
-fn dek_from_unwrapped(raw: &SecretBuf) -> Result<SecretKey, VaultError> {
+pub(crate) fn dek_from_unwrapped(raw: &SecretBuf) -> Result<SecretKey, VaultError> {
     SecretKey::from_slice(raw.expose()).map_err(|_| VaultError::WrongPasswordOrCorrupt)
 }
 

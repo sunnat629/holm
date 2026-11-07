@@ -2,12 +2,11 @@ use super::super::Session;
 use super::super::tests::{
     PW, WRONG, created, created_locked, failures, open_file, pw, secs, stored,
 };
-use crate::body::VaultData;
-use crate::envelope::{self, VaultError};
+use super::open_at;
+use crate::envelope::VaultError;
 use crate::error::CoreError;
 use crate::fields::{CustomField, FieldValue, try_field};
 use crate::item::{Item, ItemData, ItemId, ItemInput, Timestamp};
-use crate::padding::MAX_BODY_LEN;
 use crate::rules::{Field, FieldError, MAX_CUSTOM_FIELDS, MAX_ITEMS, MAX_MULTILINE_SECRET_BYTES};
 use crate::settings::{Settings, SettingsError};
 use crate::store::{MemStore, StoreError};
@@ -100,12 +99,8 @@ fn seed_item(input: ItemInput) -> Item {
     }
 }
 
-fn data_mut(s: &mut S) -> &mut VaultData {
-    &mut s.unlocked_mut().unwrap().data
-}
-
 fn count(s: &S) -> usize {
-    s.unlocked().unwrap().data.items.len()
+    s.stored_count()
 }
 
 fn plain_field(label: &str) -> CustomField {
@@ -195,7 +190,10 @@ fn every_type_survives_save_and_reopen() {
         }
         _ => panic!("type changed"),
     }
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "one two three");
+    assert_eq!(
+        s.reveal_phrase(p, &pw(PW)).unwrap().expose(),
+        "one two three"
+    );
 }
 
 #[test]
@@ -271,12 +269,12 @@ fn empty_phrase_on_update_keeps_phrase() {
     let p = s.add_item(phrase("p", "alpha beta")).unwrap();
     s.update_item(p, phrase("p2", "")).unwrap();
     assert_eq!(s.item(p).unwrap().title(), "p2");
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "alpha beta");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "alpha beta");
     s.update_item(p, phrase("p2", "gamma")).unwrap();
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "gamma");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "gamma");
     s.lock();
     s.unlock(&pw(PW)).unwrap();
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "gamma");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "gamma");
 }
 
 #[test]
@@ -332,7 +330,8 @@ fn active_items_skips_trash_in_stored_order() {
     let b = s.add_item(login("B", "x")).unwrap();
     s.add_item(login("C", "x")).unwrap();
     s.trash(b).unwrap();
-    let titles: Vec<&str> = s.active_items().unwrap().map(Item::title).collect();
+    let items: Vec<Item> = s.active_items().unwrap().collect();
+    let titles: Vec<&str> = items.iter().map(Item::title).collect();
     assert_eq!(titles, ["A", "C"]);
     s.lock();
     assert_eq!(s.active_items().err(), Some(CoreError::Locked));
@@ -374,21 +373,24 @@ fn deleted_forever_secret_absent_from_new_file() {
     let needle = b"EXAMPLE-zq9-unique";
     let (mut s, _) = created();
     let id = s.add_item(login("a", "EXAMPLE-zq9-unique")).unwrap();
-    let (_, plain) = envelope::open(&stored(&s), &pw(PW)).unwrap();
-    assert!(plain.expose().windows(needle.len()).any(|w| w == needle));
-    drop(plain);
+    let state = open_file(&stored(&s), PW);
+    let secret = open_at(&state, 0).unwrap();
+    assert!(
+        matches!(secret.data(), ItemData::Login { password, .. } if password.expose().as_bytes() == needle)
+    );
+    drop(state);
     s.trash(id).unwrap();
     s.delete_forever(id).unwrap();
-    let (_, plain) = envelope::open(&stored(&s), &pw(PW)).unwrap();
-    assert!(!plain.expose().windows(needle.len()).any(|w| w == needle));
-    assert_eq!(open_file(&stored(&s), PW).item_count(), 0);
+    let state = open_file(&stored(&s), PW);
+    assert!(state.index.entries.is_empty() && state.records.is_empty());
+    assert!(!stored(&s).windows(needle.len()).any(|w| w == needle));
 }
 
 #[test]
 fn item_limit() {
     let (mut s, _) = created();
     for _ in 0..MAX_ITEMS {
-        data_mut(&mut s).items.push(seed_item(note("n", "b")));
+        s.seed(seed_item(note("n", "b")));
     }
     assert_eq!(
         s.add_item(note("one more", "b")),
@@ -398,25 +400,10 @@ fn item_limit() {
     assert!(!s.is_dirty());
 }
 
-/// Seeds big logins until fewer than one more fits. Returns the encoded size of
-/// one big login and the ids of the seeded items.
+/// Seeds big logins until fewer than one more fits. Returns the sealed size of one
+/// big login and the ids of the seeded items.
 fn fill_to_the_brim(s: &mut S) -> (usize, Vec<ItemId>) {
-    let base = data_mut(s).encode().unwrap().expose().len();
-    data_mut(s).items.push(seed_item(big_login("probe")));
-    let with_one = data_mut(s).encode().unwrap().expose().len();
-    data_mut(s).items.clear();
-    let size = with_one - base;
-    let n = (MAX_BODY_LEN - base) / size;
-    let mut ids = Vec::new();
-    for i in 0..n {
-        let item = seed_item(big_login(&format!("big {i}")));
-        ids.push(item.id);
-        data_mut(s).items.push(item);
-    }
-    let len = data_mut(s).encode().unwrap().expose().len();
-    assert!(len <= MAX_BODY_LEN);
-    assert!(len + size > MAX_BODY_LEN);
-    (size, ids)
+    s.seed_to_the_brim(|i| seed_item(big_login(&format!("big {i}"))))
 }
 
 #[test]
@@ -518,7 +505,7 @@ fn reveal_phrase_is_gated_and_throttled() {
         Err(CoreError::Throttled { .. })
     ));
     clock.advance(secs(2));
-    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap(), "alpha beta");
+    assert_eq!(s.reveal_phrase(p, &pw(PW)).unwrap().expose(), "alpha beta");
 }
 
 #[test]
@@ -594,4 +581,189 @@ fn set_fields_refuses_trash() {
         Err(CoreError::InTrash)
     );
     assert!(s.item(id).unwrap().fields().is_empty());
+}
+
+fn secret_field(label: &str, v: &str) -> CustomField {
+    try_field(t(label), FieldValue::Secret(st(v)), None).unwrap()
+}
+
+fn codes_field(codes: &[&str]) -> CustomField {
+    use crate::fields::RecoveryCode;
+    let codes = codes
+        .iter()
+        .map(|c| RecoveryCode::new(st(c), false))
+        .collect();
+    try_field(t("codes"), FieldValue::RecoveryCodes(codes), None).unwrap()
+}
+
+#[test]
+fn reveal_each_slot() {
+    use crate::item::SecretSlot;
+    let (mut s, _) = created();
+    let login_id = s.add_item(login("L", "pw-1")).unwrap();
+    s.set_custom_fields(
+        login_id,
+        vec![
+            plain_field("plain"),
+            secret_field("tok", "tok-1"),
+            codes_field(&["c0", "c1"]),
+        ],
+    )
+    .unwrap();
+    let addr = s.add_item(crypto("C")).unwrap();
+    let body = s.add_item(note("N", "body-1")).unwrap();
+    let get = |s: &S, id, slot| s.reveal(id, slot).map(|v| v.expose().to_owned());
+    assert_eq!(get(&s, login_id, SecretSlot::Password).unwrap(), "pw-1");
+    assert_eq!(get(&s, login_id, SecretSlot::Notes).unwrap(), "n");
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 1 }).unwrap(),
+        "tok-1"
+    );
+    assert_eq!(
+        get(
+            &s,
+            login_id,
+            SecretSlot::Code {
+                position: 2,
+                index: 1
+            }
+        )
+        .unwrap(),
+        "c1"
+    );
+    assert_eq!(get(&s, addr, SecretSlot::Address).unwrap(), "addr-EXAMPLE");
+    assert_eq!(get(&s, addr, SecretSlot::Memo).unwrap(), "memo-1");
+    assert_eq!(get(&s, body, SecretSlot::Body).unwrap(), "body-1");
+    // Wrong slot for the kind, plain field, out of range, code index past end.
+    assert_eq!(
+        get(&s, body, SecretSlot::Password),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 0 }),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Field { position: 9 }),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        get(
+            &s,
+            login_id,
+            SecretSlot::Code {
+                position: 2,
+                index: 2
+            }
+        ),
+        Err(CoreError::NoSuchSecret)
+    );
+    s.lock();
+    assert_eq!(
+        get(&s, login_id, SecretSlot::Password),
+        Err(CoreError::Locked)
+    );
+}
+
+#[test]
+fn reveal_phrase_slot_refused() {
+    use crate::item::SecretSlot;
+    let (mut s, _) = created();
+    let id = s.add_item(phrase("P", "abandon ability")).unwrap();
+    // Notes of a phrase item are a normal slot; the phrase has no slot at all.
+    assert_eq!(s.reveal(id, SecretSlot::Notes).unwrap().expose(), "pn");
+    for slot in [
+        SecretSlot::Password,
+        SecretSlot::Body,
+        SecretSlot::Address,
+        SecretSlot::Memo,
+    ] {
+        assert_eq!(s.reveal(id, slot).err(), Some(CoreError::NoSuchSecret));
+    }
+}
+
+#[test]
+fn open_item_equals_stored() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "pw-1")).unwrap();
+    s.set_custom_fields(id, vec![secret_field("tok", "tok-1"), codes_field(&["c0"])])
+        .unwrap();
+    let copy = s.open_item(id).unwrap();
+    let stored = s.item(id).unwrap();
+    assert_eq!(copy.id(), stored.id());
+    assert_eq!(copy.title(), stored.title());
+    assert_eq!(copy.updated(), stored.updated());
+    assert_eq!(copy.fields().len(), 2);
+    assert_eq!(login_password_of(&copy), "pw-1");
+    s.lock();
+    assert_eq!(s.open_item(id).err(), Some(CoreError::Locked));
+    assert_eq!(s.entry(id).err(), Some(CoreError::Locked));
+}
+
+fn login_password_of(item: &Item) -> String {
+    match item.data() {
+        ItemData::Login { password, .. } => password.expose().to_owned(),
+        _ => panic!("not a login"),
+    }
+}
+
+#[test]
+fn entry_views_follow_stored_order_and_trash() {
+    let (mut s, _) = created();
+    let a = s.add_item(login("A", "x")).unwrap();
+    let b = s.add_item(crypto("B")).unwrap();
+    s.trash(b).unwrap();
+    let e = s.entry(a).unwrap();
+    assert_eq!(e.title(), "A");
+    assert!(e.trashed().is_none());
+    assert!(s.entry(b).unwrap().trashed().is_some());
+    let titles: Vec<String> = s
+        .active_entries()
+        .unwrap()
+        .map(|e| e.title().to_owned())
+        .collect();
+    assert_eq!(titles, ["A"]);
+}
+
+#[test]
+fn set_code_used_saves() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "x")).unwrap();
+    s.set_custom_fields(id, vec![codes_field(&["c0", "c1"])])
+        .unwrap();
+    s.set_code_used(id, 0, 1, true).unwrap();
+    assert!(!s.is_dirty());
+    let codes = |s: &S| match s.item(id).unwrap().fields()[0].value() {
+        FieldValue::RecoveryCodes(c) => c.iter().map(|c| c.used()).collect::<Vec<_>>(),
+        _ => panic!("not codes"),
+    };
+    assert_eq!(codes(&s), [false, true]);
+    s.set_code_used(id, 0, 1, false).unwrap();
+    assert_eq!(codes(&s), [false, false]);
+    s.trash(id).unwrap();
+    assert_eq!(s.set_code_used(id, 0, 0, true), Err(CoreError::InTrash));
+}
+
+#[test]
+fn set_code_used_out_of_range() {
+    let (mut s, _) = created();
+    let id = s.add_item(login("L", "x")).unwrap();
+    s.set_custom_fields(id, vec![plain_field("p"), codes_field(&["c0"])])
+        .unwrap();
+    let before = s.item(id).unwrap().updated();
+    assert_eq!(
+        s.set_code_used(id, 1, 1, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        s.set_code_used(id, 0, 0, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(
+        s.set_code_used(id, 7, 0, true),
+        Err(CoreError::NoSuchSecret)
+    );
+    assert_eq!(s.item(id).unwrap().updated(), before);
+    s.lock();
+    assert_eq!(s.set_code_used(id, 1, 0, true), Err(CoreError::Locked));
 }
