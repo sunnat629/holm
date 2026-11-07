@@ -432,6 +432,18 @@ fn backup_copy_symlink_refused() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn backup_copy_exists_counts_symlink_and_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = FsStore::new(vault_in(&dir));
+    std::os::unix::fs::symlink(dir.path().join("nowhere"), bak_in(&dir, "link")).unwrap();
+    assert_eq!(s.backup_copy_exists("link"), Ok(true));
+    fs::create_dir(bak_in(&dir, "folder")).unwrap();
+    assert_eq!(s.backup_copy_exists("folder"), Ok(true));
+    assert_eq!(s.backup_copy_exists("absent"), Ok(false));
+}
+
 #[test]
 fn remove_backup_copy_only_that_file() {
     let dir = tempfile::tempdir().unwrap();

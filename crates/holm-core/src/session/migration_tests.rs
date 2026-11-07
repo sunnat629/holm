@@ -834,6 +834,36 @@ fn backup_missing_file_clears_note() {
 }
 
 #[test]
+fn backup_note_kept_unless_really_gone() {
+    // The store cannot tell (or finds a symlink or folder, which it reports as
+    // present): the note and the prompt stay.
+    let (mut s, tag) = saved_after_migration();
+    s.store.fail_backup_exists = Some(StoreError::Io(std::io::ErrorKind::PermissionDenied));
+    s.lock();
+    s.unlock(&pw(PW)).unwrap();
+    assert_eq!(s.backup_prompt(), Some(BackupPrompt::AfterUnlock));
+    assert!(s.unlocked().unwrap().state.index.migration_backup.is_some());
+    assert!(s.store.backups.contains_key(&tag));
+}
+
+#[test]
+fn backup_delete_then_save_fails_keeps_done_in_memory() {
+    let (mut s, tag) = saved_after_migration();
+    s.store.fail_next_write = Some(full());
+    assert_eq!(s.delete_migration_backup(), Err(CoreError::Store(full())));
+    // The copy is gone, the note says Done, and the save is still owed.
+    assert!(!s.store.backups.contains_key(&tag));
+    assert_eq!(s.backup_prompt(), None);
+    assert!(s.is_dirty());
+    s.save().unwrap();
+    let state = open_file(&stored(&s), PW);
+    assert_eq!(
+        state.index.migration_backup.as_ref().unwrap().prompt,
+        BackupPrompt::Done
+    );
+}
+
+#[test]
 fn backup_never_deleted_without_yes() {
     let (mut s, tag) = saved_after_migration();
     let calls = |s: &S| s.store.backups.contains_key(&tag);

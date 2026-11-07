@@ -152,6 +152,16 @@ pub(crate) struct VaultView {
 
 /// Whether a failed import left nothing added: the vault was too big to save, or the
 /// batch had too many items.
+/// After a failed "delete the old copy" job: true when the copy was removed and only
+/// the save after it failed. The session then holds the note as done (no prompt) and is
+/// dirty. If the copy could not be removed, the prompt is still up.
+fn delete_failure_was_the_save(
+    prompt: Option<holm_core::index::BackupPrompt>,
+    dirty: bool,
+) -> bool {
+    prompt.is_none() && dirty
+}
+
 fn import_rolled_back(e: &CoreError) -> bool {
     matches!(
         e,
@@ -323,10 +333,17 @@ impl VaultView {
         }
         if kind == JobKind::DeleteBackup {
             // Only the prompt changes: a form or reveal in the detail pane stays.
-            self.backup_error = result
-                .as_ref()
-                .err()
-                .map(|_| messages::BACKUP_DELETE_FAILED);
+            self.backup_error = None;
+            if let Err(e) = result {
+                if delete_failure_was_the_save(session.backup_prompt(), session.is_dirty()) {
+                    // The copy is gone; only the save after it failed. Say so, and let
+                    // the save banner retry. "It is still there" would be untrue.
+                    self.save_error = Some(messages::save_error(e));
+                    self.save_failed = true;
+                } else {
+                    self.backup_error = Some(messages::BACKUP_DELETE_FAILED);
+                }
+            }
             return;
         }
         self.rows_stale = true;
@@ -1029,6 +1046,32 @@ mod tests {
             count_line(2, 2, Some(4)),
             "2 logins, 2 other items, 4 shown"
         );
+    }
+
+    #[test]
+    fn delete_failure_is_the_save_only_when_the_prompt_is_gone_and_dirty() {
+        use holm_core::index::BackupPrompt::{AfterPasswordChange, AfterUnlock};
+        // Copy removed (note is Done in memory), save failed: dirty.
+        assert!(delete_failure_was_the_save(None, true));
+        // The copy could not be removed: the prompt is still up.
+        assert!(!delete_failure_was_the_save(Some(AfterUnlock), true));
+        assert!(!delete_failure_was_the_save(
+            Some(AfterPasswordChange),
+            false
+        ));
+        assert!(!delete_failure_was_the_save(None, false));
+    }
+
+    #[test]
+    fn failed_delete_with_the_copy_still_there_shows_the_backup_error() {
+        let session = locked_session();
+        let mut view = VaultView::new();
+        let err = Err(CoreError::Store(
+            holm_core::store::StoreError::NotARegularFile,
+        ));
+        view.on_done(JobKind::DeleteBackup, &err, None, None, &session);
+        assert_eq!(view.backup_error, Some(messages::BACKUP_DELETE_FAILED));
+        assert!(!view.save_failed);
     }
 
     fn locked_session() -> Session<FsStore> {

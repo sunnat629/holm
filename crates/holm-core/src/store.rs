@@ -116,7 +116,9 @@ pub trait VaultStore {
         Err(StoreError::Io(std::io::ErrorKind::Unsupported))
     }
 
-    /// True if the copy `<vault file name>.<tag>.bak` exists as a regular file.
+    /// False only if nothing is at `<vault file name>.<tag>.bak` (a real not-found).
+    /// Anything else there, even a symlink or a folder, counts as present, so the
+    /// session keeps its note; [`VaultStore::remove_backup_copy`] still refuses it.
     ///
     /// # Errors
     /// [`StoreError::Io`], including `InvalidInput` for a bad tag.
@@ -171,6 +173,8 @@ pub(crate) struct MemStore {
     pub(crate) backups: std::collections::BTreeMap<String, Vec<u8>>,
     /// The next `keep_backup_copy` fails with this error and changes nothing.
     pub(crate) fail_backup_copy: Option<StoreError>,
+    /// Makes `backup_copy_exists` fail with this error (it cannot tell).
+    pub(crate) fail_backup_exists: Option<StoreError>,
     /// How many times `keep_backup_copy` was called.
     pub(crate) backup_calls: usize,
 }
@@ -262,6 +266,9 @@ impl VaultStore for MemStore {
 
     fn backup_copy_exists(&self, tag: &str) -> Result<bool, StoreError> {
         check_backup_tag(tag)?;
+        if let Some(e) = &self.fail_backup_exists {
+            return Err(*e);
+        }
         Ok(self.backups.contains_key(tag))
     }
 }

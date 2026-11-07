@@ -149,5 +149,6 @@ Spec: `docs/superpowers/specs/2026-11-07-phase-b-decrypt-on-demand-design.md`. L
   - Unlock after the KDF, v1 4.8 ms vs v2 5.7 ms: +17%. **The spec target (+10%) is missed.** The test guards at 1.5x and 10 ms. Accepted: the gap is under 1 ms next to the Argon2id step, which dominates unlock. Revisit if the entry encoding grows.
   - `open_item` and `reveal` worst case: p99 about 0.55 ms (target 5 ms).
   - Search "123" over 10 000 titles and usernames: p99 about 9 to 9.8 ms against a 10 ms target. The margin is thin and depends on the machine; a slower or busier machine can fail the ignored test.
+  - Thin margin: p99 is 9.8 ms against the 10 ms target. If a slower Mac misses it, the fallback is the folded-key approach from spec Q19 (precomputed folded search keys, wiped on lock).
   - Save after one edit, median about 5.2 ms (informational).
 

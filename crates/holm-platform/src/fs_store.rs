@@ -606,8 +606,11 @@ impl VaultStore for FsStore {
 
     fn backup_copy_exists(&self, tag: &str) -> Result<bool, StoreError> {
         let target = self.backup_path(tag)?;
+        // Only a real NotFound means "gone". A symlink or folder at the path is still
+        // something the owner has to look at, so it counts as present (and
+        // `remove_backup_copy` refuses it).
         match fs::symlink_metadata(&target) {
-            Ok(m) => Ok(m.file_type().is_file()),
+            Ok(_) => Ok(true),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
             Err(e) => Err(io_err(&e)),
         }
