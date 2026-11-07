@@ -12,6 +12,7 @@ use std::process::Command;
 use holm_core::clock::SystemClock;
 use holm_core::item::{ItemData, ItemInput};
 use holm_core::session::Session;
+use holm_core::store::VaultStore;
 use holm_core::text::{SecretText, Text};
 use holm_crypto::MasterPassword;
 use holm_crypto::kdf::KdfParams;
@@ -151,5 +152,82 @@ fn crash_at_every_save_step_leaves_old_or_new() {
             step.name(),
             temps(dir.path())
         );
+    }
+}
+
+const BAK_TAG: &str = "crash-test";
+const BAK_BYTES: &[u8] = b"original v1 bytes, stand-in";
+
+/// Child for `crash_during_backup_copy`: keeps a backup copy and stops at one step.
+#[test]
+#[ignore = "child process for crash_during_backup_copy"]
+fn child_backup_then_crash() {
+    let dir = std::env::var_os(DIR_VAR).expect("HOLM_CRASH_DIR must be set");
+    let step = std::env::var(STEP_VAR).expect("HOLM_CRASH_STEP must be set");
+    let observer = Box::new(move |s: SaveStep| {
+        if s.name() == step {
+            std::process::exit(CRASH_CODE);
+        }
+    });
+    let mut store = FsStore::with_observer(vault_path(Path::new(&dir)), observer);
+    store.keep_backup_copy(BAK_TAG, BAK_BYTES).unwrap();
+    panic!("the backup finished without reaching the crash step");
+}
+
+#[test]
+fn crash_during_backup_copy() {
+    let exe = std::env::current_exe().unwrap();
+    for step in SaveStep::ALL {
+        if step == SaveStep::DirSynced && !cfg!(unix) {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = FsStore::new(vault_path(dir.path()));
+        store.create_new(b"the vault, untouched").unwrap();
+
+        let out = Command::new(&exe)
+            .args([
+                "child_backup_then_crash",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(DIR_VAR, dir.path())
+            .env(STEP_VAR, step.name())
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(CRASH_CODE),
+            "step {}: child did not stop there\nstderr: {}",
+            step.name(),
+            String::from_utf8_lossy(&out.stderr),
+        );
+
+        // The vault is never touched; the copy is absent or whole, never partial.
+        assert_eq!(
+            store.read().unwrap(),
+            b"the vault, untouched",
+            "{}",
+            step.name()
+        );
+        let linked = matches!(step, SaveStep::Renamed | SaveStep::DirSynced);
+        assert_eq!(
+            store.backup_copy_exists(BAK_TAG),
+            Ok(linked),
+            "{}",
+            step.name()
+        );
+        if linked {
+            let bak = dir.path().join(format!("holm.vault.{BAK_TAG}.bak"));
+            assert_eq!(std::fs::read(bak).unwrap(), BAK_BYTES, "{}", step.name());
+        }
+
+        // Cleanup removes a left temp, and a retry always ends with the whole copy.
+        store.remove_stale_temps().unwrap();
+        assert!(temps(dir.path()).is_empty(), "{}", step.name());
+        store.keep_backup_copy(BAK_TAG, BAK_BYTES).unwrap();
+        assert_eq!(store.backup_copy_exists(BAK_TAG), Ok(true));
     }
 }

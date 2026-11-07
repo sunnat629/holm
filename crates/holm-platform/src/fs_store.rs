@@ -24,7 +24,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
 use holm_core::format::MAX_FILE_LEN;
-use holm_core::store::{StoreError, VaultStore};
+use holm_core::store::{StoreError, VaultStore, check_backup_tag};
 use holm_crypto::random_array;
 
 /// [`MAX_FILE_LEN`] as a file length. A `usize` always fits in a `u64` on the
@@ -300,6 +300,16 @@ impl FsStore {
         Ok(self.dir().join(name))
     }
 
+    /// `<file_name>.<tag>.bak` in the vault's directory, for a checked tag.
+    fn backup_path(&self, tag: &str) -> Result<PathBuf, StoreError> {
+        check_backup_tag(tag)?;
+        let mut name = OsString::from(self.file_name()?);
+        name.push(".");
+        name.push(tag);
+        name.push(".bak");
+        Ok(self.dir().join(name))
+    }
+
     /// True only for `<file_name>.tmp-` followed by exactly 16 lowercase hex digits.
     fn is_own_temp_name(&self, candidate: &OsStr) -> bool {
         let Ok(name) = self.file_name() else {
@@ -374,50 +384,56 @@ impl FsStore {
     }
 }
 
+/// Reads the whole regular file at `path`, capped at [`MAX_FILE_LEN`]. A symlink or
+/// other non-regular file is refused, and the opened file must be the one checked.
+fn read_file(path: &Path) -> Result<Vec<u8>, StoreError> {
+    let before = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(StoreError::NotFound),
+        Err(e) => return Err(io_err(&e)),
+    };
+    if !before.file_type().is_file() {
+        return Err(StoreError::NotARegularFile);
+    }
+    // Refused before the file is even opened, so a huge file costs nothing.
+    if before.len() > MAX_LEN_U64 {
+        return Err(StoreError::TooLarge);
+    }
+    let file = open_for_read(path).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => StoreError::NotFound,
+        _ => io_err(&e),
+    })?;
+    // The path may have been swapped between the check and the open. Check what
+    // was actually opened: a regular file, and on Unix the same one.
+    let opened = file.metadata().map_err(|e| io_err(&e))?;
+    if !opened.is_file() {
+        return Err(StoreError::NotARegularFile);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != before.dev() || opened.ino() != before.ino() {
+            return Err(StoreError::NotARegularFile);
+        }
+    }
+    let expected = usize::try_from(opened.len()).map_or(MAX_FILE_LEN, |n| n.min(MAX_FILE_LEN));
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(expected)
+        .map_err(|_| StoreError::Io(ErrorKind::OutOfMemory))?;
+    // The file may grow while we read; read at most one byte past the limit.
+    file.take(MAX_LEN_U64.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|e| io_err(&e))?;
+    if bytes.len() > MAX_FILE_LEN {
+        return Err(StoreError::TooLarge);
+    }
+    Ok(bytes)
+}
+
 impl VaultStore for FsStore {
     fn read(&mut self) -> Result<Vec<u8>, StoreError> {
-        let before = match fs::symlink_metadata(&self.path) {
-            Ok(m) => m,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Err(StoreError::NotFound),
-            Err(e) => return Err(io_err(&e)),
-        };
-        if !before.file_type().is_file() {
-            return Err(StoreError::NotARegularFile);
-        }
-        // Refused before the file is even opened, so a huge file costs nothing.
-        if before.len() > MAX_LEN_U64 {
-            return Err(StoreError::TooLarge);
-        }
-        let file = open_for_read(&self.path).map_err(|e| match e.kind() {
-            ErrorKind::NotFound => StoreError::NotFound,
-            _ => io_err(&e),
-        })?;
-        // The path may have been swapped between the check and the open. Check what
-        // was actually opened: a regular file, and on Unix the same one.
-        let opened = file.metadata().map_err(|e| io_err(&e))?;
-        if !opened.is_file() {
-            return Err(StoreError::NotARegularFile);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if opened.dev() != before.dev() || opened.ino() != before.ino() {
-                return Err(StoreError::NotARegularFile);
-            }
-        }
-        let expected = usize::try_from(opened.len()).map_or(MAX_FILE_LEN, |n| n.min(MAX_FILE_LEN));
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(expected)
-            .map_err(|_| StoreError::Io(ErrorKind::OutOfMemory))?;
-        // The file may grow while we read; read at most one byte past the limit.
-        file.take(MAX_LEN_U64.saturating_add(1))
-            .read_to_end(&mut bytes)
-            .map_err(|e| io_err(&e))?;
-        if bytes.len() > MAX_FILE_LEN {
-            return Err(StoreError::TooLarge);
-        }
-        Ok(bytes)
+        read_file(&self.path)
     }
 
     /// Writes a temp file, syncs it, renames it over the vault and syncs the
@@ -507,6 +523,94 @@ impl VaultStore for FsStore {
             }
         }
         self.sync_dir()
+    }
+
+    /// Writes a temp file, syncs it, then hard-links it to the copy's path, which
+    /// fails if anything is there; the temp is removed in every branch. So a crash
+    /// leaves no copy or the whole copy, and a crash leftover temp is removed by
+    /// [`VaultStore::remove_stale_temps`]. Steps are shown to the observer like a
+    /// `replace`: `Renamed` after the link, `DirSynced` after the directory sync.
+    ///
+    /// Where hard links are not supported (FAT, exFAT) it falls back to an exclusive
+    /// create of the copy itself. That fallback is not crash-atomic: a crash can
+    /// leave a short copy, which a retry then refuses as `AlreadyExists` (other
+    /// bytes) until the user removes it. The same known gap as `create_new`.
+    fn keep_backup_copy(&mut self, tag: &str, bytes: &[u8]) -> Result<(), StoreError> {
+        if bytes.len() > MAX_FILE_LEN {
+            return Err(StoreError::TooLarge);
+        }
+        let target = self.backup_path(tag)?;
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.file_type().is_file() => {
+                return if read_file(&target)? == bytes {
+                    Ok(())
+                } else {
+                    Err(StoreError::AlreadyExists)
+                };
+            }
+            Ok(_) => return Err(StoreError::NotARegularFile),
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(io_err(&e)),
+        }
+        self.check_dir()?;
+        let temp = self.temp_path()?;
+        let mut file = create_temp(&temp)?;
+        self.emit(SaveStep::TempCreated);
+        let filled = self.fill_temp(&mut file, bytes);
+        drop(file);
+        if let Err(e) = filled {
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+        let linked = fs::hard_link(&temp, &target);
+        let _ = fs::remove_file(&temp);
+        match linked {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                return Err(StoreError::AlreadyExists);
+            }
+            Err(_) => {
+                let mut file = create_exclusive(&target)?;
+                let written = write_all_synced(&mut file, bytes);
+                drop(file);
+                if let Err(e) = written {
+                    let _ = fs::remove_file(&target);
+                    return Err(e);
+                }
+            }
+        }
+        self.emit(SaveStep::Renamed);
+        self.sync_dir()?;
+        if cfg!(unix) {
+            self.emit(SaveStep::DirSynced);
+        }
+        Ok(())
+    }
+
+    /// Removes only the copy's file. `symlink_metadata` first, so a symlink or
+    /// folder at that path is refused and never followed or removed.
+    fn remove_backup_copy(&mut self, tag: &str) -> Result<(), StoreError> {
+        let target = self.backup_path(tag)?;
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.file_type().is_file() => {}
+            Ok(_) => return Err(StoreError::NotARegularFile),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(StoreError::NotFound),
+            Err(e) => return Err(io_err(&e)),
+        }
+        fs::remove_file(&target).map_err(|e| match e.kind() {
+            ErrorKind::NotFound => StoreError::NotFound,
+            _ => io_err(&e),
+        })?;
+        self.sync_dir()
+    }
+
+    fn backup_copy_exists(&self, tag: &str) -> Result<bool, StoreError> {
+        let target = self.backup_path(tag)?;
+        match fs::symlink_metadata(&target) {
+            Ok(m) => Ok(m.file_type().is_file()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(io_err(&e)),
+        }
     }
 
     fn remove_stale_temps(&mut self) -> Result<usize, StoreError> {

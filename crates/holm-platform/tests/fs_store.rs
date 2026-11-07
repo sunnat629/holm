@@ -340,3 +340,152 @@ mod unix {
         assert!(temps(dir.path()).is_empty());
     }
 }
+
+fn bak_in(dir: &tempfile::TempDir, tag: &str) -> PathBuf {
+    dir.path().join(format!("holm.vault.{tag}.bak"))
+}
+
+#[test]
+fn backup_copy_creates_0600() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    s.create_new(b"vault").unwrap();
+    assert_eq!(s.backup_copy_exists("v1-a"), Ok(false));
+    s.keep_backup_copy("v1-a", b"original bytes").unwrap();
+    assert_eq!(s.backup_copy_exists("v1-a"), Ok(true));
+    assert_eq!(fs::read(bak_in(&dir, "v1-a")).unwrap(), b"original bytes");
+    assert_eq!(fs::read(vault_in(&dir)).unwrap(), b"vault");
+    assert!(temps(dir.path()).is_empty());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(bak_in(&dir, "v1-a"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[test]
+fn backup_copy_same_bytes_ok() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    s.keep_backup_copy("t", b"same").unwrap();
+    assert_eq!(s.keep_backup_copy("t", b"same"), Ok(()));
+    assert_eq!(fs::read(bak_in(&dir, "t")).unwrap(), b"same");
+}
+
+#[test]
+fn backup_copy_other_bytes_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    s.keep_backup_copy("t", b"first").unwrap();
+    assert_eq!(
+        s.keep_backup_copy("t", b"second"),
+        Err(StoreError::AlreadyExists)
+    );
+    assert_eq!(fs::read(bak_in(&dir, "t")).unwrap(), b"first");
+    assert!(temps(dir.path()).is_empty());
+}
+
+#[test]
+fn backup_copy_bad_tag_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    let bad = StoreError::Io(std::io::ErrorKind::InvalidInput);
+    for tag in ["", "../x", "a/b", "a.b", "A", "x y", &"a".repeat(33)] {
+        assert_eq!(s.keep_backup_copy(tag, b"x"), Err(bad), "{tag:?}");
+        assert_eq!(s.backup_copy_exists(tag), Err(bad), "{tag:?}");
+    }
+    let names: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
+    assert!(names.is_empty());
+}
+
+#[test]
+fn backup_copy_too_large_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    let big = vec![0u8; MAX_FILE_LEN + 1];
+    assert_eq!(s.keep_backup_copy("t", &big), Err(StoreError::TooLarge));
+    assert_eq!(s.backup_copy_exists("t"), Ok(false));
+}
+
+#[cfg(unix)]
+#[test]
+fn backup_copy_symlink_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("elsewhere");
+    fs::write(&target, b"precious").unwrap();
+    std::os::unix::fs::symlink(&target, bak_in(&dir, "t")).unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    assert_eq!(
+        s.keep_backup_copy("t", b"x"),
+        Err(StoreError::NotARegularFile)
+    );
+    assert_eq!(s.remove_backup_copy("t"), Err(StoreError::NotARegularFile));
+    assert_eq!(fs::read(&target).unwrap(), b"precious");
+    assert!(
+        fs::symlink_metadata(bak_in(&dir, "t"))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn remove_backup_copy_only_that_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    s.create_new(b"vault").unwrap();
+    s.keep_backup_copy("one", b"1").unwrap();
+    s.keep_backup_copy("two", b"2").unwrap();
+    s.remove_backup_copy("one").unwrap();
+    assert!(!bak_in(&dir, "one").exists());
+    assert_eq!(fs::read(bak_in(&dir, "two")).unwrap(), b"2");
+    assert_eq!(fs::read(vault_in(&dir)).unwrap(), b"vault");
+}
+
+#[test]
+fn remove_backup_copy_bad_tag_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("keep.me"), b"x").unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    for tag in ["", "../keep.me", "a/b", "A"] {
+        assert_eq!(
+            s.remove_backup_copy(tag),
+            Err(StoreError::Io(std::io::ErrorKind::InvalidInput)),
+            "{tag:?}"
+        );
+    }
+    assert!(dir.path().join("keep.me").exists());
+}
+
+#[test]
+fn remove_backup_copy_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = FsStore::new(vault_in(&dir));
+    assert_eq!(s.remove_backup_copy("t"), Err(StoreError::NotFound));
+}
+
+#[test]
+fn backup_copy_steps_are_observed_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let mut s = FsStore::with_observer(
+        vault_in(&dir),
+        Box::new(move |step| sink.lock().unwrap().push(step)),
+    );
+    s.keep_backup_copy("t", b"abcd").unwrap();
+    let mut want = vec![
+        SaveStep::TempCreated,
+        SaveStep::TempHalfWritten,
+        SaveStep::TempWritten,
+        SaveStep::TempSynced,
+        SaveStep::Renamed,
+    ];
+    if cfg!(unix) {
+        want.push(SaveStep::DirSynced);
+    }
+    assert_eq!(*seen.lock().unwrap(), want);
+}
