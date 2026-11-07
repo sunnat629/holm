@@ -86,8 +86,9 @@ or `unsafe` get a closer security review. Nits do not block a merge.
 ## Security rules
 
 - No new network code. Holm stays offline.
-- No `unsafe` code, except the one allowed file, `crates/holm-platform/src/window.rs`.
-  The test-only FFI in `oracle/` is the other exception, and it never ships.
+- No `unsafe` code, except in `crates/holm-platform/src/window.rs` and
+  `crates/holm-platform/src/zeroing_alloc.rs`. The test-only FFI in `oracle/` is the other
+  exception, and it never ships.
 - Secrets live in wiping types (`zeroize`).
 - Never log secrets, including in errors, panic messages and `Debug` output.
 - Every security claim needs a test, or must be written down as a limit.

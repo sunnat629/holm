@@ -28,7 +28,7 @@ Every item can carry up to ten custom fields (text, secret, multiline secret, da
 
 ## Install
 
-**DMG (Apple silicon).** Download `Holm-<version>.dmg` from the [Releases](https://github.com/sunnat629/holm/releases) page, open it and drag Holm to Applications. Check the SHA-256 that sits next to the download.
+**DMG (Apple silicon).** Download `Holm-<version>.dmg` from the [Releases](https://github.com/sunnat629/holm/releases) page, open it and drag Holm to Applications. Check the SHA-256 that sits next to the download. If a release has no DMG yet, build from source.
 
 **From source.** You need [rustup](https://rustup.rs). The pinned toolchain installs itself on first use.
 
@@ -68,9 +68,9 @@ Holm 0.5.0 stores each secret in its own record (vault format 2). A vault from 0
 ## Security
 
 - Argon2id turns your master password into a key. XChaCha20-Poly1305 encrypts the vault and authenticates every header field.
-- Memory is wiped on free, core dumps are off, and the lock clears window state.
+- Heap blocks are zeroed on free (not stack, AppKit or GPU memory). Core dumps are off, and the lock clears window state.
 - `unsafe` code is forbidden in the crypto and core crates. The platform crate keeps a few reviewed blocks for macOS windows and the wiping allocator.
-- Fuzzing, mutation testing, dependency audits (cargo-deny, cargo-audit, cargo-vet), an SBOM and a reproducible-build check are part of the project. They run on your machine with `scripts/ci-local.sh`.
+- `scripts/ci-local.sh` runs the dependency audits (cargo-deny, cargo-audit, cargo-vet), a short fuzz run and the benchmark gates. Mutation testing, the SBOM, the reproducible-build check and long fuzz runs have their own scripts and notes in `docs/DECISIONS.md` (Phase C).
 
 Read [docs/CRYPTO.md](docs/CRYPTO.md) for how the file is built and [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) for what Holm does and does not defend against. To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
