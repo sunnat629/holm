@@ -25,6 +25,7 @@ use holm_platform::fs_store::FsStore;
 use zeroize::Zeroizing;
 
 use super::FieldIo;
+use super::backup_prompt::{BackupChoice, show_backup_prompt};
 use super::item_view::{ItemAction, ItemView, show_item};
 use super::login_form::{FormAction, LineBuf, LoginForm, NewKind, line_field};
 use super::transfer::{CHOOSING_FILE, Transfer, TransferAction};
@@ -76,6 +77,8 @@ pub(crate) enum VaultAction {
     SaveAndLock,
     /// The lock dialog's "Lock anyway": lock and discard unsaved changes.
     LockAnyway,
+    /// The backup prompt's "Ask me later": hide it until the next unlock.
+    DismissBackupPrompt,
     /// Open the native file dialog now: the placeholder frame has been painted.
     ChooseFile(DialogKind),
 }
@@ -112,6 +115,8 @@ pub(crate) struct VaultView {
     /// The fixed line for that failed write. Kept apart from `status` so navigation and
     /// other messages never hide it while the session is dirty.
     save_error: Option<&'static str>,
+    /// The fixed line for a failed delete of the migration backup copy.
+    backup_error: Option<&'static str>,
     /// Whether the unsaved-changes dialog of a manual lock is open.
     lock_dialog: bool,
     /// The search box. Wiped when the view drops on lock.
@@ -176,6 +181,7 @@ impl VaultView {
             status: None,
             save_failed: false,
             save_error: None,
+            backup_error: None,
             lock_dialog: false,
             search: LineBuf::new(),
             searched: Zeroizing::new(String::new()),
@@ -315,6 +321,14 @@ impl VaultView {
         if kind == JobKind::RevealPhrase {
             return;
         }
+        if kind == JobKind::DeleteBackup {
+            // Only the prompt changes: a form or reveal in the detail pane stays.
+            self.backup_error = result
+                .as_ref()
+                .err()
+                .map(|_| messages::BACKUP_DELETE_FAILED);
+            return;
+        }
         self.rows_stale = true;
         self.item = ItemView::new();
         self.status = None;
@@ -383,6 +397,7 @@ impl VaultView {
                 | JobKind::Import
                 | JobKind::Export
                 | JobKind::Backup
+                | JobKind::DeleteBackup
                 | JobKind::RevealPhrase,
                 _,
             ) => {}
@@ -506,6 +521,21 @@ impl VaultView {
                 ui.add_space(8.0);
             });
         });
+        let mut prompt_job = None;
+        if let Some(prompt) = session.and_then(Session::backup_prompt) {
+            egui::Panel::top("backup-prompt").show(ui, |ui| {
+                match show_backup_prompt(ui, prompt, self.backup_error) {
+                    Some(BackupChoice::Delete) => {
+                        prompt_job = Some(VaultAction::Job(Job::DeleteMigrationBackup));
+                    }
+                    Some(BackupChoice::Later) => {
+                        self.backup_error = None;
+                        prompt_job = Some(VaultAction::DismissBackupPrompt);
+                    }
+                    None => {}
+                }
+            });
+        }
         if let Some(left) = idle_left {
             egui::Panel::bottom("vault-status").show(ui, |ui| {
                 let amber = ui.visuals().warn_fg_color;
@@ -555,7 +585,10 @@ impl VaultView {
             .as_ref()
             .and_then(|t| t.dialog_due(ui.ctx().cumulative_frame_nr()))
             .map(VaultAction::ChooseFile);
-        action.or(dialog).or(job.map(VaultAction::Job))
+        action
+            .or(prompt_job)
+            .or(dialog)
+            .or(job.map(VaultAction::Job))
     }
 
     /// Takes the file dialog's answer (`None` when cancelled).

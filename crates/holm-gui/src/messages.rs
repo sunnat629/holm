@@ -102,6 +102,18 @@ pub const MIGRATION_FAILED: &str = "Holm could not move this vault to the new fi
 pub const ITEM_EDIT_LIMIT: &str = "This item has been changed too many times to change again. Add a new item with the same details and delete this one.";
 /// Opening one item failed for a reason other than damage.
 pub const ITEM_OPEN_FAILED: &str = "Holm could not open this item. Lock the vault and try again.";
+/// Backup prompt right after the move to the new file format.
+pub const BACKUP_PROMPT_UNLOCK: &str = "Holm moved this vault to a new file format and kept a copy of the old file next to it. The old copy still opens with your master password. You can delete it now.";
+/// Backup prompt after the master password changed.
+pub const BACKUP_PROMPT_PASSWORD: &str = "You changed your master password, but the old copy of this vault still opens with the old password. You can delete it now.";
+/// What deleting the old copy does not do.
+pub const BACKUP_PROMPT_LIMIT: &str = "Deleting does not remove copies in Time Machine or other snapshots, and an SSD can keep traces of a deleted file.";
+/// The delete button of the backup prompt.
+pub const BACKUP_DELETE_LABEL: &str = "Delete the old copy";
+/// The postpone button of the backup prompt.
+pub const BACKUP_LATER_LABEL: &str = "Ask me later";
+/// Deleting the old copy failed.
+pub const BACKUP_DELETE_FAILED: &str = "Holm could not delete the old copy. It is still there. Try again, or remove the file ending in .bak yourself.";
 /// Hint under the Text kind in the custom field editor.
 pub const TEXT_FIELD_HINT: &str = "Use a Secret field for sensitive values.";
 /// The change is in memory but not on disk.
@@ -261,7 +273,7 @@ pub const EDIT_FIELDS: &str = "Edit fields";
 /// The labels in `ALL`: plain text, but names rather than sentences, so they have no
 /// closing period.
 #[cfg(test)]
-const LABELS: [&str; 8] = [
+const LABELS: [&str; 10] = [
     CHIP_EXPIRING,
     ADD_FIELD,
     REMOVE_FIELD,
@@ -270,11 +282,13 @@ const LABELS: [&str; 8] = [
     PRESET_LABEL,
     REMIND_ON,
     EDIT_FIELDS,
+    BACKUP_DELETE_LABEL,
+    BACKUP_LATER_LABEL,
 ];
 
 /// Every constant above, for the plain-text test.
 #[cfg(test)]
-const ALL: [&str; 73] = [
+const ALL: [&str; 79] = [
     PATH_NOT_ABSOLUTE,
     WRONG_PASSWORD,
     NOT_ENOUGH_MEMORY,
@@ -309,6 +323,12 @@ const ALL: [&str; 73] = [
     ITEM_EDIT_LIMIT,
     ITEM_OPEN_FAILED,
     TEXT_FIELD_HINT,
+    BACKUP_PROMPT_UNLOCK,
+    BACKUP_PROMPT_PASSWORD,
+    BACKUP_PROMPT_LIMIT,
+    BACKUP_DELETE_LABEL,
+    BACKUP_LATER_LABEL,
+    BACKUP_DELETE_FAILED,
     SECRET_TOO_LONG,
     SELECT_OR_ADD,
     CLIPBOARD_CHANGED,

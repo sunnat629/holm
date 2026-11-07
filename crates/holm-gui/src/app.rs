@@ -653,6 +653,11 @@ impl HolmApp {
             match action {
                 None => return,
                 Some(VaultAction::Job(job)) => self.start(ui.ctx(), job),
+                Some(VaultAction::DismissBackupPrompt) => {
+                    if let Some(session) = self.session.as_mut() {
+                        session.dismiss_backup_prompt();
+                    }
+                }
                 Some(VaultAction::Lock) => self.request_lock(),
                 Some(VaultAction::SaveAndLock) => self.save_and_lock(),
                 Some(VaultAction::LockAnyway) => self.lock(LockReason::Manual),
@@ -677,6 +682,7 @@ impl HolmApp {
                         JobKind::Create => "Creating your vault. This takes a moment.",
                         JobKind::Unlock => "Unlocking. This takes a moment.",
                         JobKind::Add | JobKind::Update | JobKind::Save => "Saving.",
+                        JobKind::DeleteBackup => "Deleting the old copy.",
                         JobKind::PreviewImport => "Reading the file.",
                         JobKind::Import => "Importing. This takes a moment.",
                         JobKind::Export => "Exporting. This takes a moment.",
@@ -848,7 +854,11 @@ impl HolmApp {
         };
         if matches!(
             kind,
-            JobKind::Add | JobKind::Update | JobKind::Save | JobKind::RevealPhrase
+            JobKind::Add
+                | JobKind::Update
+                | JobKind::Save
+                | JobKind::DeleteBackup
+                | JobKind::RevealPhrase
         ) || kind.is_transfer()
         {
             let mut view = keep.unwrap_or_else(VaultView::new);
@@ -906,6 +916,7 @@ impl HolmApp {
                 JobKind::Add
                 | JobKind::Update
                 | JobKind::Save
+                | JobKind::DeleteBackup
                 | JobKind::PreviewImport
                 | JobKind::Import
                 | JobKind::Export

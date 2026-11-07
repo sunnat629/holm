@@ -49,6 +49,8 @@ pub enum Job {
         /// The new flag.
         used: bool,
     },
+    /// Delete the migration backup copy after the owner said yes, and save the note.
+    DeleteMigrationBackup,
     /// Write the unsaved changes to disk.
     Save,
     /// Read and parse the import file at this path, and preview it. Nothing is added.
@@ -86,6 +88,7 @@ impl Job {
             Job::Add(_) => JobKind::Add,
             Job::Update(..) | Job::SetFields(..) | Job::SetCodeUsed { .. } => JobKind::Update,
             Job::Save => JobKind::Save,
+            Job::DeleteMigrationBackup => JobKind::DeleteBackup,
             Job::PreviewImport(_) => JobKind::PreviewImport,
             Job::Import(_) => JobKind::Import,
             Job::Export { .. } => JobKind::Export,
@@ -105,6 +108,7 @@ impl fmt::Debug for Job {
             Job::SetFields(..) => write!(f, "Job::SetFields(<item hidden>)"),
             Job::SetCodeUsed { .. } => write!(f, "Job::SetCodeUsed(<item hidden>)"),
             Job::Save => write!(f, "Job::Save"),
+            Job::DeleteMigrationBackup => write!(f, "Job::DeleteMigrationBackup"),
             Job::PreviewImport(_) | Job::Import(_) => {
                 write!(f, "Job::{:?}(<file hidden>)", self.kind())
             }
@@ -128,6 +132,8 @@ pub enum JobKind {
     Update,
     /// Saving unsaved changes.
     Save,
+    /// Deleting the migration backup copy.
+    DeleteBackup,
     /// Reading an import file.
     PreviewImport,
     /// Adding the rows of an import.
@@ -286,6 +292,7 @@ pub fn spawn(
                     used,
                 } => session.set_code_used(id, position, index, used),
                 Job::Save => session.save(),
+                Job::DeleteMigrationBackup => session.delete_migration_backup(),
                 Job::PreviewImport(path) => {
                     transfer = Some(preview_file(&session, &path));
                     Ok(())
