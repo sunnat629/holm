@@ -19,9 +19,9 @@ gave 16 caught, 1 unviable and 2 missed. Both are equivalent mutants (below).
 
 | Mutant | Why it mattered | Killer test |
 |---|---|---|
-| `SecretBuf::is_empty` replaced by a constant | A buffer that reports itself empty or full wrongly could skip a length check. | `crates/holm-crypto/tests/secret_len.rs` |
-| `SecretBuf::len` replaced by a constant | Same. | same |
-| `MasterPassword::raw_char_count` replaced or changed | The count shown to the user for the typed password (before Unicode normalisation). | same: 0, 1, 5, "caf\u{e9}" = 4, "cafe\u{301}" = 5, two emoji = 2 |
+| `secret.rs:108` `SecretBuf::is_empty` replaced with `true` | A buffer that reports itself empty could skip a length check. | `crates/holm-crypto/tests/secret_len.rs` |
+| `secret.rs:135` `MasterPassword::raw_char_count` replaced with `0` | The count shown to the user for the typed password (before Unicode normalisation). | same: 0, 1, 5, "caf\u{e9}" = 4, "cafe\u{301}" = 5, two emoji = 2 |
+| `secret.rs:135` `MasterPassword::raw_char_count` replaced with `1` | Same. | same |
 
 ## holm-core: missed mutants
 
